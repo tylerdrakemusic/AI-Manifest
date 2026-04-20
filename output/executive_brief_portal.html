@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>👁 Executive Audio Brief Portal</title>
+<style>
+:root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-green: #3fb950;
+    --accent-orange: #d29922;
+    --accent-red: #f85149;
+    --accent-purple: #bc8cff;
+    --music-pink: #ff6b9d;
+    --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+header h1 {
+    font-size: 2rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+header .subtitle {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+.timestamp {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+}
+
+/* Audio Player */
+.audio-player {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+.audio-player h3 {
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+}
+.audio-player audio {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    display: block;
+}
+.audio-meta {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 0.75rem;
+}
+.no-audio {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.controls select, .controls button {
+    font-size: 0.9rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+}
+.controls button {
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    border: none;
+    font-weight: 600;
+    color: #fff;
+    transition: opacity 0.2s;
+}
+.controls button:hover {
+    opacity: 0.85;
+}
+.controls button:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+.controls label {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Status Cards */
+.cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+.status-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    transition: border-color 0.2s;
+}
+.status-card:hover {
+    border-color: var(--accent);
+}
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+.card-header h3 {
+    font-size: 1.1rem;
+}
+.project-sigil {
+    font-size: 1.4rem;
+}
+.priority-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+}
+.badge-1 { background: var(--music-pink); }
+.badge-2 { background: var(--accent-orange); }
+.badge-3 { background: var(--accent); }
+
+.progress-bar-container {
+    position: relative;
+    background: var(--bg);
+    border-radius: 6px;
+    height: 22px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent));
+    border-radius: 6px;
+    transition: width 0.5s ease;
+}
+.progress-label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.summary {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+.todo-list {
+    list-style: none;
+    padding: 0;
+}
+.todo-list li {
+    font-size: 0.85rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+}
+.todo-list li::before {
+    content: "☐ ";
+    color: var(--accent-orange);
+}
+
+/* Script Section */
+.script-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 2rem;
+}
+.script-section h3 {
+    margin-bottom: 0.75rem;
+    cursor: pointer;
+}
+.script-section h3::after {
+    content: " ▸";
+    font-size: 0.8rem;
+}
+.script-section.open h3::after {
+    content: " ▾";
+}
+.script-text {
+    display: none;
+    white-space: pre-wrap;
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 1rem;
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.script-section.open .script-text {
+    display: block;
+}
+
+/* All Projects Table */
+.all-projects {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 2rem;
+}
+.all-projects h3 {
+    margin-bottom: 0.75rem;
+}
+.all-projects table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.all-projects th, .all-projects td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+.all-projects th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+}
+.all-projects tr:hover td {
+    background: rgba(88, 166, 255, 0.05);
+}
+
+/* Status indicator */
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+.status-live { background: var(--accent-green); animation: pulse 2s infinite; }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>👁 Executive Audio Brief Portal</h1>
+        <div class="subtitle">
+            Cross-project status intelligence · ElevenLabs voice synthesis
+        </div>
+        <div class="timestamp">
+            <span class="status-dot status-live"></span>
+            Last generated: 2026-04-19 09:39:37
+        </div>
+    </header>
+
+    
+        <div class="audio-player">
+            <h3>🔊 Executive Brief</h3>
+            <p class="no-audio">No audio generated yet. Click "Generate Audio Brief" below.</p>
+        </div>
+        
+
+    <div class="controls" id="controls">
+        <label for="voiceSelect">Voice:</label>
+        <select id="voiceSelect">
+            <option value="">No voices available</option>
+        </select>
+        <button id="generateBtn" onclick="generateBrief()">
+            🎙️ Generate Audio Brief
+        </button>
+        <button id="refreshBtn" onclick="refreshStatus()">
+            🔄 Refresh Status
+        </button>
+    </div>
+
+    <h2 style="margin-bottom:1rem;">Top 3 Priorities</h2>
+    <div class="cards-grid">
+        
+    <div class="status-card">
+        <div class="card-header">
+            <span class="priority-badge badge-1">#1</span>
+            <span class="project-sigil">❤</span>
+            <h3>Music</h3>
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" style="width: 0%"></div>
+            <span class="progress-label">0/36 tasks (0%)</span>
+        </div>
+        <p class="summary">❤Music: 36 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`; Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs.</p>
+        <ul class='todo-list'><li>**MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.</li><li>Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`</li><li>Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs</li><li>**🔴 URGENT: Write bridge for untitled 2026 original** — Melody + lyrics needed. Song template: `studio_master/song_templates/untitled_tyler_original_2026.json`. Key: Am, suspended voicings. Bridge should break the sus pattern for contrast/resolution. Hash out with producer at Hyperthreat Studios. Chorus lyrics also still open.</li></ul>
+    </div>
+    
+
+    <div class="status-card">
+        <div class="card-header">
+            <span class="priority-badge badge-2">#2</span>
+            <span class="project-sigil">∞</span>
+            <h3>Life</h3>
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" style="width: 0%"></div>
+            <span class="progress-label">0/19 tasks (0%)</span>
+        </div>
+        <p class="summary">∞Life: 19 open tasks, 0 completed (0% done). Top priorities: Research CRISPR accessibility — legal landscape, services, costs; Research telomere testing services (TeloYears, SpectraCell, etc.); Integrate additional data sources: sleep tracking, heart rate, activity.</p>
+        <ul class='todo-list'><li>Research CRISPR accessibility — legal landscape, services, costs</li><li>Research telomere testing services (TeloYears, SpectraCell, etc.)</li><li>Integrate additional data sources: sleep tracking, heart rate, activity</li><li>**Verify nightly batch files** — Check all 4 sync logs tomorrow: MFP (23:00), Trainerize (23:15), Withings (23:30), Garmin (23:45).</li></ul>
+    </div>
+    
+
+    <div class="status-card">
+        <div class="card-header">
+            <span class="priority-badge badge-3">#3</span>
+            <span class="project-sigil">⟨ψ⟩</span>
+            <h3>Quantum</h3>
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" style="width: 0%"></div>
+            <span class="progress-label">0/8 tasks (0%)</span>
+        </div>
+        <p class="summary">⟨ψ⟩Quantum: 8 open tasks, 0 completed (0% done). Top priorities: Implement VQE for molecular simulation (H₂, LiH); Prototype quantum walk music generator (tie-in with ❤Music); Implement quantum kernel SVM classifier (tie-in with ∞Life).</p>
+        <ul class='todo-list'><li>Implement VQE for molecular simulation (H₂, LiH)</li><li>Prototype quantum walk music generator (tie-in with ❤Music)</li><li>Implement quantum kernel SVM classifier (tie-in with ∞Life)</li><li>**Explore IBM Quantum paid tiers** — 10 min/month is enough for cache fills but limits algorithm research. Evaluate cost/benefit of Lite or Standard plan.</li></ul>
+    </div>
+    
+    </div>
+
+    <div class="script-section" id="scriptSection" onclick="this.classList.toggle('open')">
+        <h3>📝 Brief Script</h3>
+        <div class="script-text">Executive Project Brief — 2026-04-19 09:39:37.
+
+Good day, Tyler. Here&#x27;s your priority status update.
+
+Priority 1: ❤ Music.
+❤Music: 36 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`; Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs.
+
+Priority 2: ∞ Life.
+∞Life: 19 open tasks, 0 completed (0% done). Top priorities: Research CRISPR accessibility — legal landscape, services, costs; Research telomere testing services (TeloYears, SpectraCell, etc.); Integrate additional data sources: sleep tracking, heart rate, activity.
+
+Priority 3: ⟨ψ⟩ Quantum.
+⟨ψ⟩Quantum: 8 open tasks, 0 completed (0% done). Top priorities: Implement VQE for molecular simulation (H₂, LiH); Prototype quantum walk music generator (tie-in with ❤Music); Implement quantum kernel SVM classifier (tie-in with ∞Life).
+
+Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impact items first. End of brief.</div>
+    </div>
+
+    <div class="all-projects">
+        <h3>All Projects Overview</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Project</th>
+                    <th>Open</th>
+                    <th>Done</th>
+                    <th>Progress</th>
+                    <th>In Brief</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td>❤ Music</td>
+            <td>36</td>
+            <td>0</td>
+            <td>0%</td>
+            <td>✅</td>
+        </tr>
+        
+        <tr>
+            <td>∞ Life</td>
+            <td>19</td>
+            <td>0</td>
+            <td>0%</td>
+            <td>✅</td>
+        </tr>
+        
+        <tr>
+            <td>⟨ψ⟩ Quantum</td>
+            <td>8</td>
+            <td>0</td>
+            <td>0%</td>
+            <td>✅</td>
+        </tr>
+        
+        <tr>
+            <td>👁 AI-Manifest</td>
+            <td>5</td>
+            <td>10</td>
+            <td>67%</td>
+            <td></td>
+        </tr>
+        
+        <tr>
+            <td>⊕ Workspace</td>
+            <td>8</td>
+            <td>0</td>
+            <td>0%</td>
+            <td></td>
+        </tr>
+        
+            </tbody>
+        </table>
+    </div>
+
+    <footer>
+        👁 AI-Manifest · Executive Audio Brief Portal · Powered by ElevenLabs<br>
+        Tyler James Drake · Generated 2026-04-19 09:39:37
+    </footer>
+</div>
+
+<script>
+// Interactive controls for serve mode
+async function generateBrief() {
+    const btn = document.getElementById('generateBtn');
+    const voiceId = document.getElementById('voiceSelect').value;
+    btn.disabled = true;
+    btn.textContent = '⏳ Generating...';
+    try {
+        const resp = await fetch('/api/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ voice_id: voiceId })
+        });
+        if (resp.ok) {
+            // Reload page to show new audio
+            window.location.reload();
+        } else {
+            const err = await resp.text();
+            alert('Generation failed: ' + err);
+        }
+    } catch(e) {
+        alert('Request failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🎙️ Generate Audio Brief';
+    }
+}
+
+async function refreshStatus() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Refreshing...';
+    try {
+        const resp = await fetch('/api/refresh', { method: 'POST' });
+        if (resp.ok) {
+            window.location.reload();
+        } else {
+            alert('Refresh failed');
+        }
+    } catch(e) {
+        alert('Request failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Refresh Status';
+    }
+}
+</script>
+</body>
+</html>

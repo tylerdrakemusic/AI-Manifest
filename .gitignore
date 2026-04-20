@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Data
+src/data/*.db
+src/data/*.db-shm
+src/data/*.db-wal
+
+# Logs
+logs/*.log
+
+# Audio output
+output/*.mp3
+output/*.wav
+
+# Environment
+.env
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/

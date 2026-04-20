@@ -1,0 +1,19 @@
+{
+  "project": "👁AI-Manifest",
+  "sigil": "👁",
+  "dashboards": [
+    {
+      "id": "executive-audio-brief",
+      "title": "Executive Audio Brief Portal",
+      "description": "Cross-project status intelligence with ElevenLabs voice synthesis — top 3 priority briefing, always including ❤Music",
+      "type": "interactive_html",
+      "generator": "tools/executive_audio_brief.py",
+      "output": "output/executive_brief_portal.html",
+      "cli": "C:\\G\\python.exe tools/executive_audio_brief.py --text-only",
+      "serve": "C:\\G\\python.exe tools/executive_audio_brief.py --serve --port 8200",
+      "category": "intelligence",
+      "icon": "🎙️",
+      "port": 8200
+    }
+  ]
+}

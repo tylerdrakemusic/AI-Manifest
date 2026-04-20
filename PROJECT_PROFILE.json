@@ -1,0 +1,25 @@
+{
+  "project_name": "👁AI-Manifest",
+  "owner": "Tyler James Drake",
+  "sigil": "👁",
+  "description": "AI integration platform — ElevenLabs voice synthesis, AI service hub, voice transmission",
+  "created": "2026-04-18",
+  "integrations": {
+    "elevenlabs": {
+      "status": "scaffolded",
+      "features_planned": [
+        "Text-to-speech synthesis",
+        "Voice cloning",
+        "Real-time voice streaming",
+        "Voice preset management"
+      ],
+      "api_key_location": "f:\\executedcode\\tokens\\elevenlabs"
+    }
+  },
+  "integrations_roadmap": [
+    "ElevenLabs voice synthesis (active)",
+    "Voice preset library",
+    "Streaming audio pipeline",
+    "Multi-voice orchestration"
+  ]
+}
