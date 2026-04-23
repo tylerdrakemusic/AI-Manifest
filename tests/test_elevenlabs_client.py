@@ -1,10 +1,25 @@
-"""Tests for the ElevenLabs client."""
+"""Tests for the ElevenLabs client (workspace shared lib)."""
 
+import importlib.util
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.integrations.elevenlabs.client import ElevenLabsClient
+# Load the workspace client directly by path to avoid the src namespace collision
+# between f:\⊕Workspace\src and f:\👁AI-Manifest\src.
+_CLIENT_PATH = Path(r"f:\⊕Workspace\src\integrations\elevenlabs\client.py")
+_MODULE_NAME = "workspace_elevenlabs_client"
+
+if _MODULE_NAME not in sys.modules:
+    _spec = importlib.util.spec_from_file_location(_MODULE_NAME, _CLIENT_PATH)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules[_MODULE_NAME] = _mod
+    _spec.loader.exec_module(_mod)
+
+ElevenLabsClient = sys.modules[_MODULE_NAME].ElevenLabsClient
+_PATCH_PREFIX = f"{_MODULE_NAME}.httpx"
 
 
 @pytest.fixture
@@ -21,7 +36,7 @@ class TestListVoices:
         }
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("src.integrations.elevenlabs.client.httpx.get", return_value=mock_resp):
+        with patch(f"{_PATCH_PREFIX}.get", return_value=mock_resp):
             voices = client.list_voices()
             assert len(voices) == 1
             assert voices[0]["name"] == "TestVoice"
@@ -33,7 +48,7 @@ class TestTextToSpeech:
         mock_resp.content = b"\xff\xfb\x90\x00"  # fake mp3 header bytes
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("src.integrations.elevenlabs.client.httpx.post", return_value=mock_resp):
+        with patch(f"{_PATCH_PREFIX}.post", return_value=mock_resp):
             audio = client.text_to_speech("Hello", "voice123")
             assert isinstance(audio, bytes)
             assert len(audio) > 0
@@ -46,7 +61,7 @@ class TestSaveSpeech:
         mock_resp.raise_for_status = MagicMock()
 
         out_file = tmp_path / "test_output.mp3"
-        with patch("src.integrations.elevenlabs.client.httpx.post", return_value=mock_resp):
+        with patch(f"{_PATCH_PREFIX}.post", return_value=mock_resp):
             result = client.save_speech("Hello", "voice123", out_file)
             assert result.exists()
             assert result.read_bytes() == b"\xff\xfb\x90\x00"

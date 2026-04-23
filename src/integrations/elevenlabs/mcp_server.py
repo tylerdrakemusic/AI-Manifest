@@ -2,7 +2,7 @@
 
 Launch: C:\\G\\python.exe mcp_server.py
 Transport: stdio (VS Code / Copilot compatible)
-API key: reads from ELEVENLABS_API_KEY env var (loaded from f:\\executedcode\\.env)
+API key: set ELEVENLABS_API_KEY in Windows System Environment Variables.
 """
 
 from __future__ import annotations
@@ -15,11 +15,10 @@ import sys
 from pathlib import Path
 
 import httpx
-from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-# ── Load .env ────────────────────────────────────────────────────
-load_dotenv(Path(r"f:\executedcode\.env"))
+# ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
+# No hardcoded path fallback — use Windows System Environment Variables.
 
 # ── Logging (stderr only — stdout is MCP JSON-RPC) ──────────────
 logging.basicConfig(
@@ -31,7 +30,7 @@ log = logging.getLogger("elevenlabs-mcp")
 
 # ── Constants ────────────────────────────────────────────────────
 BASE_URL = "https://api.elevenlabs.io/v1"
-OUTPUT_DIR = Path(r"f:\executedcode\👁AI-Manifest\output\tts")
+OUTPUT_DIR = Path(r"f:\👁AI-Manifest\output\tts")
 
 DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
@@ -50,7 +49,8 @@ def _load_api_key() -> str:
     key = os.environ.get("ELEVENLABS_API_KEY")
     if not key:
         raise RuntimeError(
-            "ELEVENLABS_API_KEY not set. Add it to f:\\executedcode\\.env"
+            "ELEVENLABS_API_KEY not set. Set it via: "
+            "[System.Environment]::SetEnvironmentVariable('ELEVENLABS_API_KEY', 'your-key', 'Machine')"
         )
     return key.strip()
 
