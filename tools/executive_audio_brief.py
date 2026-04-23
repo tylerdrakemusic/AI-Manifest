@@ -29,15 +29,21 @@ from urllib.parse import parse_qs
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(r"f:\executedcode")
+WORKSPACE_ROOT = Path(r"f:\\")
 OUTPUT_DIR = PROJECT_ROOT / "output" / "briefs"
 REPORT_PATH = PROJECT_ROOT / "output" / "executive_brief_portal.html"
 
-# Add project root to path for imports (client uses `from src.xxx` imports)
-sys.path.insert(0, str(PROJECT_ROOT))
+# Add workspace root to path for shared integrations
+_WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
+if str(_WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_WORKSPACE_ROOT))
 
-from src.integrations.elevenlabs.client import ElevenLabsClient
-from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
+# Add project root to path for any remaining project-local imports
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.integrations.elevenlabs import ElevenLabsClient
+from src.integrations.elevenlabs.settings import DEFAULT_MODEL_ID
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
