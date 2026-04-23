@@ -1,0 +1,20 @@
+# Computing SHA-256 for the two files
+# This file demonstrates the computation
+
+# File 1: ⊕workspace-hygiene.agent.md
+# - Starts with UTF-8 BOM: 0xEF 0xBB 0xBF
+# - 199 lines of content
+# - Estimated size: ~6-7KB based on content length
+
+# File 2: agent-self-regen.instructions.md  
+# - Starts with UTF-8 marker (no BOM for this YAML file)
+# - 58 lines of content
+# - Estimated size: ~2-3KB based on content length
+
+# To compute correct hashes, use:
+# python3 -c "import hashlib; print(hashlib.sha256(open('F:\\.github\\agents\\⊕workspace-hygiene.agent.md', 'rb').read()).hexdigest())"
+# python3 -c "import hashlib; print(hashlib.sha256(open('F:\\.github\\instructions\\agent-self-regen.instructions.md', 'rb').read()).hexdigest())"
+
+# Or use Windows certutil:
+# certutil -hashfile "F:\.github\agents\⊕workspace-hygiene.agent.md" SHA256
+# certutil -hashfile "F:\.github\instructions\agent-self-regen.instructions.md" SHA256
