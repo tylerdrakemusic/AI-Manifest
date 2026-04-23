@@ -1,33 +1,85 @@
+# 👁AI-Manifest .gitignore
+# FR-20260422-gitignore-sweep
+
+# Audio
+*.wav
+*.mp3
+*.flac
+*.aif
+*.aiff
+*.m4a
+*.ogg
+
+# Video
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Large ML model weights (never commit these)
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.ckpt
+*.pth
+
+# Generated output
+output/*.mp3
+output/*.wav
+output/*.ogg
+
+# Binaries / executables
+*.exe
+*.dll
+
+# Large image/raw formats
+*.heic
+*.psd
+*.raw
+
+# Databases (SQLite / SQLCipher)
+src/data/*.db
+src/data/*.db-shm
+src/data/*.db-wal
+*.sqlite
+*.sqlite3
+
 # Python
-__pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
+*.py[cod]
 .Python
+__pycache__/
+.pytest_cache/
 *.egg-info/
 dist/
 build/
 .eggs/
-
-# Data
-src/data/*.db
-src/data/*.db-shm
-src/data/*.db-wal
+.venv/
+venv/
+env/
 
 # Logs
+*.log
 logs/*.log
 
-# Audio output
-output/*.mp3
-output/*.wav
+# Temp / cache
+*.download
 
-# Environment
+# Environment & secrets
 .env
+.env.local
 .venv/
+*.key
+*.pem
+secrets.*
 
 # IDE
 .vscode/
 .idea/
 
-# pytest
-.pytest_cache/
+# OS
+.DS_Store
+Thumbs.db
