@@ -112,6 +112,63 @@ class TestBriefScript:
         assert script_section.count() >= 1 or "Executive Project Brief" in page.content()
 
 
+class TestStaticModeUX:
+    def test_voice_dropdown_exists(self, page) -> None:
+        """Voice dropdown element must be present in the DOM."""
+        page.goto(PORTAL_URL)
+        select = page.locator("#voiceSelect")
+        assert select.count() == 1, "Voice dropdown not found"
+        # At least one option must exist (even if it's the fallback placeholder)
+        assert select.locator("option").count() >= 1
+
+    def test_voice_dropdown_populated_when_api_key_set(self, page) -> None:
+        """If ELEVENLABS_API_KEY is set, voice dropdown must have real voices (not just placeholder)."""
+        import os
+        if not os.environ.get("ELEVENLABS_API_KEY"):
+            pytest.skip("ELEVENLABS_API_KEY not set — voice population test skipped")
+        page.goto(PORTAL_URL)
+        select = page.locator("#voiceSelect")
+        options = select.locator("option")
+        count = options.count()
+        assert count >= 1
+        first_text = options.first.text_content() or ""
+        assert "No voices" not in first_text, (
+            "Only 'No voices available' option despite ELEVENLABS_API_KEY being set"
+        )
+
+    def test_serve_hint_element_exists(self, page) -> None:
+        """serveHint div must exist in DOM (visible in static file:// mode)."""
+        page.goto(PORTAL_URL)
+        hint = page.locator("#serveHint")
+        assert hint.count() == 1, "serveHint element not found in DOM"
+
+    def test_serve_hint_visible_in_static_mode(self, page) -> None:
+        """When opened as file://, the serve hint should be visible."""
+        page.goto(PORTAL_URL)
+        # Small wait for JS to run
+        page.wait_for_load_state("domcontentloaded")
+        hint = page.locator("#serveHint")
+        assert hint.is_visible(), "serveHint not visible in static file:// mode"
+
+    def test_generate_button_does_not_raise_on_click(self, page) -> None:
+        """Clicking Generate in static mode should not throw an uncaught JS error."""
+        errors: list[str] = []
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        page.goto(PORTAL_URL)
+        page.wait_for_load_state("domcontentloaded")
+        page.click("#generateBtn")
+        assert errors == [], f"JS error after clicking Generate: {errors}"
+
+    def test_refresh_button_does_not_raise_on_click(self, page) -> None:
+        """Clicking Refresh in static mode should not throw an uncaught JS error."""
+        errors: list[str] = []
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        page.goto(PORTAL_URL)
+        page.wait_for_load_state("domcontentloaded")
+        page.click("#refreshBtn")
+        assert errors == [], f"JS error after clicking Refresh: {errors}"
+
+
 class TestNoConsoleErrors:
     def test_no_critical_js_errors(self, page) -> None:
         """No uncaught JavaScript errors should fire on page load."""
