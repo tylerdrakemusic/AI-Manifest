@@ -91,11 +91,21 @@ header .subtitle {
     align-items: center;
     justify-content: center;
     flex-wrap: wrap;
-    margin-bottom: 2rem;
+    margin-bottom: 0.5rem;
     padding: 1rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+}
+.serve-hint {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #c0a060;
+    background: #2a2010;
+    border: 1px solid #604020;
+    border-radius: var(--radius);
+    padding: 0.6rem 1.2rem;
+    margin-bottom: 1.5rem;
 }
 .controls select, .controls button {
     font-size: 0.9rem;
@@ -311,7 +321,7 @@ footer {
         </div>
         <div class="timestamp">
             <span class="status-dot status-live"></span>
-            Last generated: 2026-04-19 09:39:37
+            Last generated: 2026-04-23 02:29:48
         </div>
     </header>
 
@@ -334,6 +344,10 @@ footer {
             🔄 Refresh Status
         </button>
     </div>
+    <div id="serveHint" class="serve-hint" style="display:none;">
+        ⚠️ Live generation requires server mode.
+        Run: <code>python tools/executive_audio_brief.py --serve</code>
+    </div>
 
     <h2 style="margin-bottom:1rem;">Top 3 Priorities</h2>
     <div class="cards-grid">
@@ -346,10 +360,10 @@ footer {
         </div>
         <div class="progress-bar-container">
             <div class="progress-bar" style="width: 0%"></div>
-            <span class="progress-label">0/36 tasks (0%)</span>
+            <span class="progress-label">0/37 tasks (0%)</span>
         </div>
-        <p class="summary">❤Music: 36 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`; Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs.</p>
-        <ul class='todo-list'><li>**MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.</li><li>Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`</li><li>Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs</li><li>**🔴 URGENT: Write bridge for untitled 2026 original** — Melody + lyrics needed. Song template: `studio_master/song_templates/untitled_tyler_original_2026.json`. Key: Am, suspended voicings. Bridge should break the sus pattern for contrast/resolution. Hash out with producer at Hyperthreat Studios. Chorus lyrics also still open.</li></ul>
+        <p class="summary">❤Music: 37 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs.</p>
+        <ul class='todo-list'><li>**MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.</li><li>Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`</li><li>Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs</li><li>**🔴 URGENT: Write bridge for untitled 2026 original** — Melody + lyrics needed. Song template: `studio_master/song_templates/untitled_tyler_original_2026.json`. Key: Am, suspended voicings. Bridge should break the sus pattern for contrast/resolution. Hash out with producer at Hyperthreat Studios. Chorus lyrics also still open.</li></ul>
     </div>
     
 
@@ -386,12 +400,12 @@ footer {
 
     <div class="script-section" id="scriptSection" onclick="this.classList.toggle('open')">
         <h3>📝 Brief Script</h3>
-        <div class="script-text">Executive Project Brief — 2026-04-19 09:39:37.
+        <div class="script-text">Executive Project Brief — 2026-04-23 02:29:48.
 
 Good day, Tyler. Here&#x27;s your priority status update.
 
 Priority 1: ❤ Music.
-❤Music: 36 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\executedcode\recordings`; Import existing lyrics files from `f:\executedcode\lyrics` into the `lyrics` table with file path refs.
+❤Music: 37 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs.
 
 Priority 2: ∞ Life.
 ∞Life: 19 open tasks, 0 completed (0% done). Top priorities: Research CRISPR accessibility — legal landscape, services, costs; Research telomere testing services (TeloYears, SpectraCell, etc.); Integrate additional data sources: sleep tracking, heart rate, activity.
@@ -399,7 +413,7 @@ Priority 2: ∞ Life.
 Priority 3: ⟨ψ⟩ Quantum.
 ⟨ψ⟩Quantum: 8 open tasks, 0 completed (0% done). Top priorities: Implement VQE for molecular simulation (H₂, LiH); Prototype quantum walk music generator (tie-in with ❤Music); Implement quantum kernel SVM classifier (tie-in with ∞Life).
 
-Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impact items first. End of brief.</div>
+Across your top 3 priorities, you have 64 open tasks. Focus on the highest-impact items first. End of brief.</div>
     </div>
 
     <div class="all-projects">
@@ -418,7 +432,7 @@ Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impac
                 
         <tr>
             <td>❤ Music</td>
-            <td>36</td>
+            <td>37</td>
             <td>0</td>
             <td>0%</td>
             <td>✅</td>
@@ -443,8 +457,8 @@ Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impac
         <tr>
             <td>👁 AI-Manifest</td>
             <td>5</td>
-            <td>10</td>
-            <td>67%</td>
+            <td>0</td>
+            <td>0%</td>
             <td></td>
         </tr>
         
@@ -462,13 +476,21 @@ Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impac
 
     <footer>
         👁 AI-Manifest · Executive Audio Brief Portal · Powered by ElevenLabs<br>
-        Tyler James Drake · Generated 2026-04-19 09:39:37
+        Tyler James Drake · Generated 2026-04-23 02:29:48
     </footer>
 </div>
 
 <script>
-// Interactive controls for serve mode
+// Detect static file:// mode — API endpoints only exist in --serve mode
+const IS_STATIC = window.location.protocol === 'file:';
+if (IS_STATIC) { document.getElementById('serveHint').style.display = 'block'; }
+
+function _showServeHint() {
+    document.getElementById('serveHint').style.display = 'block';
+}
+
 async function generateBrief() {
+    if (IS_STATIC) { _showServeHint(); return; }
     const btn = document.getElementById('generateBtn');
     const voiceId = document.getElementById('voiceSelect').value;
     btn.disabled = true;
@@ -480,7 +502,6 @@ async function generateBrief() {
             body: JSON.stringify({ voice_id: voiceId })
         });
         if (resp.ok) {
-            // Reload page to show new audio
             window.location.reload();
         } else {
             const err = await resp.text();
@@ -495,6 +516,7 @@ async function generateBrief() {
 }
 
 async function refreshStatus() {
+    if (IS_STATIC) { _showServeHint(); return; }
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Refreshing...';

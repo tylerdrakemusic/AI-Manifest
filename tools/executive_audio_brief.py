@@ -487,11 +487,21 @@ header .subtitle {{
     align-items: center;
     justify-content: center;
     flex-wrap: wrap;
-    margin-bottom: 2rem;
+    margin-bottom: 0.5rem;
     padding: 1rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+}}
+.serve-hint {{
+    text-align: center;
+    font-size: 0.85rem;
+    color: #c0a060;
+    background: #2a2010;
+    border: 1px solid #604020;
+    border-radius: var(--radius);
+    padding: 0.6rem 1.2rem;
+    margin-bottom: 1.5rem;
 }}
 .controls select, .controls button {{
     font-size: 0.9rem;
@@ -725,6 +735,10 @@ footer {{
             🔄 Refresh Status
         </button>
     </div>
+    <div id="serveHint" class="serve-hint" style="display:none;">
+        ⚠️ Live generation requires server mode.
+        Run: <code>python tools/executive_audio_brief.py --serve</code>
+    </div>
 
     <h2 style="margin-bottom:1rem;">Top 3 Priorities</h2>
     <div class="cards-grid">
@@ -761,8 +775,16 @@ footer {{
 </div>
 
 <script>
-// Interactive controls for serve mode
+// Detect static file:// mode — API endpoints only exist in --serve mode
+const IS_STATIC = window.location.protocol === 'file:';
+if (IS_STATIC) {{ document.getElementById('serveHint').style.display = 'block'; }}
+
+function _showServeHint() {{
+    document.getElementById('serveHint').style.display = 'block';
+}}
+
 async function generateBrief() {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('generateBtn');
     const voiceId = document.getElementById('voiceSelect').value;
     btn.disabled = true;
@@ -774,7 +796,6 @@ async function generateBrief() {{
             body: JSON.stringify({{ voice_id: voiceId }})
         }});
         if (resp.ok) {{
-            // Reload page to show new audio
             window.location.reload();
         }} else {{
             const err = await resp.text();
@@ -789,6 +810,7 @@ async function generateBrief() {{
 }}
 
 async function refreshStatus() {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
     btn.textContent = '⏳ Refreshing...';
@@ -937,17 +959,18 @@ def build_brief(
     script = generate_brief_script(top3, timestamp)
     print(f"Brief script: {len(script)} chars")
 
-    # 4. Synthesize (unless text-only)
+    # 4. Voices — always fetch so the dropdown is populated in static-file mode.
+    # Synthesis is skipped in text_only mode but voices are embedded in the HTML either way.
+    voices: list[dict] = list_available_voices()
+
+    # 5. Synthesize (unless text-only)
     audio_path = None
-    voices: list[dict] = []
     if not text_only:
         try:
-            voices = list_available_voices()
             audio_path = synthesize_brief(script, voice_id=voice_id)
             print(f"Audio saved: {audio_path}")
         except Exception as e:
             print(f"TTS failed (continuing without audio): {e}", file=sys.stderr)
-            voices = []
 
     # 5. Render HTML
     portal_html = generate_portal_html(
