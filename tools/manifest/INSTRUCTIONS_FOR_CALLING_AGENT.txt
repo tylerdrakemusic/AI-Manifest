@@ -1,0 +1,33 @@
+# MANIFEST REGENERATION INSTRUCTIONS FOR CALLING AGENT
+
+Since PowerShell and subprocess execution are not available in this session,
+the calling agent should execute:
+
+```
+C:\G\python.exe F:\COMPLETE_MANIFEST_REGEN.py
+```
+
+Or alternatively:
+
+```
+C:\G\python.exe f:\.github\!!☾⛧security\update_manifest.py
+```
+
+Both scripts will:
+1. Scan all agent/instruction/skill files
+2. Compute SHA-256 hashes
+3. Regenerate f:\.github\!!☾⛧security\agent-manifest.json
+4. Print delta report showing added/removed/modified files
+
+Expected results based on file scans:
+- Old manifest: 38 files
+- Current files: 36 files (26 agents + 9 instructions + 1 skill)
+- Expected changes:
+  - ADDED: .github\instructions\agent-self-regen.instructions.md
+  - ADDED: .github\agents\⊕workspace-hygiene.agent.md  
+  - REMOVED: .github\agents\∞life-hygiene.agent.md
+  - REMOVED: .github\agents\❤music-hygiene.agent.md
+  - REMOVED: .github\agents\⟨ψ⟩quantum-hygiene.agent.md
+  - REMOVED: .github\agents\👁ai-manifest-hygiene.agent.md
+  
+Total: 1 added instruction, 1 added agent, 4 removed agents = net -2 files
