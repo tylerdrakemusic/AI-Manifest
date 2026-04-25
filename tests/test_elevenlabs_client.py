@@ -1,25 +1,19 @@
-"""Tests for the ElevenLabs client (workspace shared lib)."""
+"""Tests for the local ElevenLabs client (``src.integrations.elevenlabs``).
 
-import importlib.util
-import sys
-from pathlib import Path
+All HTTP calls are mocked via ``unittest.mock.patch`` — no real ElevenLabs
+API calls are made. The client is constructed with a fake ``api_key`` so
+tests do not require ``ELEVENLABS_API_KEY`` to be set.
+"""
+
+from __future__ import annotations
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Load the workspace client directly by path to avoid the src namespace collision
-# between f:\⊕Workspace\src and f:\👁AI-Manifest\src.
-_CLIENT_PATH = Path(r"f:\⊕Workspace\src\integrations\elevenlabs\client.py")
-_MODULE_NAME = "workspace_elevenlabs_client"
+from src.integrations.elevenlabs.client import ElevenLabsClient
 
-if _MODULE_NAME not in sys.modules:
-    _spec = importlib.util.spec_from_file_location(_MODULE_NAME, _CLIENT_PATH)
-    _mod = importlib.util.module_from_spec(_spec)
-    sys.modules[_MODULE_NAME] = _mod
-    _spec.loader.exec_module(_mod)
-
-ElevenLabsClient = sys.modules[_MODULE_NAME].ElevenLabsClient
-_PATCH_PREFIX = f"{_MODULE_NAME}.httpx"
+_PATCH_PREFIX = "src.integrations.elevenlabs.client.httpx"
 
 
 @pytest.fixture
