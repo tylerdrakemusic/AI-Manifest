@@ -14,3 +14,4 @@
 | 2026-04-18 | Requested project creation (Tyler) | — |
 | 2026-04-18 | Added ElevenLabs API key (Tyler) | free tier, 10K chars |
 | 2026-04-18 | Upgraded to Creator tier (Tyler) | 131K chars/mo |
+| 2026-04-24 | Playwright MCP unblocked | Installed at user level (`@playwright/mcp@latest`) — no longer needs admin Node.js install |

@@ -6,9 +6,9 @@
 - [ ] Write tests for ElevenLabs MCP server
 
 ## Blocked
-- [ ] Playwright MCP — needs Node.js installed (admin terminal)
+*(none — Playwright MCP unblocked: installed at user level 2026-04-24)*
 
-## Done
+## Done *(archived → `docs/archive/completed_tasks.md` on 2026-04-24)*
 - [x] Project scaffold created (2026-04-18)
 - [x] ElevenLabs API client implemented — `src/integrations/elevenlabs/client.py` (2026-04-18)
 - [x] ElevenLabs MCP server built — `src/integrations/elevenlabs/mcp_server.py` (2026-04-18)
