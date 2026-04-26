@@ -45,6 +45,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
+from src.utils.todos_db import init_db, get_open_todos, get_done_todos, mark_done
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -113,81 +114,62 @@ def _read_json_safe(path: Path) -> dict:
         return {}
 
 
-def _extract_todo_items(todo_text: str) -> list[str]:
-    """Extract unchecked TODO items from markdown."""
-    items = []
-    for line in todo_text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- [ ]"):
-            items.append(stripped[5:].strip())
-    return items
-
-
-def _extract_done_items(todo_text: str) -> list[str]:
-    """Extract checked items."""
-    items = []
-    for line in todo_text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- [x]") or stripped.startswith("- [X]"):
-            items.append(stripped[5:].strip())
-    return items
-
-
 def gather_project_status(project: dict) -> dict[str, Any]:
-    """Gather status for a single project."""
+    """Gather status for a single project from the todos DB."""
     root = project["root"]
+    key = project["key"]
     status: dict[str, Any] = {
         "sigil": project["sigil"],
         "name": project["name"],
-        "key": project["key"],
+        "key": key,
         "exists": root.exists(),
         "always_include": project["always_include"],
         "priority_weight": project["priority_weight"],
+        # Each entry: {"id": int, "text": str}
         "ai_todos": [],
-        "ai_done": [],
         "tyler_todos": [],
-        "tyler_done": [],
         "profile": {},
         "summary": "",
         "active_tasks": 0,
         "completed_tasks": 0,
     }
 
-    if not root.exists():
+    open_rows = get_open_todos(key)
+    done_count = len(get_done_todos(key))
+
+    status["ai_todos"] = [
+        {"id": r["id"], "text": r["text"]}
+        for r in open_rows if r["source"] == "AI"
+    ]
+    status["tyler_todos"] = [
+        {"id": r["id"], "text": r["text"]}
+        for r in open_rows if r["source"] == "TYLER"
+    ]
+    status["active_tasks"] = len(open_rows)
+    status["completed_tasks"] = done_count
+
+    if root.exists():
+        for profile_name in ["PROJECT_PROFILE.json", "ARTIST_PROFILE.json", "SUBJECT_PROFILE.json"]:
+            profile_path = root / profile_name
+            if profile_path.exists():
+                status["profile"] = _read_json_safe(profile_path)
+                break
+    else:
         status["summary"] = f"{project['sigil']}{project['name']}: Project directory not found."
         return status
 
-    # Read TODO_AI.md
-    ai_todo_text = _read_file_safe(root / "TODO_AI.md")
-    status["ai_todos"] = _extract_todo_items(ai_todo_text)
-    status["ai_done"] = _extract_done_items(ai_todo_text)
-    status["active_tasks"] += len(status["ai_todos"])
-    status["completed_tasks"] += len(status["ai_done"])
-
-    # Read TODO_TYLER.md
-    tyler_todo_text = _read_file_safe(root / "TODO_TYLER.md")
-    status["tyler_todos"] = _extract_todo_items(tyler_todo_text)
-    status["tyler_done"] = _extract_done_items(tyler_todo_text)
-    status["active_tasks"] += len(status["tyler_todos"])
-    status["completed_tasks"] += len(status["tyler_done"])
-
-    # Read profile (PROJECT_PROFILE.json, ARTIST_PROFILE.json, or SUBJECT_PROFILE.json)
-    for profile_name in ["PROJECT_PROFILE.json", "ARTIST_PROFILE.json", "SUBJECT_PROFILE.json"]:
-        profile_path = root / profile_name
-        if profile_path.exists():
-            status["profile"] = _read_json_safe(profile_path)
-            break
-
-    # Build summary
     total = status["active_tasks"] + status["completed_tasks"]
     pct = round(100 * status["completed_tasks"] / total) if total > 0 else 0
-    top_todos = status["ai_todos"][:3] + status["tyler_todos"][:2]
+    top_texts = (
+        [t["text"] for t in status["ai_todos"][:3]]
+        + [t["text"] for t in status["tyler_todos"][:2]]
+    )
     summary_lines = [
         f"{project['sigil']}{project['name']}: {status['active_tasks']} open tasks, "
         f"{status['completed_tasks']} completed ({pct}% done)."
     ]
-    if top_todos:
-        summary_lines.append("Top priorities: " + "; ".join(top_todos[:3]) + ".")
+    if top_texts:
+        summary_lines.append("Top priorities: " + "; ".join(top_texts[:3]) + ".")
     status["summary"] = " ".join(summary_lines)
 
     return status
@@ -305,7 +287,13 @@ def _status_card_html(proj: dict, rank: int) -> str:
 
     ai_todos_html = ""
     if proj["ai_todos"]:
-        items = "".join(f"<li>{html.escape(t)}</li>" for t in proj["ai_todos"][:3])
+        items = "".join(
+            f'<li>'
+            f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</li>'
+            for t in proj["ai_todos"][:5]
+        )
         ai_todos_html = f"""<div class="todo-section">
             <div class="todo-label ai-label">\U0001f916 AI Tasks ({ai_count})</div>
             <ul class="todo-list">{items}</ul>
@@ -313,7 +301,13 @@ def _status_card_html(proj: dict, rank: int) -> str:
 
     tyler_todos_html = ""
     if proj["tyler_todos"]:
-        items = "".join(f"<li>{html.escape(t)}</li>" for t in proj["tyler_todos"][:3])
+        items = "".join(
+            f'<li>'
+            f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</li>'
+            for t in proj["tyler_todos"][:5]
+        )
         tyler_todos_html = f"""<div class="todo-section">
             <div class="todo-label tyler-label">\U0001f464 Tyler's Tasks ({tyler_count})</div>
             <ul class="todo-list">{items}</ul>
@@ -635,10 +629,37 @@ header .subtitle {{
     padding: 0.25rem 0;
     border-bottom: 1px solid var(--border);
     color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
 }}
 .todo-list li::before {{
     content: "☐ ";
     color: var(--accent-orange);
+    flex-shrink: 0;
+}}
+.todo-text {{
+    flex: 1;
+}}
+.done-btn {{
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--accent-green);
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.15s, background 0.15s;
+}}
+.done-btn:hover {{
+    opacity: 1;
+    background: rgba(63, 185, 80, 0.15);
+}}
+.done-btn:disabled {{
+    opacity: 0.3;
+    cursor: wait;
 }}
 .todo-section {{
     margin-top: 0.5rem;
@@ -856,6 +877,30 @@ async function generateBrief() {{
     }}
 }}
 
+async function markDone(todoId, btnEl) {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
+    btnEl.disabled = true;
+    try {{
+        const resp = await fetch('/api/todo/done', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{id: todoId}})
+        }});
+        if (resp.ok) {{
+            const li = btnEl.closest('li');
+            li.style.transition = 'opacity 0.3s';
+            li.style.opacity = '0';
+            setTimeout(() => li.remove(), 300);
+        }} else {{
+            alert('Could not mark done');
+            btnEl.disabled = false;
+        }}
+    }} catch(e) {{
+        alert('Error: ' + e.message);
+        btnEl.disabled = false;
+    }}
+}}
+
 async function refreshStatus() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
@@ -905,6 +950,8 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self._handle_generate()
         elif self.path == "/api/refresh":
             self._handle_refresh()
+        elif self.path == "/api/todo/done":
+            self._handle_todo_done()
         else:
             self.send_error(404)
 
@@ -978,6 +1025,26 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(msg)
 
+    def _handle_todo_done(self) -> None:
+        """Mark a single todo as done."""
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len))
+            todo_id = int(body["id"])
+            success = mark_done(todo_id)
+            if success:
+                self._serve_json({"ok": True})
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "not found or already done"}')
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(str(e).encode("utf-8"))
+
     def log_message(self, format: str, *args) -> None:
         """Quieter logging."""
         print(f"[PORTAL] {args[0]}" if args else "")
@@ -993,6 +1060,11 @@ def build_brief(
 ) -> dict[str, Any]:
     """Build a complete brief — gather, rank, script, synthesize, render HTML."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 0. Ensure DB ready; auto-migrate flat files on first run
+    init_db()
+    from tools.migrate_todos import auto_migrate_if_needed
+    auto_migrate_if_needed()
 
     # 1. Gather
     all_statuses = gather_all_statuses()
