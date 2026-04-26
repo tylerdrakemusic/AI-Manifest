@@ -222,6 +222,27 @@ header .subtitle {
     content: "☐ ";
     color: var(--accent-orange);
 }
+.todo-section {
+    margin-top: 0.5rem;
+}
+.todo-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.3rem;
+    display: inline-block;
+}
+.ai-label {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent);
+}
+.tyler-label {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent-green);
+}
 
 /* Script Section */
 .script-section {
@@ -321,7 +342,7 @@ footer {
         </div>
         <div class="timestamp">
             <span class="status-dot status-live"></span>
-            Last generated: 2026-04-23 02:49:43
+            Last generated: 2026-04-26 11:28:49
         </div>
     </header>
 
@@ -335,10 +356,33 @@ footer {
     <div class="controls" id="controls">
         <label for="voiceSelect">Voice:</label>
         <select id="voiceSelect">
-            <option value="">No voices available</option>
+            <option value="CwhRBWXzGAHq8TQ4Fs17">Roger - Laid-Back, Casual, Resonant</option>
+<option value="EXAVITQu4vr4xnSDxMaL">Sarah - Mature, Reassuring, Confident</option>
+<option value="FGY2WhTYpPnrIDTdsKH5">Laura - Enthusiast, Quirky Attitude</option>
+<option value="IKne3meq5aSn9XLyUdCD">Charlie - Deep, Confident, Energetic</option>
+<option value="JBFqnCBsd6RMkjVDRZzb">George - Warm, Captivating Storyteller</option>
+<option value="N2lVS1w4EtoT3dr4eOWO">Callum - Husky Trickster</option>
+<option value="SAz9YHcvj6GT2YYXdXww">River - Relaxed, Neutral, Informative</option>
+<option value="SOYHLrjzK2X1ezoPC6cr">Harry - Fierce Warrior</option>
+<option value="TX3LPaxmHKxFdv7VOQHJ">Liam - Energetic, Social Media Creator</option>
+<option value="Xb7hH8MSUJpSbSDYk0k2">Alice - Clear, Engaging Educator</option>
+<option value="XrExE9yKIg1WjnnlVkGX">Matilda - Knowledgable, Professional</option>
+<option value="bIHbv24MWmeRgasZH58o">Will - Relaxed Optimist</option>
+<option value="cgSgspJ2msm6clMCkdW9">Jessica - Playful, Bright, Warm</option>
+<option value="cjVigY5qzO86Huf0OWal">Eric - Smooth, Trustworthy</option>
+<option value="hpp4J3VqNfWAUOO0d1Us">Bella - Professional, Bright, Warm</option>
+<option value="iP95p4xoKVk53GoZ742B">Chris - Charming, Down-to-Earth</option>
+<option value="nPczCjzI2devNBz1zQrb">Brian - Deep, Resonant and Comforting</option>
+<option value="onwK4e9ZLuTAKqWW03F9">Daniel - Steady Broadcaster</option>
+<option value="pFZP5JQG7iQjIQuC4Bku">Lily - Velvety Actress</option>
+<option value="pNInz6obpgDQGcFmaJgB">Adam - Dominant, Firm</option>
+<option value="pqHfZKP75CvOlQylNhV4">Bill - Wise, Mature, Balanced</option>
+<option value="tKGydS95CTU5mw5Bk440">Candi</option>
+<option value="umnqvrAgTzVmk2uylgt7">Abu</option>
+<option value="K9Bi2LxzfOAssYFfahr4">Maybell</option>
         </select>
         <button id="generateBtn" onclick="generateBrief()">
-            🎙️ Generate Audio Brief
+            🔄 Regenerate
         </button>
         <button id="refreshBtn" onclick="refreshStatus()">
             🔄 Refresh Status
@@ -359,11 +403,18 @@ footer {
             <h3>Music</h3>
         </div>
         <div class="progress-bar-container">
-            <div class="progress-bar" style="width: 0%"></div>
-            <span class="progress-label">0/37 tasks (0%)</span>
+            <div class="progress-bar" style="width: 3%"></div>
+            <span class="progress-label">1/35 tasks (3%)</span>
         </div>
-        <p class="summary">❤Music: 37 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs.</p>
-        <ul class='todo-list'><li>**MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.</li><li>Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`</li><li>Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs</li><li>**🔴 URGENT: Write bridge for untitled 2026 original** — Melody + lyrics needed. Song template: `studio_master/song_templates/untitled_tyler_original_2026.json`. Key: Am, suspended voicings. Bridge should break the sus pattern for contrast/resolution. Hash out with producer at Hyperthreat Studios. Chorus lyrics also still open.</li></ul>
+        <p class="summary">❤Music: 34 open tasks, 1 completed (3% done). Top priorities: Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs; Import CopperCreek metadata from `f:\❤Music\bands\copperCreek` into `artist_profiles` and related tables.</p>
+        <div class="todo-section">
+            <div class="todo-label ai-label">🤖 AI Tasks (22)</div>
+            <ul class="todo-list"><li>Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`</li><li>Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs</li><li>Import CopperCreek metadata from `f:\❤Music\bands\copperCreek` into `artist_profiles` and related tables</li></ul>
+        </div>
+        <div class="todo-section">
+            <div class="todo-label tyler-label">👤 Tyler's Tasks (12)</div>
+            <ul class="todo-list"><li>**🔴 TOP PRIORITY / THIS WEEKEND: Review CC Prost 05022026 setlist** — Go through the May 2nd Probst gig setlist (`CC Prost 05022026`) and identify risky areas in the performance (transitions, tempos, tricky parts, anything that could go sideways). Shore those up before the gig.</li><li>**🔴 TOP PRIORITY / THIS WEEKEND: Isolate Marigolds Suno rough** — Work on separating/isolating the stems or arrangement from the Suno draft of &quot;Marigolds.&quot; Goal: pull out usable elements, strip the AI-generated bed, and get the song to a place where it can be developed as a human production.</li><li>**Hyperthreat Studios** — Is this a rented studio or home setup? Document address/contact in `ARTIST_PROFILE.json`.</li></ul>
+        </div>
     </div>
     
 
@@ -375,10 +426,17 @@ footer {
         </div>
         <div class="progress-bar-container">
             <div class="progress-bar" style="width: 0%"></div>
-            <span class="progress-label">0/19 tasks (0%)</span>
+            <span class="progress-label">0/21 tasks (0%)</span>
         </div>
-        <p class="summary">∞Life: 19 open tasks, 0 completed (0% done). Top priorities: Research CRISPR accessibility — legal landscape, services, costs; Research telomere testing services (TeloYears, SpectraCell, etc.); Integrate additional data sources: sleep tracking, heart rate, activity.</p>
-        <ul class='todo-list'><li>Research CRISPR accessibility — legal landscape, services, costs</li><li>Research telomere testing services (TeloYears, SpectraCell, etc.)</li><li>Integrate additional data sources: sleep tracking, heart rate, activity</li><li>**Verify nightly batch files** — Check all 4 sync logs tomorrow: MFP (23:00), Trainerize (23:15), Withings (23:30), Garmin (23:45).</li></ul>
+        <p class="summary">∞Life: 21 open tasks, 0 completed (0% done). Top priorities: **Garmin DI token**: Run `f:\∞Life\tools\garmin_browser_auth.py` once Cloudflare IP block clears (~24-72h from 2026-04-25). Populates `di_token` in `tools/.garmin_tokens/garmin_tokens.json` — `master_sync.py` will auto-pick it up on next run.; **MFP session token refresh**: When `master_sync.py` warns `⚠ ACTION NEEDED: MFP session token expired`, extract fresh `__Secure-next-auth.session-token` and `cf_clearance` cookies from Brave DevTools and update `MFP_SESSION_TOKEN` + `MFP_CF_CLEARANCE` in Windows System Environment Variables (Machine scope for token, User scope for cf_clearance). Token lifespan ~30 days.; Research CRISPR accessibility — legal landscape, services, costs.</p>
+        <div class="todo-section">
+            <div class="todo-label ai-label">🤖 AI Tasks (14)</div>
+            <ul class="todo-list"><li>**Garmin DI token**: Run `f:\∞Life\tools\garmin_browser_auth.py` once Cloudflare IP block clears (~24-72h from 2026-04-25). Populates `di_token` in `tools/.garmin_tokens/garmin_tokens.json` — `master_sync.py` will auto-pick it up on next run.</li><li>**MFP session token refresh**: When `master_sync.py` warns `⚠ ACTION NEEDED: MFP session token expired`, extract fresh `__Secure-next-auth.session-token` and `cf_clearance` cookies from Brave DevTools and update `MFP_SESSION_TOKEN` + `MFP_CF_CLEARANCE` in Windows System Environment Variables (Machine scope for token, User scope for cf_clearance). Token lifespan ~30 days.</li><li>Research CRISPR accessibility — legal landscape, services, costs</li></ul>
+        </div>
+        <div class="todo-section">
+            <div class="todo-label tyler-label">👤 Tyler's Tasks (7)</div>
+            <ul class="todo-list"><li>**Verify nightly batch files** — Check all 4 sync logs tomorrow: MFP (23:00), Trainerize (23:15), Withings (23:30), Garmin (23:45).</li><li>**Log diet in MyFitnessPal** — Auto-sync pulls nightly. Even approximate logging helps.</li><li>**Weigh in daily on Garmin Index S2** — Auto-syncs to Garmin Connect → ∞Life DB nightly at 23:45.</li></ul>
+        </div>
     </div>
     
 
@@ -393,27 +451,34 @@ footer {
             <span class="progress-label">0/8 tasks (0%)</span>
         </div>
         <p class="summary">⟨ψ⟩Quantum: 8 open tasks, 0 completed (0% done). Top priorities: Implement VQE for molecular simulation (H₂, LiH); Prototype quantum walk music generator (tie-in with ❤Music); Implement quantum kernel SVM classifier (tie-in with ∞Life).</p>
-        <ul class='todo-list'><li>Implement VQE for molecular simulation (H₂, LiH)</li><li>Prototype quantum walk music generator (tie-in with ❤Music)</li><li>Implement quantum kernel SVM classifier (tie-in with ∞Life)</li><li>**Explore IBM Quantum paid tiers** — 10 min/month is enough for cache fills but limits algorithm research. Evaluate cost/benefit of Lite or Standard plan.</li></ul>
+        <div class="todo-section">
+            <div class="todo-label ai-label">🤖 AI Tasks (5)</div>
+            <ul class="todo-list"><li>Implement VQE for molecular simulation (H₂, LiH)</li><li>Prototype quantum walk music generator (tie-in with ❤Music)</li><li>Implement quantum kernel SVM classifier (tie-in with ∞Life)</li></ul>
+        </div>
+        <div class="todo-section">
+            <div class="todo-label tyler-label">👤 Tyler's Tasks (3)</div>
+            <ul class="todo-list"><li>**Explore IBM Quantum paid tiers** — 10 min/month is enough for cache fills but limits algorithm research. Evaluate cost/benefit of Lite or Standard plan.</li><li>**Clean up pyClones** — `shorsClone.py`, `shorsV2Clone.py`, `dicksonsClone.py` in `executedcode/pyClones/` are now redundant. Archive or delete.</li><li>**Monitor Amazon Braket** — Challenger #2 in case IBM sunsets free tier. QPU cost would be ~$2/month for cache fills via `qiskit-braket-provider`.</li></ul>
+        </div>
     </div>
     
     </div>
 
     <div class="script-section" id="scriptSection" onclick="this.classList.toggle('open')">
         <h3>📝 Brief Script</h3>
-        <div class="script-text">Executive Project Brief — 2026-04-23 02:49:43.
+        <div class="script-text">Executive Project Brief — 2026-04-26 11:28:49.
 
 Good day, Tyler. Here&#x27;s your priority status update.
 
 Priority 1: ❤ Music.
-❤Music: 37 open tasks, 0 completed (0% done). Top priorities: **MCP server analysis + install** — Playwright MCP is the highest-priority for ❤Music: replaces Edge headless subprocess in `tools/print_doc.py`, enables Spotify/DistroKid web automation. SQLite MCP would allow direct DB queries without Python scripts. Full candidate list and install decisions tracked in `⊕Workspace/TODO_AI.md`.; Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs.
+❤Music: 34 open tasks, 1 completed (3% done). Top priorities: Identify duplicate recordings across `f:\Masters`, `G:\TylerJamesDrake\rockstar`, and `f:\❤Music\recordings`; Import existing lyrics files from `f:\❤Music\lyrics` into the `lyrics` table with file path refs; Import CopperCreek metadata from `f:\❤Music\bands\copperCreek` into `artist_profiles` and related tables.
 
 Priority 2: ∞ Life.
-∞Life: 19 open tasks, 0 completed (0% done). Top priorities: Research CRISPR accessibility — legal landscape, services, costs; Research telomere testing services (TeloYears, SpectraCell, etc.); Integrate additional data sources: sleep tracking, heart rate, activity.
+∞Life: 21 open tasks, 0 completed (0% done). Top priorities: **Garmin DI token**: Run `f:\∞Life\tools\garmin_browser_auth.py` once Cloudflare IP block clears (~24-72h from 2026-04-25). Populates `di_token` in `tools/.garmin_tokens/garmin_tokens.json` — `master_sync.py` will auto-pick it up on next run.; **MFP session token refresh**: When `master_sync.py` warns `⚠ ACTION NEEDED: MFP session token expired`, extract fresh `__Secure-next-auth.session-token` and `cf_clearance` cookies from Brave DevTools and update `MFP_SESSION_TOKEN` + `MFP_CF_CLEARANCE` in Windows System Environment Variables (Machine scope for token, User scope for cf_clearance). Token lifespan ~30 days.; Research CRISPR accessibility — legal landscape, services, costs.
 
 Priority 3: ⟨ψ⟩ Quantum.
 ⟨ψ⟩Quantum: 8 open tasks, 0 completed (0% done). Top priorities: Implement VQE for molecular simulation (H₂, LiH); Prototype quantum walk music generator (tie-in with ❤Music); Implement quantum kernel SVM classifier (tie-in with ∞Life).
 
-Across your top 3 priorities, you have 64 open tasks. Focus on the highest-impact items first. End of brief.</div>
+Across your top 3 priorities, you have 63 open tasks. Focus on the highest-impact items first. End of brief.</div>
     </div>
 
     <div class="all-projects">
@@ -432,15 +497,15 @@ Across your top 3 priorities, you have 64 open tasks. Focus on the highest-impac
                 
         <tr>
             <td>❤ Music</td>
-            <td>37</td>
-            <td>0</td>
-            <td>0%</td>
+            <td>34</td>
+            <td>1</td>
+            <td>3%</td>
             <td>✅</td>
         </tr>
         
         <tr>
             <td>∞ Life</td>
-            <td>19</td>
+            <td>21</td>
             <td>0</td>
             <td>0%</td>
             <td>✅</td>
@@ -456,17 +521,17 @@ Across your top 3 priorities, you have 64 open tasks. Focus on the highest-impac
         
         <tr>
             <td>👁 AI-Manifest</td>
-            <td>5</td>
+            <td>4</td>
             <td>10</td>
-            <td>67%</td>
+            <td>71%</td>
             <td></td>
         </tr>
         
         <tr>
             <td>⊕ Workspace</td>
-            <td>8</td>
-            <td>0</td>
-            <td>0%</td>
+            <td>5</td>
+            <td>3</td>
+            <td>38%</td>
             <td></td>
         </tr>
         
@@ -476,7 +541,7 @@ Across your top 3 priorities, you have 64 open tasks. Focus on the highest-impac
 
     <footer>
         👁 AI-Manifest · Executive Audio Brief Portal · Powered by ElevenLabs<br>
-        Tyler James Drake · Generated 2026-04-23 02:49:43
+        Tyler James Drake · Generated 2026-04-26 11:28:49
     </footer>
 </div>
 
@@ -511,7 +576,7 @@ async function generateBrief() {
         alert('Request failed: ' + e.message);
     } finally {
         btn.disabled = false;
-        btn.textContent = '🎙️ Generate Audio Brief';
+        btn.textContent = '🔄 Regenerate';
     }
 }
 
