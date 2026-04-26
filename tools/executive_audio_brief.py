@@ -44,6 +44,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
+from src.utils.lily_portrait import get_portrait_img_tag
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -351,6 +352,10 @@ def generate_portal_html(
         _status_card_html(p, i) for i, p in enumerate(top3, 1)
     )
 
+    # Lily portrait — injected as inline data-URI img tag
+    # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
+    lily_img_tag = get_portrait_img_tag(max_width=140)
+
     # Voice selector options
     voice_options = "\n".join(
         f'<option value="{html.escape(v["voice_id"])}">{html.escape(v["name"])}</option>'
@@ -447,6 +452,9 @@ header {{
     margin-bottom: 2rem;
     padding-bottom: 1.5rem;
     border-bottom: 1px solid var(--border);
+}}
+.lily-portrait {{
+    margin-bottom: 1rem;
 }}
 header h1 {{
     font-size: 2rem;
@@ -746,6 +754,10 @@ footer {{
 <body>
 <div class="container">
     <header>
+        <!-- LILY_PORTRAIT -->
+        <div class="lily-portrait">
+            {lily_img_tag}
+        </div>
         <h1>👁 Executive Audio Brief Portal</h1>
         <div class="subtitle">
             Cross-project status intelligence · ElevenLabs voice synthesis
