@@ -41,6 +41,7 @@ output/images/
 
 # Databases (SQLite / SQLCipher)
 src/data/*.db
+!src/data/manifest_todos.db
 src/data/*.db-shm
 src/data/*.db-wal
 *.sqlite
