@@ -15,3 +15,7 @@
 | 2026-04-18 | Added ElevenLabs API key (Tyler) | free tier, 10K chars |
 | 2026-04-18 | Upgraded to Creator tier (Tyler) | 131K chars/mo |
 | 2026-04-24 | Playwright MCP unblocked | Installed at user level (`@playwright/mcp@latest`) — no longer needs admin Node.js install |
+| 2026-04-26 | Requested project creation (Tyler) | archived from TODO_TYLER.md |
+| 2026-04-26 | Added ElevenLabs API key (Tyler) | free tier, 10K chars — archived from TODO_TYLER.md |
+| 2026-04-26 | Upgraded to Creator tier (Tyler) | 131K chars/mo — archived from TODO_TYLER.md |
+| 2026-04-26 | Install Node.js (Tyler) | v22.14.0 confirmed installed — archived from TODO_TYLER.md |
