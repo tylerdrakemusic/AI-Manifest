@@ -43,7 +43,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.integrations.elevenlabs import ElevenLabsClient
-from src.integrations.elevenlabs.settings import DEFAULT_MODEL_ID
+from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -299,11 +299,24 @@ def _status_card_html(proj: dict, rank: int) -> str:
     total = active + done
     pct = round(100 * done / total) if total > 0 else 0
 
-    top_todos_html = ""
-    all_todos = (proj["ai_todos"][:3] + proj["tyler_todos"][:2])[:4]
-    if all_todos:
-        items = "".join(f"<li>{html.escape(t)}</li>" for t in all_todos)
-        top_todos_html = f"<ul class='todo-list'>{items}</ul>"
+    ai_count = len(proj["ai_todos"])
+    tyler_count = len(proj["tyler_todos"])
+
+    ai_todos_html = ""
+    if proj["ai_todos"]:
+        items = "".join(f"<li>{html.escape(t)}</li>" for t in proj["ai_todos"][:3])
+        ai_todos_html = f"""<div class="todo-section">
+            <div class="todo-label ai-label">\U0001f916 AI Tasks ({ai_count})</div>
+            <ul class="todo-list">{items}</ul>
+        </div>"""
+
+    tyler_todos_html = ""
+    if proj["tyler_todos"]:
+        items = "".join(f"<li>{html.escape(t)}</li>" for t in proj["tyler_todos"][:3])
+        tyler_todos_html = f"""<div class="todo-section">
+            <div class="todo-label tyler-label">\U0001f464 Tyler's Tasks ({tyler_count})</div>
+            <ul class="todo-list">{items}</ul>
+        </div>"""
 
     badge_class = "badge-1" if rank == 1 else ("badge-2" if rank == 2 else "badge-3")
 
@@ -319,7 +332,8 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
         <p class="summary">{summary}</p>
-        {top_todos_html}
+        {ai_todos_html}
+        {tyler_todos_html}
     </div>
     """
 
@@ -618,6 +632,27 @@ header .subtitle {{
     content: "☐ ";
     color: var(--accent-orange);
 }}
+.todo-section {{
+    margin-top: 0.5rem;
+}}
+.todo-label {{
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.3rem;
+    display: inline-block;
+}}
+.ai-label {{
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent);
+}}
+.tyler-label {{
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent-green);
+}}
 
 /* Script Section */
 .script-section {{
@@ -729,7 +764,7 @@ footer {{
             {voice_options}
         </select>
         <button id="generateBtn" onclick="generateBrief()">
-            🎙️ Generate Audio Brief
+            🔄 Regenerate
         </button>
         <button id="refreshBtn" onclick="refreshStatus()">
             🔄 Refresh Status
@@ -805,7 +840,7 @@ async function generateBrief() {{
         alert('Request failed: ' + e.message);
     }} finally {{
         btn.disabled = false;
-        btn.textContent = '🎙️ Generate Audio Brief';
+        btn.textContent = '🔄 Regenerate';
     }}
 }}
 
