@@ -1,0 +1,1 @@
+# FR-20260426-huggingface-image-integration — stub (implementation pending)\n
