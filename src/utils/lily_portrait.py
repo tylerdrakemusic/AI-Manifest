@@ -17,6 +17,7 @@ Usage::
 from __future__ import annotations
 
 import base64
+import importlib.util
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -25,8 +26,34 @@ from pathlib import Path
 # Workspace integration path bootstrap
 # ---------------------------------------------------------------------------
 _WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
-if str(_WORKSPACE_ROOT) not in sys.path:
-    sys.path.insert(0, str(_WORKSPACE_ROOT))
+
+
+def _load_workspace_module(module_key: str, relative: str):
+    """Load a module from ⊕Workspace by file path, bypassing src namespace conflicts.
+
+    Both ⊕Workspace and 👁AI-Manifest have a ``src/__init__.py``, making ``src``
+    a regular package. Python resolves ``src`` to whichever parent directory
+    appears first in ``sys.path``, which means workspace integrations are
+    unreachable via normal imports when running from within AI-Manifest.
+
+    This function loads the module by absolute file path using importlib, caching
+    the result in ``sys.modules`` so subsequent imports are free.
+    """
+    if module_key in sys.modules:
+        return sys.modules[module_key]
+    file_path = _WORKSPACE_ROOT / relative
+    spec = importlib.util.spec_from_file_location(module_key, file_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_key] = module
+    try:
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    except Exception:
+        del sys.modules[module_key]
+        return None
+    return module
+
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -93,9 +120,13 @@ def _build_prompt() -> str:
 def _try_dalle3(prompt: str, save_dir: Path) -> Path | None:
     """Attempt to generate the portrait via DALL-E 3. Returns Path or None."""
     try:
-        from src.integrations.dalle3 import DallE3Client, DallE3Error  # type: ignore[import]
-
-        client = DallE3Client()
+        mod = _load_workspace_module(
+            "_ws_dalle3_client",
+            "src/integrations/dalle3/client.py",
+        )
+        if mod is None:
+            return None
+        client = mod.DallE3Client()
         path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
         return path
     except Exception:
@@ -105,9 +136,13 @@ def _try_dalle3(prompt: str, save_dir: Path) -> Path | None:
 def _try_huggingface(prompt: str, save_dir: Path) -> Path | None:
     """Attempt to generate the portrait via HuggingFace Inference. Returns Path or None."""
     try:
-        from src.integrations.huggingface import HuggingFaceImageClient, HuggingFaceImageError  # type: ignore[import]
-
-        client = HuggingFaceImageClient()
+        mod = _load_workspace_module(
+            "_ws_hf_image_client",
+            "src/integrations/huggingface/client.py",
+        )
+        if mod is None:
+            return None
+        client = mod.HuggingFaceImageClient()
         path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
         return path
     except Exception:
