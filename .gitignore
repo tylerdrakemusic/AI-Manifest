@@ -28,6 +28,7 @@
 output/*.mp3
 output/*.wav
 output/*.ogg
+output/images/
 
 # Binaries / executables
 *.exe
