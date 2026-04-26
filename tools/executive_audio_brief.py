@@ -235,15 +235,16 @@ def synthesize_brief(
     """Synthesize the brief script to an MP3 file via ElevenLabs."""
     client = ElevenLabsClient()
 
-    # Pick a voice — use provided or first available
+    # Pick a voice — prefer Lily, then Tyler/Drake name match, then first available
     if not voice_id:
         voices = client.list_voices()
-        # Prefer a voice named containing "Tyler" or first professional voice
         voice_id = voices[0]["voice_id"] if voices else None
         for v in voices:
-            if "tyler" in v["name"].lower() or "drake" in v["name"].lower():
+            if "lily" in v["name"].lower():
                 voice_id = v["voice_id"]
                 break
+            if "tyler" in v["name"].lower() or "drake" in v["name"].lower():
+                voice_id = v["voice_id"]
 
     if not voice_id:
         raise RuntimeError("No ElevenLabs voices available")
@@ -350,9 +351,10 @@ def generate_portal_html(
     # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
     lily_img_tag = get_portrait_img_tag(max_width=140)
 
-    # Voice selector options
+    # Voice selector options — Lily is default
+    _lily_id = next((v["voice_id"] for v in voices if "lily" in v["name"].lower()), None)
     voice_options = "\n".join(
-        f'<option value="{html.escape(v["voice_id"])}">{html.escape(v["name"])}</option>'
+        f'<option value="{html.escape(v["voice_id"])}"{" selected" if v["voice_id"] == _lily_id else ""}>{html.escape(v["name"])}</option>'
         for v in voices
     )
     if not voice_options:
