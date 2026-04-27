@@ -98,6 +98,15 @@ def mark_done(todo_id: int) -> bool:
     return cur.rowcount == 1
 
 
+def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
+    """Return a single todo row by id, or None if not found."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM todos WHERE id=?", (todo_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def insert_todo(project: str, source: str, text: str) -> int | None:
     """Insert a todo; returns new row id or None if it already exists (idempotent)."""
     created_at = datetime.now(timezone.utc).isoformat()

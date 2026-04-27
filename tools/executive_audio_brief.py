@@ -45,7 +45,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
-from src.utils.todos_db import init_db, get_open_todos, get_done_todos, mark_done
+from src.utils.todos_db import init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -323,7 +323,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <span class="project-sigil">{sigil}</span>
             <h3>{name}</h3>
         </div>
-        <div class="progress-bar-container">
+        <div class="progress-bar-container" data-open="{active}" data-total="{total}">
             <div class="progress-bar" style="width: {pct}%"></div>
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
@@ -879,6 +879,28 @@ async function generateBrief() {{
     }}
 }}
 
+function _inlineMsg(li, text, color) {{
+    const span = document.createElement('span');
+    span.textContent = text;
+    span.style.cssText = 'color:' + color + ';font-size:0.75rem;margin-left:0.4rem;';
+    li.appendChild(span);
+}}
+
+function _updateProgressBar(card) {{
+    const pbc = card.querySelector('.progress-bar-container');
+    if (!pbc) return;
+    let open = parseInt(pbc.dataset.open || '0', 10);
+    const total = parseInt(pbc.dataset.total || '0', 10);
+    if (open > 0) open -= 1;
+    pbc.dataset.open = String(open);
+    const done = total - open;
+    const pct = total > 0 ? Math.round(100 * done / total) : 0;
+    const bar = pbc.querySelector('.progress-bar');
+    const label = pbc.querySelector('.progress-label');
+    if (bar) bar.style.width = pct + '%';
+    if (label) label.textContent = done + '/' + total + ' tasks (' + pct + '%)';
+}}
+
 async function markDone(todoId, btnEl) {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     btnEl.disabled = true;
@@ -888,18 +910,26 @@ async function markDone(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
+        const li = btnEl.closest('li');
+        const card = li.closest('.status-card');
         if (resp.ok) {{
-            const li = btnEl.closest('li');
             li.style.transition = 'opacity 0.3s';
             li.style.opacity = '0';
-            setTimeout(() => li.remove(), 300);
+            setTimeout(() => {{
+                li.remove();
+                _updateProgressBar(card);
+            }}, 300);
+        }} else if (resp.status === 409) {{
+            btnEl.style.display = 'none';
+            _inlineMsg(li, 'Already done', 'var(--accent-green)');
         }} else {{
-            alert('Could not mark done');
-            btnEl.disabled = false;
+            btnEl.style.display = 'none';
+            _inlineMsg(li, 'Not found', 'var(--text-muted)');
         }}
     }} catch(e) {{
-        alert('Error: ' + e.message);
         btnEl.disabled = false;
+        const li = btnEl.closest('li');
+        _inlineMsg(li, 'Error: ' + e.message, 'var(--accent-red)');
     }}
 }}
 
@@ -957,8 +987,21 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def _build_fresh_portal_html(self) -> str:
+        """Regenerate portal HTML from live DB state (no TTS / voice API calls)."""
+        init_db()
+        from tools.migrate_todos import auto_migrate_if_needed
+        auto_migrate_if_needed()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        all_statuses = gather_all_statuses()
+        top3 = rank_projects(all_statuses)
+        script = generate_brief_script(top3, timestamp)
+        existing_audio = self.portal_state.get("audio_path")
+        voices = self.portal_state.get("voices", [])
+        return generate_portal_html(top3, script, existing_audio, voices, all_statuses, timestamp)
+
     def _serve_portal(self) -> None:
-        portal_html = self.portal_state.get("html", "<h1>Loading...</h1>")
+        portal_html = self._build_fresh_portal_html()
         body = portal_html.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1033,6 +1076,22 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             content_len = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(content_len))
             todo_id = int(body["id"])
+
+            todo = get_todo_by_id(todo_id)
+            if todo is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "todo not found"}')
+                return
+
+            if todo["done"] == 1:
+                self.send_response(409)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "already done"}')
+                return
+
             success = mark_done(todo_id)
             if success:
                 self._serve_json({"ok": True})
