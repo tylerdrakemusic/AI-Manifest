@@ -13,7 +13,8 @@
       "cli": "C:\\G\\python.exe tools/executive_audio_brief.py --serve --port 8200",
       "category": "intelligence",
       "icon": "🎙️",
-      "port": 8200
+      "port": 8200,
+      "priority": 30
     }
   ]
 }
