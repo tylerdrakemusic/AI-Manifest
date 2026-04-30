@@ -109,3 +109,6 @@ src/data/backups/
 src/data/*.db-journal
 src/data/backups/
 *.tmp
+
+brief_log.txt
+output/report.txt
