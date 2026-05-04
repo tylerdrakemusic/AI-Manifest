@@ -21,6 +21,7 @@ import sys
 import textwrap
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -1194,6 +1195,11 @@ async function lilyModalRegen() {{
 # HTTP server with API endpoints
 # ---------------------------------------------------------------------------
 
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in a new thread, preventing blocking."""
+    daemon_threads = True
+
+
 class BriefRequestHandler(SimpleHTTPRequestHandler):
     """Handler that serves the portal and handles API requests."""
 
@@ -1499,7 +1505,7 @@ def main() -> None:
 
     if args.serve:
         BriefRequestHandler.portal_state = result
-        server = HTTPServer(("127.0.0.1", args.port), BriefRequestHandler)
+        server = ThreadedHTTPServer(("127.0.0.1", args.port), BriefRequestHandler)
         url = f"http://127.0.0.1:{args.port}"
         print(f"\n🌐 Portal live at {url}")
         print("Press Ctrl+C to stop.\n")
