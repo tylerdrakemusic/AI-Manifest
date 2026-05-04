@@ -898,8 +898,7 @@ footer {{
     <label class="modal-label" for="lily-positive-prompt">Positive Prompt</label>
     <textarea id="lily-positive-prompt" rows="10" spellcheck="false"></textarea>
     <div class="modal-actions">
-      <button class="btn-save" id="lily-save-btn" onclick="lilyModalSave()">Save</button>
-      <button class="btn-regen" id="lily-regen-btn" onclick="lilyModalRegen()">Regenerate Now</button>
+      <button class="btn-save" id="lily-save-btn" onclick="lilyModalSave()">Save & Regenerate</button>
       <button class="btn-cancel" onclick="closeLilyModal()">Cancel</button>
     </div>
     <div class="modal-status" id="lily-modal-status"></div>
@@ -1121,44 +1120,13 @@ async function lilyModalSave() {{
     const status = document.getElementById('lily-modal-status');
     const prompt = document.getElementById('lily-positive-prompt').value.trim();
     if (!prompt) {{ status.textContent = 'Prompt cannot be empty.'; return; }}
+
     btn.disabled = true;
     btn.textContent = 'Saving…';
     status.textContent = '';
-    try {{
-        const resp = await fetch('/lily/prompt', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{positive_prompt: prompt}})
-        }});
-        if (resp.ok) {{
-            status.textContent = '✅ Prompt saved.';
-        }} else {{
-            status.textContent = 'Save failed (' + resp.status + ').';
-        }}
-    }} catch(e) {{
-        status.textContent = 'Error: ' + e.message;
-    }} finally {{
-        btn.disabled = false;
-        btn.textContent = 'Save';
-    }}
-}}
-
-async function lilyModalRegen() {{
-    if (IS_STATIC) {{ _showServeHint(); return; }}
-    // Save first, then regen
-    const saveBtn = document.getElementById('lily-save-btn');
-    const regenBtn = document.getElementById('lily-regen-btn');
-    const status = document.getElementById('lily-modal-status');
-    const prompt = document.getElementById('lily-positive-prompt').value.trim();
-    if (!prompt) {{ status.textContent = 'Prompt cannot be empty.'; return; }}
-
-    saveBtn.disabled = true;
-    regenBtn.disabled = true;
-    regenBtn.textContent = 'Saving…';
-    status.textContent = '';
 
     try {{
-        // 1. Save
+        // 1. Save prompt
         const saveResp = await fetch('/lily/prompt', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
@@ -1169,8 +1137,8 @@ async function lilyModalRegen() {{
             return;
         }}
 
-        // 2. Regen
-        regenBtn.textContent = 'Regenerating…';
+        // 2. Regenerate portrait
+        btn.textContent = 'Regenerating…';
         const regenResp = await fetch('/lily/portrait/regen');
         if (regenResp.ok) {{
             status.textContent = '✅ Portrait regenerated. Reloading…';
@@ -1181,9 +1149,8 @@ async function lilyModalRegen() {{
     }} catch(e) {{
         status.textContent = 'Error: ' + e.message;
     }} finally {{
-        saveBtn.disabled = false;
-        regenBtn.disabled = false;
-        regenBtn.textContent = 'Regenerate Now';
+        btn.disabled = false;
+        btn.textContent = 'Save & Regenerate';
     }}
 }}
 </script>
