@@ -110,11 +110,40 @@ def _prune_old_portraits() -> None:
             pass
 
 
-def _build_prompt() -> str:
-    """Build today's portrait prompt with the daily outfit descriptor."""
+def _build_prompt() -> tuple[str, str | None]:
+    """Build the portrait prompt, preferring the DB active row.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        (positive_prompt, negative_prompt).  negative_prompt may be None.
+        If the DB is unavailable or has no active row, falls back to the
+        _BASE_PROMPT + outfit rotation logic; negative_prompt is None in
+        that case.
+    """
+    # --- Attempt DB load -------------------------------------------------
+    try:
+        import importlib.util as _ilu
+        import sys as _sys
+        _db_mod_key = "_lily_config_db"
+        if _db_mod_key not in _sys.modules:
+            _db_path = Path(__file__).resolve().parent / "lily_config_db.py"
+            _spec = _ilu.spec_from_file_location(_db_mod_key, _db_path)
+            if _spec and _spec.loader:
+                _mod = _ilu.module_from_spec(_spec)
+                _sys.modules[_db_mod_key] = _mod
+                _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+        _db_mod = _sys.modules.get(_db_mod_key)
+        if _db_mod is not None:
+            positive, negative = _db_mod.get_active_prompt()
+            return positive, negative
+    except Exception:
+        pass
+
+    # --- Fallback: outfit rotation ---------------------------------------
     weekday = datetime.today().isoweekday()  # 1=Mon … 7=Sun
     outfit = _OUTFIT_DESCRIPTORS[(weekday - 1) % len(_OUTFIT_DESCRIPTORS)]
-    return _BASE_PROMPT.format(outfit=outfit)
+    return _BASE_PROMPT.format(outfit=outfit), None
 
 
 def _try_dalle3(prompt: str, save_dir: Path) -> Path | None:
@@ -133,7 +162,11 @@ def _try_dalle3(prompt: str, save_dir: Path) -> Path | None:
         return None
 
 
-def _try_huggingface(prompt: str, save_dir: Path) -> Path | None:
+def _try_huggingface(
+    prompt: str,
+    save_dir: Path,
+    negative_prompt: str | None = None,
+) -> Path | None:
     """Attempt to generate the portrait via HuggingFace Inference. Returns Path or None."""
     try:
         mod = _load_workspace_module(
@@ -143,7 +176,17 @@ def _try_huggingface(prompt: str, save_dir: Path) -> Path | None:
         if mod is None:
             return None
         client = mod.HuggingFaceImageClient()
-        path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
+        # Pass negative_prompt if the client accepts it
+        try:
+            path = client.generate_image(
+                prompt,
+                output_dir=save_dir,
+                size="1024x1024",
+                negative_prompt=negative_prompt,
+            )
+        except TypeError:
+            # Older client signature without negative_prompt kwarg
+            path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
         return path
     except Exception:
         return None
@@ -180,19 +223,19 @@ def get_daily_portrait() -> Path:
     if today_path.exists():
         return today_path
 
-    prompt = _build_prompt()
+    positive_prompt, negative_prompt = _build_prompt()
     save_dir = _IMAGE_CACHE_DIR
 
-    # 2. DALL-E 3
-    result = _try_dalle3(prompt, save_dir)
+    # 2. HuggingFace (primary)
+    result = _try_huggingface(positive_prompt, save_dir, negative_prompt=negative_prompt)
     if result and result.exists():
         # Rename to canonical dated name so cache check works on re-entry
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
-    # 3. HuggingFace
-    result = _try_huggingface(prompt, save_dir)
+    # 3. DALL-E 3 (fallback)
+    result = _try_dalle3(positive_prompt, save_dir)
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
@@ -229,7 +272,8 @@ def get_portrait_img_tag(max_width: int = 160) -> str:
 
     return (
         f'<img src="{src}" alt="Lily — Executive Brief Host" '
-        f'style="max-width:{max_width}px; border-radius:50%; '
+        f'style="max-width:{max_width}px; width:{max_width}px; height:{max_width}px; '
+        f'object-fit:cover; border-radius:12px; '
         f'border:2px solid rgba(88,166,255,0.4); display:block; margin:0 auto;" '
         f'title="Lily · Generated {date.today().isoformat()}" />'
     )

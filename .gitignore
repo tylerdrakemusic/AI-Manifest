@@ -42,6 +42,8 @@ output/images/
 # Databases (SQLite / SQLCipher)
 src/data/*.db
 !src/data/manifest_todos.db
+# lily_config.db is covered by the glob above — never commit it (seed via tools/lily/seed_lily_config.py)
+# src/data/lily_config.db  <-- already ignored by src/data/*.db
 src/data/*.db-shm
 src/data/*.db-wal
 *.sqlite

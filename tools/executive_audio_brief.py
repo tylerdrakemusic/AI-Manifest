@@ -21,6 +21,7 @@ import sys
 import textwrap
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -772,14 +773,145 @@ footer {{
     padding-top: 1.5rem;
     border-top: 1px solid var(--border);
 }}
+
+/* ── Lily Prompt Modal ───────────────────────────────────────── */
+.lily-edit-btn {{
+    display: inline-block;
+    margin-top: 0.6rem;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    border: none;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}}
+.lily-edit-btn:hover {{ opacity: 0.85; }}
+
+.modal-overlay {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.72);
+    z-index: 9000;
+    align-items: center;
+    justify-content: center;
+}}
+.modal-overlay.open {{ display: flex; }}
+
+.modal-card {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.75rem;
+    width: min(640px, 94vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+}}
+.modal-card h2 {{
+    font-size: 1.15rem;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}}
+.modal-close {{
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.3rem;
+    cursor: pointer;
+    line-height: 1;
+}}
+.modal-close:hover {{ color: var(--text); }}
+.modal-label {{
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+    display: block;
+}}
+#lily-positive-prompt {{
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.85rem;
+    padding: 0.75rem;
+    resize: vertical;
+    font-family: inherit;
+    margin-bottom: 1rem;
+}}
+#lily-positive-prompt:focus {{
+    outline: none;
+    border-color: var(--accent);
+}}
+.modal-actions {{
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}}
+.modal-actions button {{
+    padding: 0.5rem 1.1rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}}
+.modal-actions button:disabled {{ opacity: 0.5; cursor: wait; }}
+.btn-save {{
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    color: #fff;
+}}
+.btn-regen {{
+    background: linear-gradient(135deg, var(--accent-green), #2ea043);
+    color: #fff;
+}}
+.btn-cancel {{
+    background: var(--bg);
+    border: 1px solid var(--border) !important;
+    color: var(--text-muted);
+}}
+.modal-status {{
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+    color: var(--text-muted);
+    min-height: 1.2em;
+}}
 </style>
 </head>
 <body>
+<!-- Lily Prompt Modal -->
+<div class="modal-overlay" id="lily-prompt-modal" onclick="lilyModalClickOutside(event)">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="lily-modal-title">
+    <button class="modal-close" onclick="closeLilyModal()" aria-label="Close">&times;</button>
+    <h2 id="lily-modal-title">Edit Lily&rsquo;s Portrait Prompt</h2>
+    <label class="modal-label" for="lily-positive-prompt">Positive Prompt</label>
+    <textarea id="lily-positive-prompt" rows="10" spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button class="btn-save" id="lily-save-btn" onclick="lilyModalSave()">Save & Regenerate</button>
+      <button class="btn-cancel" onclick="closeLilyModal()">Cancel</button>
+    </div>
+    <div class="modal-status" id="lily-modal-status"></div>
+  </div>
+</div>
 <div class="container">
     <header>
         <!-- LILY_PORTRAIT -->
         <div class="lily-portrait">
             {lily_img_tag}
+            <button class="lily-edit-btn" onclick="openLilyModal()" title="Edit Lily's portrait prompt">
+                ✏️ Edit Prompt
+            </button>
         </div>
         <h1>👁 Executive Audio Brief Portal</h1>
         <div class="subtitle">
@@ -952,6 +1084,75 @@ async function refreshStatus() {{
         btn.textContent = '🔄 Refresh Status';
     }}
 }}
+
+// ── Lily Prompt Modal ────────────────────────────────────────────────────
+function openLilyModal() {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
+    const modal = document.getElementById('lily-prompt-modal');
+    const ta = document.getElementById('lily-positive-prompt');
+    const status = document.getElementById('lily-modal-status');
+    status.textContent = 'Loading current prompt…';
+    ta.value = '';
+    modal.classList.add('open');
+    fetch('/lily/prompt')
+        .then(r => r.json())
+        .then(data => {{
+            ta.value = data.positive_prompt || '';
+            status.textContent = '';
+        }})
+        .catch(e => {{
+            status.textContent = 'Failed to load prompt: ' + e.message;
+        }});
+}}
+
+function closeLilyModal() {{
+    document.getElementById('lily-prompt-modal').classList.remove('open');
+    document.getElementById('lily-modal-status').textContent = '';
+}}
+
+function lilyModalClickOutside(e) {{
+    if (e.target === document.getElementById('lily-prompt-modal')) closeLilyModal();
+}}
+
+async function lilyModalSave() {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
+    const btn = document.getElementById('lily-save-btn');
+    const status = document.getElementById('lily-modal-status');
+    const prompt = document.getElementById('lily-positive-prompt').value.trim();
+    if (!prompt) {{ status.textContent = 'Prompt cannot be empty.'; return; }}
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    status.textContent = '';
+
+    try {{
+        // 1. Save prompt
+        const saveResp = await fetch('/lily/prompt', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{positive_prompt: prompt}})
+        }});
+        if (!saveResp.ok) {{
+            status.textContent = 'Save failed (' + saveResp.status + ').';
+            return;
+        }}
+
+        // 2. Regenerate portrait
+        btn.textContent = 'Regenerating…';
+        const regenResp = await fetch('/lily/portrait/regen');
+        if (regenResp.ok) {{
+            status.textContent = '✅ Portrait regenerated. Reloading…';
+            setTimeout(() => {{ closeLilyModal(); window.location.reload(); }}, 1200);
+        }} else {{
+            status.textContent = 'Regen failed (' + regenResp.status + '). Prompt was saved.';
+        }}
+    }} catch(e) {{
+        status.textContent = 'Error: ' + e.message;
+    }} finally {{
+        btn.disabled = false;
+        btn.textContent = 'Save & Regenerate';
+    }}
+}}
 </script>
 </body>
 </html>"""
@@ -960,6 +1161,11 @@ async function refreshStatus() {{
 # ---------------------------------------------------------------------------
 # HTTP server with API endpoints
 # ---------------------------------------------------------------------------
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in a new thread, preventing blocking."""
+    daemon_threads = True
+
 
 class BriefRequestHandler(SimpleHTTPRequestHandler):
     """Handler that serves the portal and handles API requests."""
@@ -974,6 +1180,10 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/voices":
             voices = list_available_voices()
             self._serve_json(voices)
+        elif self.path == "/lily/prompt":
+            self._handle_lily_get_prompt()
+        elif self.path == "/lily/portrait/regen":
+            self._handle_lily_regen()
         else:
             self.send_error(404)
 
@@ -984,6 +1194,8 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self._handle_refresh()
         elif self.path == "/api/todo/done":
             self._handle_todo_done()
+        elif self.path == "/lily/prompt":
+            self._handle_lily_post_prompt()
         else:
             self.send_error(404)
 
@@ -1106,6 +1318,72 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(str(e).encode("utf-8"))
 
+    def _handle_lily_get_prompt(self) -> None:
+        """GET /lily/prompt → JSON {"positive_prompt": "..."}"""
+        try:
+            from src.utils.lily_config_db import get_active_prompt
+            positive, _negative = get_active_prompt()
+            self._serve_json({"positive_prompt": positive})
+        except Exception as e:
+            msg = json.dumps({"error": str(e)}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.end_headers()
+            self.wfile.write(msg)
+
+    def _handle_lily_post_prompt(self) -> None:
+        """POST /lily/prompt → update DB active prompt → 200 OK"""
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len))
+            positive_prompt: str = body.get("positive_prompt", "").strip()
+            if not positive_prompt:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "positive_prompt is required"}')
+                return
+            from src.utils.lily_config_db import update_active_prompt
+            update_active_prompt(positive_prompt)
+            self._serve_json({"ok": True})
+        except Exception as e:
+            msg = json.dumps({"error": str(e)}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.end_headers()
+            self.wfile.write(msg)
+
+    def _handle_lily_regen(self) -> None:
+        """GET /lily/portrait/regen → delete today's cache + regenerate → JSON status"""
+        try:
+            from src.utils.lily_portrait import (
+                _today_cache_path,
+                _IMAGE_CACHE_DIR,
+                get_daily_portrait,
+            )
+            # Delete today's cached portrait so get_daily_portrait regenerates
+            today_path = _today_cache_path()
+            if today_path.exists():
+                today_path.unlink()
+            # Also delete today's SVG fallback if present
+            from datetime import date
+            today = date.today().isoformat()
+            svg_path = _IMAGE_CACHE_DIR / f"lily_portrait_{today}.svg"
+            if svg_path.exists():
+                svg_path.unlink()
+            # Regenerate
+            new_path = get_daily_portrait()
+            self._serve_json({"status": "ok", "path": str(new_path)})
+        except Exception as e:
+            msg = json.dumps({"error": str(e)}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.end_headers()
+            self.wfile.write(msg)
+
     def log_message(self, format: str, *args) -> None:
         """Quieter logging."""
         print(f"[PORTAL] {args[0]}" if args else "")
@@ -1194,7 +1472,7 @@ def main() -> None:
 
     if args.serve:
         BriefRequestHandler.portal_state = result
-        server = HTTPServer(("127.0.0.1", args.port), BriefRequestHandler)
+        server = ThreadedHTTPServer(("127.0.0.1", args.port), BriefRequestHandler)
         url = f"http://127.0.0.1:{args.port}"
         print(f"\n🌐 Portal live at {url}")
         print("Press Ctrl+C to stop.\n")
