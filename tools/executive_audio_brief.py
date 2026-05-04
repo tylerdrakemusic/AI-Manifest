@@ -451,6 +451,8 @@ header {{
     border-bottom: 1px solid var(--border);
 }}
 .lily-portrait {{
+    position: relative;
+    display: inline-block;
     margin-bottom: 1rem;
 }}
 header h1 {{
@@ -776,19 +778,25 @@ footer {{
 
 /* ── Lily Prompt Modal ───────────────────────────────────────── */
 .lily-edit-btn {{
-    display: inline-block;
-    margin-top: 0.6rem;
-    padding: 0.35rem 0.9rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #fff;
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(0,0,0,0.55);
     border: none;
-    border-radius: 20px;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     cursor: pointer;
+    opacity: 0.35;
     transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #fff;
 }}
-.lily-edit-btn:hover {{ opacity: 0.85; }}
+.lily-edit-btn:hover {{ opacity: 0.9; }}
 
 .modal-overlay {{
     display: none;
@@ -907,11 +915,10 @@ footer {{
 <div class="container">
     <header>
         <!-- LILY_PORTRAIT -->
-        <div class="lily-portrait">
+        <div class="lily-portrait" style="position:relative;display:inline-block;">
             {lily_img_tag}
-            <button class="lily-edit-btn" onclick="openLilyModal()" title="Edit Lily's portrait prompt">
-                ✏️ Edit Prompt
-            </button>
+            <button class="lily-edit-btn" onclick="openLilyModal()" title="Edit Lily's portrait prompt"
+              onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='0.35'">✏</button>
         </div>
         <h1>👁 Executive Audio Brief Portal</h1>
         <div class="subtitle">
