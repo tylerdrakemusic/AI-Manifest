@@ -46,7 +46,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
-from src.utils.todos_db import init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id
+from src.utils.todos_db import (
+    init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id,
+    add_todo, update_priority,
+)
+from src.utils.priority_scorer import score_priority
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -139,11 +143,11 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     done_count = len(get_done_todos(key))
 
     status["ai_todos"] = [
-        {"id": r["id"], "text": r["text"]}
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
         for r in open_rows if r["source"] == "AI"
     ]
     status["tyler_todos"] = [
-        {"id": r["id"], "text": r["text"]}
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
         for r in open_rows if r["source"] == "TYLER"
     ]
     status["active_tasks"] = len(open_rows)
@@ -230,25 +234,21 @@ def generate_brief_script(top3: list[dict], timestamp: str) -> str:
 
 def synthesize_brief(
     script: str,
-    voice_id: str | None = None,
     output_path: Path | None = None,
 ) -> Path:
-    """Synthesize the brief script to an MP3 file via ElevenLabs."""
+    """Synthesize the brief script to an MP3 file via ElevenLabs (Lily voice, hard-locked)."""
     client = ElevenLabsClient()
 
-    # Pick a voice — prefer Lily, then Tyler/Drake name match, then first available
-    if not voice_id:
-        voices = client.list_voices()
-        voice_id = voices[0]["voice_id"] if voices else None
-        for v in voices:
-            if "lily" in v["name"].lower():
-                voice_id = v["voice_id"]
-                break
-            if "tyler" in v["name"].lower() or "drake" in v["name"].lower():
-                voice_id = v["voice_id"]
-
-    if not voice_id:
-        raise RuntimeError("No ElevenLabs voices available")
+    # Hard-lock to Lily — raise clearly if not found
+    voices = client.list_voices()
+    lily_voice = next((v for v in voices if "lily" in v["name"].lower()), None)
+    if not lily_voice:
+        raise RuntimeError(
+            "Lily voice not found in ElevenLabs account. "
+            "Cannot generate executive brief without Lily. "
+            "Check your ElevenLabs account or add the Lily voice."
+        )
+    voice_id = lily_voice["voice_id"]
 
     if output_path is None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -274,6 +274,17 @@ def list_available_voices() -> list[dict]:
 # HTML portal generation
 # ---------------------------------------------------------------------------
 
+def _priority_badge(priority: int) -> str:
+    """Return an inline priority badge HTML span."""
+    if priority >= 8:
+        cls = "p-high"
+    elif priority >= 5:
+        cls = "p-mid"
+    else:
+        cls = "p-low"
+    return f'<span class="priority-badge-inline {cls}">P{priority}</span>'
+
+
 def _status_card_html(proj: dict, rank: int) -> str:
     """Generate an HTML card for a project status."""
     sigil = html.escape(proj["sigil"])
@@ -291,6 +302,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
     if proj["ai_todos"]:
         items = "".join(
             f'<li>'
+            f'{_priority_badge(t.get("priority", 5))}'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
             f'</li>'
@@ -305,6 +317,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
     if proj["tyler_todos"]:
         items = "".join(
             f'<li>'
+            f'{_priority_badge(t.get("priority", 5))}'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
             f'</li>'
@@ -314,6 +327,13 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <div class="todo-label tyler-label">\U0001f464 Tyler's Tasks ({tyler_count})</div>
             <ul class="todo-list">{items}</ul>
         </div>"""
+
+    add_todo_form_html = f"""<div class="add-todo-form">
+  <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
+  <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
+  <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
+  <span class="priority-hint">leave blank \u2192 AI scores</span>
+</div>"""
 
     badge_class = "badge-1" if rank == 1 else ("badge-2" if rank == 2 else "badge-3")
 
@@ -331,6 +351,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
         <p class="summary">{summary}</p>
         {ai_todos_html}
         {tyler_todos_html}
+        {add_todo_form_html}
     </div>
     """
 
@@ -418,18 +439,21 @@ def generate_portal_html(
 <title>👁 Executive Audio Brief Portal</title>
 <style>
 :root {{
-    --bg: #0d1117;
-    --surface: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
+    --bg: #080c14;
+    --surface: rgba(22, 28, 40, 0.7);
+    --surface-solid: #161c28;
+    --border: rgba(99, 130, 200, 0.18);
+    --border-glow: rgba(88, 166, 255, 0.35);
+    --text: #e8eef8;
+    --text-muted: #7a8aa0;
     --accent: #58a6ff;
     --accent-green: #3fb950;
     --accent-orange: #d29922;
     --accent-red: #f85149;
     --accent-purple: #bc8cff;
     --music-pink: #ff6b9d;
-    --radius: 12px;
+    --radius: 16px;
+    --blur: 18px;
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -438,6 +462,11 @@ body {{
     color: var(--text);
     line-height: 1.6;
     min-height: 100vh;
+    background-image:
+        radial-gradient(ellipse at 20% 20%, rgba(88, 166, 255, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(188, 140, 255, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, rgba(63, 185, 80, 0.04) 0%, transparent 60%);
+    background-attachment: fixed;
 }}
 .container {{
     max-width: 1100px;
@@ -561,13 +590,17 @@ header .subtitle {{
 }}
 .status-card {{
     background: var(--surface);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1.25rem;
-    transition: border-color 0.2s;
+    padding: 1.5rem;
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.2s;
 }}
 .status-card:hover {{
-    border-color: var(--accent);
+    border-color: var(--border-glow);
+    box-shadow: 0 0 24px rgba(88, 166, 255, 0.12), 0 8px 32px rgba(0,0,0,0.4);
+    transform: translateY(-2px);
 }}
 .card-header {{
     display: flex;
@@ -776,9 +809,65 @@ footer {{
     border-top: 1px solid var(--border);
 }}
 
+/* ── Add-Todo Form ───────────────────────────────────────────── */
+.add-todo-form {{
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+}}
+.add-todo-input {{
+    flex: 1;
+    min-width: 0;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+}}
+.add-todo-input:focus {{
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(88,166,255,0.2);
+}}
+.add-todo-priority {{
+    width: 80px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+    -moz-appearance: textfield;
+}}
+.add-todo-btn {{
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    font-weight: 700;
+    transition: opacity 0.2s;
+}}
+.add-todo-btn:hover {{ opacity: 0.85; }}
+.priority-hint {{ font-size: 0.72rem; color: var(--text-muted); }}
+.priority-badge-inline {{
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+}}
+.p-high {{ background: rgba(248,81,73,0.25); color: #f85149; }}
+.p-mid  {{ background: rgba(210,153,34,0.25); color: #d29922; }}
+.p-low  {{ background: rgba(139,148,158,0.2); color: #8b949e; }}
+
 /* ── Lily Prompt Modal ───────────────────────────────────────── */
-.lily-edit-btn {{
-    position: absolute;
+.lily-edit-btn {{    position: absolute;
     top: 4px;
     right: 4px;
     background: rgba(0,0,0,0.55);
@@ -1092,6 +1181,26 @@ async function refreshStatus() {{
     }}
 }}
 
+async function addTodo(btn) {{
+    const row = btn.closest('.add-todo-form');
+    const project = row.querySelector('.add-todo-input').dataset.project;
+    const text = row.querySelector('.add-todo-input').value.trim();
+    const priorityInput = row.querySelector('.add-todo-priority').value;
+    const priority = priorityInput ? parseInt(priorityInput) : null;
+    if (!text) return;
+    btn.disabled = true;
+    const res = await fetch('/api/todos/add', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project, text, priority}})
+    }});
+    const data = await res.json();
+    if (data.ok) {{
+        location.reload();
+    }}
+    btn.disabled = false;
+}}
+
 // ── Lily Prompt Modal ────────────────────────────────────────────────────
 function openLilyModal() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
@@ -1201,6 +1310,10 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self._handle_refresh()
         elif self.path == "/api/todo/done":
             self._handle_todo_done()
+        elif self.path == "/api/todos/add":
+            self._handle_todos_add()
+        elif self.path == "/api/todos/priority":
+            self._handle_todos_priority()
         elif self.path == "/lily/prompt":
             self._handle_lily_post_prompt()
         else:
@@ -1237,14 +1350,15 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_generate(self) -> None:
-        """Generate a new audio brief with optional voice_id."""
+        """Generate a new audio brief (always uses Lily voice)."""
         try:
             content_len = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
-            voice_id = body.get("voice_id")
+            # Body accepted but voice_id ignored — Lily is hard-locked
+            if content_len > 0:
+                self.rfile.read(content_len)
 
             # Re-gather and regenerate
-            result = build_brief(voice_id=voice_id, text_only=False)
+            result = build_brief(text_only=False)
             self.portal_state.update(result)
 
             self.send_response(200)
@@ -1325,6 +1439,51 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(str(e).encode("utf-8"))
 
+    def _handle_todos_add(self) -> None:
+        """POST /api/todos/add — add a new todo with optional AI priority scoring."""
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len))
+            project: str = body["project"]
+            text: str = body["text"]
+            priority_raw = body.get("priority")
+            if priority_raw is None:
+                priority = score_priority(text, project)
+            else:
+                priority = int(priority_raw)
+            new_id = add_todo(project, text, priority, source="TYLER")
+            self._serve_json({"ok": True, "id": new_id, "priority": priority})
+        except (KeyError, ValueError) as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+
+    def _handle_todos_priority(self) -> None:
+        """POST /api/todos/priority — update priority on an existing todo."""
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len))
+            todo_id = int(body["id"])
+            priority = int(body["priority"])
+            update_priority(todo_id, priority)
+            self._serve_json({"ok": True})
+        except (KeyError, ValueError) as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+
     def _handle_lily_get_prompt(self) -> None:
         """GET /lily/prompt → JSON {"positive_prompt": "..."}"""
         try:
@@ -1401,7 +1560,6 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def build_brief(
-    voice_id: str | None = None,
     text_only: bool = False,
 ) -> dict[str, Any]:
     """Build a complete brief — gather, rank, script, synthesize, render HTML."""
@@ -1432,7 +1590,7 @@ def build_brief(
     audio_path = None
     if not text_only:
         try:
-            audio_path = synthesize_brief(script, voice_id=voice_id)
+            audio_path = synthesize_brief(script)
             print(f"Audio saved: {audio_path}")
         except Exception as e:
             print(f"TTS failed (continuing without audio): {e}", file=sys.stderr)
@@ -1463,14 +1621,13 @@ def main() -> None:
     parser.add_argument("--serve", action="store_true", help="Launch interactive portal server")
     parser.add_argument("--port", type=int, default=8200, help="Server port (default: 8200)")
     parser.add_argument("--text-only", action="store_true", help="Generate script only, skip TTS")
-    parser.add_argument("--voice-id", type=str, default=None, help="ElevenLabs voice ID")
     args = parser.parse_args()
 
     print("=" * 60)
     print("👁 Executive Audio Brief Portal")
     print("=" * 60)
 
-    result = build_brief(voice_id=args.voice_id, text_only=args.text_only)
+    result = build_brief(text_only=args.text_only)
 
     if args.text_only:
         print("\n--- BRIEF SCRIPT ---")
