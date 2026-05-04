@@ -39,13 +39,21 @@ def init_db() -> None:
                 text       TEXT NOT NULL,
                 done       INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
-                closed_at  TEXT
+                closed_at  TEXT,
+                priority   INTEGER NOT NULL DEFAULT 5
             )
         """)
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_project_source_text
             ON todos(project, source, text)
         """)
+        # Migration guard: add priority column to existing DBs
+        try:
+            conn.execute(
+                "ALTER TABLE todos ADD COLUMN priority INTEGER NOT NULL DEFAULT 5"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
         conn.commit()
 
 
@@ -61,12 +69,12 @@ def get_open_todos(project: str | None = None) -> list[dict[str, Any]]:
     with get_connection() as conn:
         if project:
             rows = conn.execute(
-                "SELECT * FROM todos WHERE done=0 AND project=? ORDER BY id",
+                "SELECT * FROM todos WHERE done=0 AND project=? ORDER BY priority DESC, id ASC",
                 (project,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM todos WHERE done=0 ORDER BY project, source, id"
+                "SELECT * FROM todos WHERE done=0 ORDER BY project, source, priority DESC, id ASC"
             ).fetchall()
     return [dict(r) for r in rows]
 
@@ -93,6 +101,34 @@ def mark_done(todo_id: int) -> bool:
         cur = conn.execute(
             "UPDATE todos SET done=1, closed_at=? WHERE id=? AND done=0",
             (closed_at, todo_id),
+        )
+        conn.commit()
+    return cur.rowcount == 1
+
+
+def add_todo(project: str, text: str, priority: int, source: str = "TYLER") -> int:
+    """Insert a new todo and return its id. Raises ValueError for invalid priority."""
+    if priority not in range(1, 11):
+        raise ValueError(f"priority must be 1-10, got {priority!r}")
+    created_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO todos (project, source, text, done, created_at, priority)"
+            " VALUES (?, ?, ?, 0, ?, ?)",
+            (project, source, text, created_at, priority),
+        )
+        conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+
+def update_priority(todo_id: int, priority: int) -> bool:
+    """Update priority for a single todo. Returns True on success."""
+    if priority not in range(1, 11):
+        raise ValueError(f"priority must be 1-10, got {priority!r}")
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE todos SET priority=? WHERE id=?",
+            (priority, todo_id),
         )
         conn.commit()
     return cur.rowcount == 1
