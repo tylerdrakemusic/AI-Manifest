@@ -272,7 +272,8 @@ def get_portrait_img_tag(max_width: int = 160) -> str:
 
     return (
         f'<img src="{src}" alt="Lily — Executive Brief Host" '
-        f'style="max-width:{max_width}px; border-radius:50%; '
+        f'style="max-width:{max_width}px; width:{max_width}px; height:{max_width}px; '
+        f'object-fit:cover; border-radius:12px; '
         f'border:2px solid rgba(88,166,255,0.4); display:block; margin:0 auto;" '
         f'title="Lily · Generated {date.today().isoformat()}" />'
     )
