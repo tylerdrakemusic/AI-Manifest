@@ -6,6 +6,11 @@ Returns an int 1–10. Never raises — returns 5 (neutral) on total failure.
 The scorer receives the existing open todos for the same project (with their
 current priorities) so the LLM can score relatively — calibrated against the
 existing scale rather than scoring in a vacuum.
+
+Ollama configuration
+--------------------
+OLLAMA_BASE_URL : base URL of the Ollama server (default: http://localhost:11434)
+OLLAMA_MODEL    : model tag to use (default: llama3.1:8b)
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ import logging
 import os
 import re
 from typing import Any
+
+from src.integrations.ollama import OllamaClient, OllamaError
 
 logger = logging.getLogger(__name__)
 
@@ -69,25 +76,10 @@ def _build_prompt(text: str, project: str, existing_todos: list[dict[str, Any]])
 
 
 def _score_via_ollama(text: str, project: str, existing_todos: list[dict[str, Any]]) -> int:
-    """Try Ollama local LLM. Raises on failure."""
-    import urllib.request
-    import json as _json
-
+    """Try Ollama local LLM via the mirrored OllamaClient. Raises on failure."""
     prompt = _build_prompt(text, project, existing_todos)
-    payload = _json.dumps(
-        {"model": "llama3", "prompt": prompt, "stream": False}
-    ).encode("utf-8")
-
-    req = urllib.request.Request(
-        "http://localhost:11434/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        body = _json.loads(resp.read().decode("utf-8"))
-
-    raw = body.get("response", "")
+    client = OllamaClient()  # reads OLLAMA_BASE_URL / OLLAMA_MODEL from env
+    raw = client.generate(prompt)
     value = _extract_int(raw)
     if value is None:
         raise ValueError(f"Ollama returned unparseable response: {raw!r}")

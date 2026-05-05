@@ -12,8 +12,6 @@ import argparse
 import importlib.util
 import os
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.integrations.ollama import OllamaClient
 from src.utils.priority_scorer import score_priority
 from src.utils.todos_db import get_open_todos, update_priority
 
@@ -74,6 +73,43 @@ def _print_preview(items: list[dict[str, Any]]) -> None:
         print("(no successfully rescored rows to preview)")
 
 
+def _priority_bucket(p: int) -> str:
+    """Map a priority 1-10 to a human-readable bucket label."""
+    if p >= 9:
+        return "critical (9-10)"
+    if p >= 7:
+        return "high (7-8)"
+    if p >= 4:
+        return "medium (4-6)"
+    return "low (1-3)"
+
+
+def _distribution(items: list[int]) -> dict[str, int]:
+    """Count items by priority bucket."""
+    buckets: dict[str, int] = {
+        "critical (9-10)": 0,
+        "high (7-8)": 0,
+        "medium (4-6)": 0,
+        "low (1-3)": 0,
+    }
+    for p in items:
+        buckets[_priority_bucket(p)] += 1
+    return buckets
+
+
+def _print_distribution_report(preview_rows: list[dict[str, Any]]) -> None:
+    """Print before/after priority distribution for scored rows."""
+    if not preview_rows:
+        return
+    before = _distribution([r["old_priority"] for r in preview_rows])
+    after = _distribution([r["new_priority"] for r in preview_rows])
+    print("\nProposed priority distribution")
+    print(f"  {'Bucket':<20} {'Before':>6}  {'After':>5}")
+    print("  " + "-" * 34)
+    for bucket in ("critical (9-10)", "high (7-8)", "medium (4-6)", "low (1-3)"):
+        print(f"  {bucket:<20} {before[bucket]:>6}  {after[bucket]:>5}")
+
+
 def _print_summary(stats: dict[str, int], apply_mode: bool) -> None:
     mode = "APPLY" if apply_mode else "DRY-RUN"
     print(f"\nSummary ({mode})")
@@ -97,13 +133,7 @@ def _detect_backends() -> tuple[bool, bool]:
     has_openai = bool(os.environ.get("OPENAPI_TOKEN")) and (
         importlib.util.find_spec("openai") is not None
     )
-    has_ollama = False
-    try:
-        req = urllib.request.Request("http://localhost:11434/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=1):
-            has_ollama = True
-    except (urllib.error.URLError, TimeoutError, OSError):
-        has_ollama = False
+    has_ollama = OllamaClient().health_check()
     return has_ollama, has_openai
 
 
@@ -183,6 +213,7 @@ def main() -> int:
         )
 
     _print_preview(preview_rows)
+    _print_distribution_report(preview_rows)
 
     if failures:
         print("\nFailures")
