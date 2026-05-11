@@ -6,7 +6,7 @@ todos(id, project, source, text, done, created_at, closed_at)
 
 - project: key string matching PROJECTS in executive_audio_brief.py
   ('music', 'life', 'quantum', 'ai_manifest', 'workspace')
-- source: 'AI' or 'TYLER'
+- source: 'AI', 'TYLER', or 'SCAN'
 - done: 0 = open, 1 = closed
 - created_at / closed_at: ISO-8601 UTC strings
 """
@@ -19,6 +19,55 @@ from pathlib import Path
 from typing import Any
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
+ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in rows)
+
+
+def _table_allows_scan_source(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'"
+    ).fetchone()
+    if not row or not row[0]:
+        return False
+    sql = str(row[0])
+    return "'SCAN'" in sql
+
+
+def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
+    # Rebuild the table because SQLite cannot ALTER an existing CHECK constraint.
+    conn.execute("BEGIN")
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS todos_new (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                project    TEXT NOT NULL,
+                source     TEXT NOT NULL CHECK(source IN ('AI', 'TYLER', 'SCAN')),
+                text       TEXT NOT NULL,
+                done       INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                closed_at  TEXT,
+                priority   INTEGER NOT NULL DEFAULT 5
+            )
+        """)
+        conn.execute("""
+            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, priority)
+            SELECT id, project, source, text, done, created_at, closed_at, priority
+            FROM todos
+        """)
+        conn.execute("DROP TABLE todos")
+        conn.execute("ALTER TABLE todos_new RENAME TO todos")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_project_source_text
+            ON todos(project, source, text)
+        """)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_connection() -> sqlite3.Connection:
@@ -35,7 +84,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS todos (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 project    TEXT NOT NULL,
-                source     TEXT NOT NULL CHECK(source IN ('AI', 'TYLER')),
+                source     TEXT NOT NULL CHECK(source IN ('AI', 'TYLER', 'SCAN')),
                 text       TEXT NOT NULL,
                 done       INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -54,6 +103,9 @@ def init_db() -> None:
             )
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        if _has_column(conn, "todos", "priority") and not _table_allows_scan_source(conn):
+            _migrate_todos_for_scan_source(conn)
         conn.commit()
 
 
@@ -110,6 +162,8 @@ def add_todo(project: str, text: str, priority: int, source: str = "TYLER") -> i
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
+    if source not in ALLOWED_SOURCES:
+        raise ValueError(f"source must be one of {ALLOWED_SOURCES!r}, got {source!r}")
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cur = conn.execute(
@@ -145,6 +199,8 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
 
 def insert_todo(project: str, source: str, text: str) -> int | None:
     """Insert a todo; returns new row id or None if it already exists (idempotent)."""
+    if source not in ALLOWED_SOURCES:
+        raise ValueError(f"source must be one of {ALLOWED_SOURCES!r}, got {source!r}")
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         try:
