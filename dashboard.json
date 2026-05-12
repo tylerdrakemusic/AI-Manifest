@@ -4,7 +4,7 @@
   "dashboards": [
     {
       "id": "executive-audio-brief",
-      "title": "Executive Audio Brief Portal",
+      "title": "Executive",
       "description": "Cross-project status intelligence with ElevenLabs voice synthesis — top 3 priority briefing, always including ❤Music",
       "type": "flask_app",
       "url": "http://127.0.0.1:8200",
