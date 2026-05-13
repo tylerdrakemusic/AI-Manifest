@@ -7,7 +7,7 @@
       "title": "Executive",
       "description": "Cross-project status intelligence with ElevenLabs voice synthesis — top 3 priority briefing, always including ❤Music",
       "type": "flask_app",
-      "url": "http://127.0.0.1:8200",
+      "url": "http://localhost:8200",
       "generator": "tools/executive_audio_brief.py",
       "output": "output/executive_brief_portal.html",
       "cli": "C:\\G\\python.exe tools/executive_audio_brief.py --serve --port 8200",
