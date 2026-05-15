@@ -3,10 +3,13 @@
 Requires the portal HTML to exist at output/executive_brief_portal.html.
 Run: C:\\G\\python.exe tools/executive_audio_brief.py --text-only  (generates the HTML)
 Then: C:\\G\\python.exe -m pytest tests/test_executive_brief_portal.py -v
+
+Set PLAYWRIGHT_ENABLED=1 to run locally. Skipped in CI unless that env var is set.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,15 +18,12 @@ import pytest
 PORTAL_PATH = Path(__file__).resolve().parent.parent / "output" / "executive_brief_portal.html"
 PORTAL_URL = PORTAL_PATH.as_uri() if PORTAL_PATH.exists() else ""
 
-
 # ---------------------------------------------------------------------------
-# Skip guard — Playwright tests run locally only (FR-20260425 follow-up will
-# add browser binaries to CI). Skipped unconditionally to keep CI green
-# without the 200MB+ chromium install on every run.
+# Skip guard — Playwright tests run locally only when PLAYWRIGHT_ENABLED=1.
+# This avoids the 200MB+ Chromium install on every CI run.
+# Set PLAYWRIGHT_ENABLED=1 before running, or use: pytest -m playwright
 # ---------------------------------------------------------------------------
-pytestmark = pytest.mark.skip(
-    reason="Playwright test — runs locally only; CI browser setup deferred (FR-20260425 follow-up)"
-)
+pytestmark = pytest.mark.playwright
 
 
 # ---------------------------------------------------------------------------

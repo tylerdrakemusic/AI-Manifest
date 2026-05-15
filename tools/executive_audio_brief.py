@@ -133,6 +133,7 @@ def gather_project_status(project: dict) -> dict[str, Any]:
         # Each entry: {"id": int, "text": str}
         "ai_todos": [],
         "tyler_todos": [],
+        "scan_todos": [],
         "profile": {},
         "summary": "",
         "active_tasks": 0,
@@ -149,6 +150,10 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     status["tyler_todos"] = [
         {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
         for r in open_rows if r["source"] == "TYLER"
+    ]
+    status["scan_todos"] = [
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
+        for r in open_rows if r["source"] == "SCAN"
     ]
     status["active_tasks"] = len(open_rows)
     status["completed_tasks"] = done_count
@@ -168,6 +173,7 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     top_texts = (
         [t["text"] for t in status["ai_todos"][:3]]
         + [t["text"] for t in status["tyler_todos"][:2]]
+        + [t["text"] for t in status["scan_todos"][:2]]
     )
     summary_lines = [
         f"{project['sigil']}{project['name']}: {status['active_tasks']} open tasks, "
@@ -297,6 +303,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
 
     ai_count = len(proj["ai_todos"])
     tyler_count = len(proj["tyler_todos"])
+    scan_count = len(proj["scan_todos"])
 
     ai_todos_html = ""
     if proj["ai_todos"]:
@@ -328,6 +335,21 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <ul class="todo-list">{items}</ul>
         </div>"""
 
+    scan_todos_html = ""
+    if proj["scan_todos"]:
+        items = "".join(
+            f'<li>'
+            f'{_priority_badge(t.get("priority", 5))}'
+            f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</li>'
+            for t in proj["scan_todos"][:5]
+        )
+        scan_todos_html = f"""<div class="todo-section">
+            <div class="todo-label ai-label">🔎 Discovery Tasks ({scan_count})</div>
+            <ul class="todo-list">{items}</ul>
+        </div>"""
+
     add_todo_form_html = f"""<div class="add-todo-form">
   <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
@@ -351,6 +373,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
         <p class="summary">{summary}</p>
         {ai_todos_html}
         {tyler_todos_html}
+        {scan_todos_html}
         {add_todo_form_html}
     </div>
     """

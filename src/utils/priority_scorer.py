@@ -254,6 +254,7 @@ def score_priority(
     text: str,
     project: str,
     existing_todos: list[dict[str, Any]] | None = None,
+    ollama_only: bool = False,
 ) -> int:
     """Score a todo item's priority 1–10 relative to existing open todos.
 
@@ -263,9 +264,11 @@ def score_priority(
         existing_todos: Open todos for this project (from get_open_todos).
                         Passed to the LLM as calibration context. If None
                         or empty, the LLM scores without context.
+        ollama_only: If True, use Ollama only (no OpenAI/heuristic fallback).
+                     Raises exception if Ollama fails.
 
-    Returns int 1–10. Never raises — uses a heuristic fallback before
-    returning 5 on total failure.
+    Returns int 1–10. If ollama_only=False (default), never raises — uses
+    a heuristic fallback before returning 5 on total failure.
     """
     todos = existing_todos or []
     try:
@@ -273,6 +276,9 @@ def score_priority(
         logger.debug("Ollama scored '%s' → %d", text[:40], value)
         return value
     except Exception as e:
+        if ollama_only:
+            logger.error("Ollama-only mode: failed to score '%s' via Ollama: %s", text[:40], e)
+            raise
         logger.debug("Ollama failed (%s), trying OpenAI", e)
 
     try:
