@@ -13,7 +13,7 @@ sys.stdout = output_buffer = io.StringIO()
 
 try:
     # Import and run the regeneration script
-    exec(Path(r"F:\final_regen_manifest.py").read_text(encoding="utf-8"))
+    exec(Path(r"F:\final_regen_manifest.py").read_text(encoding="utf-8"))  # nosec B102 — Bootstrap exec of fixed internal script path; no user-controlled input
     
     # Get the output
     output = output_buffer.getvalue()

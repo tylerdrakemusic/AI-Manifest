@@ -23,7 +23,7 @@ ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # nosec B608 — PRAGMA does not support parameterized queries; table name is always a hardcoded literal from internal callers
     return any(r[1] == column for r in rows)
 
 
