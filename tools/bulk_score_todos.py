@@ -50,6 +50,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional max number of open todos to process.",
     )
+    parser.add_argument(
+        "--ollama-only",
+        action="store_true",
+        help="Require Ollama for scoring; fail if Ollama is unavailable (no OpenAI fallback).",
+    )
     return parser
 
 
@@ -183,9 +188,11 @@ def main() -> int:
             text = str(row["text"])
             old_priority = int(row.get("priority", 5))
             existing = context_by_project.get(project, [])
+            if args.ollama_only and not has_ollama:
+                raise RuntimeError("--ollama-only flag set but Ollama is not available")
             if not has_ollama and not has_openai:
                 raise RuntimeError("no scoring backend available (Ollama down, OpenAI unavailable)")
-            new_priority = score_priority(text, project, existing_todos=existing)
+            new_priority = score_priority(text, project, existing_todos=existing, ollama_only=args.ollama_only)
             if new_priority not in range(1, 11):
                 raise ValueError(f"score out of range: {new_priority}")
         except Exception as exc:

@@ -29,6 +29,8 @@ output/*.mp3
 output/*.wav
 output/*.ogg
 output/images/
+output/executive_brief_portal.html
+output/report.txt
 
 # Binaries / executables
 *.exe
@@ -41,9 +43,9 @@ output/images/
 
 # Databases (SQLite / SQLCipher)
 src/data/*.db
-!src/data/manifest_todos.db
 # lily_config.db is covered by the glob above — never commit it (seed via tools/lily/seed_lily_config.py)
 # src/data/lily_config.db  <-- already ignored by src/data/*.db
+# manifest_todos.db is a live runtime DB — never commit (seed via tools/ scripts)
 src/data/*.db-shm
 src/data/*.db-wal
 *.sqlite
@@ -71,6 +73,7 @@ logs/*.log
 
 # Temp / cache
 *.download
+tmp/
 
 # Environment & secrets
 .env
@@ -94,17 +97,6 @@ src/data/*.db-journal
 src/data/backups/
 *.tmp
 
-# FR-20260423-sibling-gitignore-parity
-.playwright-mcp/
-src/data/*.db-journal
-src/data/backups/
-*.tmp
-
-# FR-20260423-sibling-gitignore-parity
-.playwright-mcp/
-src/data/*.db-journal
-src/data/backups/
-*.tmp
 
 # FR-20260423-sibling-gitignore-parity
 .playwright-mcp/
