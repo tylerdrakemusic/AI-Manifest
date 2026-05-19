@@ -192,6 +192,22 @@ def _try_huggingface(
         return None
 
 
+def _try_pollinations(prompt: str, save_dir: Path) -> Path | None:
+    """Attempt to generate the portrait via Pollinations.AI (free, no API key). Returns Path or None."""
+    try:
+        mod = _load_workspace_module(
+            "_ws_pollinations_client",
+            "src/integrations/pollinations/client.py",
+        )
+        if mod is None:
+            return None
+        client = mod.PollinationsClient()
+        path = client.generate_image(prompt, output_dir=save_dir, width=1024, height=1024)
+        return path
+    except Exception:
+        return None
+
+
 def _svg_fallback_path() -> Path:
     """Write inline SVG to a dated .svg file and return its path."""
     _IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -209,7 +225,8 @@ def get_daily_portrait() -> Path:
     1. Return cached portrait if already generated today.
     2. Try DALL-E 3 (requires ``OPENAPI_TOKEN``).
     3. Fall back to HuggingFace Inference (requires ``HF_TOKEN``).
-    4. Fall back to inline SVG silhouette (always succeeds).
+    4. Try Pollinations.AI (free, no API key required).
+    5. Fall back to inline SVG silhouette (always succeeds).
 
     Returns
     -------
@@ -241,7 +258,14 @@ def get_daily_portrait() -> Path:
         _prune_old_portraits()
         return today_path
 
-    # 4. SVG silhouette fallback (always works)
+    # 4. Pollinations.AI (free fallback — no API key)
+    result = _try_pollinations(positive_prompt, save_dir)
+    if result and result.exists():
+        result.rename(today_path)
+        _prune_old_portraits()
+        return today_path
+
+    # 5. SVG silhouette fallback (always works)
     return _svg_fallback_path()
 
 
