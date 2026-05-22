@@ -48,7 +48,7 @@ from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
 from src.utils.todos_db import (
     init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id,
-    add_todo, update_priority,
+    add_todo, update_priority, get_open_todos_by_autonomy,
 )
 from src.utils.priority_scorer import score_priority
 
@@ -134,6 +134,9 @@ def gather_project_status(project: dict) -> dict[str, Any]:
         "ai_todos": [],
         "tyler_todos": [],
         "scan_todos": [],
+        "full_todos": [],
+        "supervised_todos": [],
+        "human_todos": [],
         "profile": {},
         "summary": "",
         "active_tasks": 0,
@@ -143,17 +146,21 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     open_rows = get_open_todos(key)
     done_count = len(get_done_todos(key))
 
-    status["ai_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
-        for r in open_rows if r["source"] == "AI"
+    status["ai_todos"] = []
+    status["tyler_todos"] = []
+    status["scan_todos"] = []
+
+    status["full_todos"] = [
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+        for r in open_rows if r.get("autonomy_level") == "full"
     ]
-    status["tyler_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
-        for r in open_rows if r["source"] == "TYLER"
+    status["supervised_todos"] = [
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+        for r in open_rows if r.get("autonomy_level") == "supervised"
     ]
-    status["scan_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5)}
-        for r in open_rows if r["source"] == "SCAN"
+    status["human_todos"] = [
+        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+        for r in open_rows if r.get("autonomy_level") == "human" or r.get("autonomy_level") is None
     ]
     status["active_tasks"] = len(open_rows)
     status["completed_tasks"] = done_count
@@ -171,9 +178,9 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     total = status["active_tasks"] + status["completed_tasks"]
     pct = round(100 * status["completed_tasks"] / total) if total > 0 else 0
     top_texts = (
-        [t["text"] for t in status["ai_todos"][:3]]
-        + [t["text"] for t in status["tyler_todos"][:2]]
-        + [t["text"] for t in status["scan_todos"][:2]]
+        [t["text"] for t in status["full_todos"][:2]]
+        + [t["text"] for t in status["supervised_todos"][:2]]
+        + [t["text"] for t in status["human_todos"][:1]]
     )
     summary_lines = [
         f"{project['sigil']}{project['name']}: {status['active_tasks']} open tasks, "
@@ -301,53 +308,40 @@ def _status_card_html(proj: dict, rank: int) -> str:
     total = active + done
     pct = round(100 * done / total) if total > 0 else 0
 
-    ai_count = len(proj["ai_todos"])
-    tyler_count = len(proj["tyler_todos"])
-    scan_count = len(proj["scan_todos"])
+    full_count = len(proj.get("full_todos", []))
+    supervised_count = len(proj.get("supervised_todos", []))
+    human_count = len(proj.get("human_todos", []))
 
-    ai_todos_html = ""
-    if proj["ai_todos"]:
-        items = "".join(
+    def _todo_rows(todos: list, limit: int = 5) -> str:
+        return "".join(
             f'<li>'
             f'{_priority_badge(t.get("priority", 5))}'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
             f'</li>'
-            for t in proj["ai_todos"][:5]
+            for t in todos[:limit]
         )
-        ai_todos_html = f"""<div class="todo-section">
-            <div class="todo-label ai-label">\U0001f916 AI Tasks ({ai_count})</div>
-            <ul class="todo-list">{items}</ul>
+
+    full_html = ""
+    if proj.get("full_todos"):
+        full_html = f"""<div class="todo-section">
+            <div class="todo-label full-label">⚡ Full \u2014 Fully Offloadable ({full_count})</div>
+            <ul class="todo-list">{_todo_rows(proj["full_todos"])}</ul>
         </div>"""
 
-    tyler_todos_html = ""
-    if proj["tyler_todos"]:
-        items = "".join(
-            f'<li>'
-            f'{_priority_badge(t.get("priority", 5))}'
-            f'<span class="todo-text">{html.escape(t["text"])}</span>'
-            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
-            f'</li>'
-            for t in proj["tyler_todos"][:5]
-        )
-        tyler_todos_html = f"""<div class="todo-section">
-            <div class="todo-label tyler-label">\U0001f464 Tyler's Tasks ({tyler_count})</div>
-            <ul class="todo-list">{items}</ul>
+    supervised_html = ""
+    if proj.get("supervised_todos"):
+        supervised_html = f"""<div class="todo-section">
+            <div class="todo-label supervised-label">👁 Supervised \u2014 AI Executes, You Verify ({supervised_count})</div>
+            <ul class="todo-list">{_todo_rows(proj["supervised_todos"])}</ul>
         </div>"""
 
-    scan_todos_html = ""
-    if proj["scan_todos"]:
-        items = "".join(
-            f'<li>'
-            f'{_priority_badge(t.get("priority", 5))}'
-            f'<span class="todo-text">{html.escape(t["text"])}</span>'
-            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
-            f'</li>'
-            for t in proj["scan_todos"][:5]
-        )
-        scan_todos_html = f"""<div class="todo-section">
-            <div class="todo-label ai-label">🔎 Discovery Tasks ({scan_count})</div>
-            <ul class="todo-list">{items}</ul>
+    human_html = ""
+    if proj.get("human_todos"):
+        human_html = f"""<div class="todo-section">
+            <div class="todo-label human-label">👤 Human \u2014 Needs Tyler ({human_count})</div>
+            <ul class="todo-list">{_todo_rows(proj["human_todos"])}</ul>
         </div>"""
 
     add_todo_form_html = f"""<div class="add-todo-form">
@@ -371,12 +365,54 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
         <p class="summary">{summary}</p>
-        {ai_todos_html}
-        {tyler_todos_html}
-        {scan_todos_html}
+        {full_html}
+        {supervised_html}
+        {human_html}
         {add_todo_form_html}
     </div>
     """
+
+
+def _offload_panel_html(all_statuses: list[dict]) -> str:
+    """Generate the cross-project ⚡ Fully Offloadable panel."""
+    rows: list[dict] = []
+    for s in all_statuses:
+        project_label = f"{html.escape(s['sigil'])}{html.escape(s['name'])}"
+        for t in s.get("full_todos", []):
+            rows.append({
+                "priority": t.get("priority", 5),
+                "project": project_label,
+                "id": t["id"],
+                "text": t["text"],
+                "source": t.get("source", ""),
+            })
+    rows.sort(key=lambda r: r["priority"], reverse=True)
+
+    if not rows:
+        return """<div class="offload-panel">
+  <h2>⚡ Fully Offloadable</h2>
+  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
+  <p style="color:var(--text-muted);font-style:italic;">No fully offloadable tasks yet.</p>
+</div>"""
+
+    table_rows = "".join(
+        f"<tr>"
+        f"<td>{_priority_badge(r['priority'])}</td>"
+        f"<td>{r['project']}</td>"
+        f"<td><span class='todo-text'>{html.escape(r['text'])}</span>"
+        f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
+        f"<td><button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done'>✓</button></td>"
+        f"</tr>"
+        for r in rows
+    )
+    return f"""<div class="offload-panel">
+  <h2>⚡ Fully Offloadable</h2>
+  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
+  <table class="offload-table">
+    <thead><tr><th>Pri</th><th>Project</th><th>Task</th><th></th></tr></thead>
+    <tbody>{table_rows}</tbody>
+  </table>
+</div>"""
 
 
 def generate_portal_html(
@@ -391,6 +427,7 @@ def generate_portal_html(
     cards_html = "\n".join(
         _status_card_html(p, i) for i, p in enumerate(top3, 1)
     )
+    offload_panel = _offload_panel_html(all_statuses)
 
     # Lily portrait — injected as inline data-URI img tag
     # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
@@ -459,6 +496,7 @@ def generate_portal_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="60">
 <title>👁 Executive Audio Brief Portal</title>
 <style>
 :root {{
@@ -1007,9 +1045,95 @@ footer {{
     color: var(--text-muted);
     min-height: 1.2em;
 }}
+
+/* ── Autonomy Labels ─────────────────────────────────────────── */
+.full-label {{
+    background: rgba(210, 153, 34, 0.2);
+    color: #d29922;
+    border: 1px solid rgba(210,153,34,0.3);
+}}
+.supervised-label {{
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--accent);
+}}
+.human-label {{
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent-green);
+}}
+.source-tag {{
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.08rem 0.28rem;
+    border-radius: 3px;
+    background: rgba(139,148,158,0.15);
+    color: var(--text-muted);
+    flex-shrink: 0;
+    letter-spacing: 0.03em;
+}}
+
+/* ── Offload Panel ───────────────────────────────────────────── */
+.offload-panel {{
+    background: var(--surface);
+    border: 1px solid rgba(210,153,34,0.45);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 0 20px rgba(210,153,34,0.08);
+}}
+.offload-panel h2 {{
+    font-size: 1.15rem;
+    color: #d29922;
+    margin-bottom: 0.3rem;
+}}
+.offload-subtitle {{
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    margin-bottom: 1rem;
+}}
+.offload-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+}}
+.offload-table th, .offload-table td {{
+    padding: 0.45rem 0.65rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}}
+.offload-table th {{
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    font-weight: 600;
+}}
+.offload-table tr:hover td {{
+    background: rgba(210,153,34,0.05);
+}}
+
+/* ── Static Banner ───────────────────────────────────────────── */
+.static-banner {{
+    background: #2a2008;
+    border-bottom: 1px solid #5a4010;
+    color: #c8a048;
+    font-size: 0.85rem;
+    padding: 0.55rem 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: opacity 0.3s;
+}}
+.static-banner:hover {{ opacity: 0.75; }}
+.static-banner code {{
+    background: rgba(255,255,255,0.08);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.82rem;
+}}
 </style>
 </head>
 <body>
+<div class="static-banner" onclick="this.style.display='none'" title="Click to dismiss">
+  📸 Static snapshot — auto-refreshes every 60s. Run with <code>--serve</code> for instant live updates.
+</div>
 <!-- Lily Prompt Modal -->
 <div class="modal-overlay" id="lily-prompt-modal" onclick="lilyModalClickOutside(event)">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="lily-modal-title">
@@ -1060,6 +1184,8 @@ footer {{
         ⚠️ Live generation requires server mode.
         Run: <code>python tools/executive_audio_brief.py --serve</code>
     </div>
+
+    {offload_panel}
 
     <h2 style="margin-bottom:1rem;">Top 3 Priorities</h2>
     <div class="cards-grid">

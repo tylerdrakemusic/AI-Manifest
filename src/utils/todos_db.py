@@ -20,6 +20,7 @@ from typing import Any
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
+ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -106,6 +107,21 @@ def init_db() -> None:
 
         if _has_column(conn, "todos", "priority") and not _table_allows_scan_source(conn):
             _migrate_todos_for_scan_source(conn)
+
+        # Migration guard: add autonomy_level column to existing DBs
+        try:
+            conn.execute(
+                "ALTER TABLE todos ADD COLUMN autonomy_level TEXT NOT NULL DEFAULT 'supervised'"
+                " CHECK(autonomy_level IN ('full', 'supervised', 'human'))"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        # Backfill any rows that slipped through with NULL or empty string
+        conn.execute(
+            "UPDATE todos SET autonomy_level = 'supervised'"
+            " WHERE autonomy_level IS NULL OR autonomy_level = ''"
+        )
         conn.commit()
 
 
@@ -158,18 +174,26 @@ def mark_done(todo_id: int) -> bool:
     return cur.rowcount == 1
 
 
-def add_todo(project: str, text: str, priority: int, source: str = "TYLER") -> int:
+def add_todo(
+    project: str,
+    text: str,
+    priority: int,
+    source: str = "TYLER",
+    autonomy_level: str = "supervised",
+) -> int:
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
     if source not in ALLOWED_SOURCES:
         raise ValueError(f"source must be one of {ALLOWED_SOURCES!r}, got {source!r}")
+    if autonomy_level not in ALLOWED_AUTONOMY_LEVELS:
+        raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}, got {autonomy_level!r}")
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO todos (project, source, text, done, created_at, priority)"
-            " VALUES (?, ?, ?, 0, ?, ?)",
-            (project, source, text, created_at, priority),
+            "INSERT INTO todos (project, source, text, done, created_at, priority, autonomy_level)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?)",
+            (project, source, text, created_at, priority, autonomy_level),
         )
         conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -197,19 +221,49 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def insert_todo(project: str, source: str, text: str) -> int | None:
+def insert_todo(
+    project: str,
+    source: str,
+    text: str,
+    autonomy_level: str = "supervised",
+) -> int | None:
     """Insert a todo; returns new row id or None if it already exists (idempotent)."""
     if source not in ALLOWED_SOURCES:
         raise ValueError(f"source must be one of {ALLOWED_SOURCES!r}, got {source!r}")
+    if autonomy_level not in ALLOWED_AUTONOMY_LEVELS:
+        raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}, got {autonomy_level!r}")
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO todos (project, source, text, done, created_at)"
-                " VALUES (?, ?, ?, 0, ?)",
-                (project, source, text, created_at),
+                "INSERT INTO todos (project, source, text, done, created_at, autonomy_level)"
+                " VALUES (?, ?, ?, 0, ?, ?)",
+                (project, source, text, created_at, autonomy_level),
             )
             conn.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError:
             return None  # duplicate — skip silently
+
+
+def get_open_todos_by_autonomy(
+    autonomy_level: str,
+    project: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return open todos filtered by autonomy_level, sorted by priority DESC."""
+    if autonomy_level not in ALLOWED_AUTONOMY_LEVELS:
+        raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}, got {autonomy_level!r}")
+    with get_connection() as conn:
+        if project:
+            rows = conn.execute(
+                "SELECT * FROM todos WHERE done=0 AND autonomy_level=? AND project=?"
+                " ORDER BY priority DESC, id ASC",
+                (autonomy_level, project),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM todos WHERE done=0 AND autonomy_level=?"
+                " ORDER BY priority DESC, id ASC",
+                (autonomy_level,),
+            ).fetchall()
+    return [dict(r) for r in rows]
