@@ -46,12 +46,35 @@ DISCOVERY_FILES: dict[str, list[str]] = {
 }
 
 
+# Keywords that strongly indicate a task can be executed autonomously by AI.
+_HIGH_AUTONOMY_PATTERNS = re.compile(
+    r"auto|schedul|monitor|watch|poll|sync|detect|alert|scan|nightly|weekly|hourly"
+    r"|daily|report|digest|pipeline|queue|refresh|batch|background|cron|recurring"
+    r"|health.check|depletion|staleness|regression|rescor",
+    re.IGNORECASE,
+)
+
+
+def _classify_autonomy(text: str) -> str:
+    """Return 'AI' if the task is automatable with minimal human oversight, else 'TYLER'."""
+    return "AI" if _HIGH_AUTONOMY_PATTERNS.search(text) else "TYLER"
+
+
+def _classify_autonomy_level(text: str, source: str) -> str:
+    """Return autonomy_level: 'full' for AI+keyword match, 'supervised' for AI+no match, 'human' for TYLER."""
+    if source == "TYLER":
+        return "human"
+    return "full" if _HIGH_AUTONOMY_PATTERNS.search(text) else "supervised"
+
+
 @dataclass(slots=True)
 class Candidate:
     project: str
     text: str
     priority: int
     similar_to: str | None
+    source: str = "TYLER"  # 'AI' or 'TYLER', auto-classified by _classify_autonomy
+    autonomy_level: str = "supervised"  # 'full', 'supervised', or 'human'
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -305,12 +328,16 @@ def _prepare_candidates(projects: list[str], limit: int) -> list[Candidate]:
 
             similar_to = _nearest_open_match(text, existing_texts)
             priority = score_priority(text=text, project=project, existing_todos=existing_rows)
+            source = _classify_autonomy(text)
+            autonomy_level = _classify_autonomy_level(text, source)
             results.append(
                 Candidate(
                     project=project,
                     text=text,
                     priority=priority,
                     similar_to=similar_to,
+                    source=source,
+                    autonomy_level=autonomy_level,
                 )
             )
             if len(results) >= limit:
@@ -327,12 +354,12 @@ def _excerpt(text: str, max_len: int = 70) -> str:
 
 def _print_candidates(candidates: list[Candidate]) -> None:
     print("\nDiscovered epic/story todo opportunities")
-    print("ID   PROJECT      PRI  STATUS      TODO")
-    print("-" * 95)
+    print("ID   PROJECT      PRI  SOURCE  STATUS      TODO")
+    print("-" * 100)
     for idx, row in enumerate(candidates, start=1):
         status = "SIMILAR" if row.similar_to else "NEW"
         print(
-            f"{idx:<4} {row.project:<12} {row.priority:<4} {status:<10} {_excerpt(row.text)}"
+            f"{idx:<4} {row.project:<12} {row.priority:<4} {row.source:<7} {status:<10} {_excerpt(row.text)}"
         )
         if row.similar_to:
             print(f"     similar to: {_excerpt(row.similar_to, max_len=80)}")
@@ -362,7 +389,8 @@ def _insert_selected(candidates: list[Candidate], selected_ids: set[int]) -> tup
                 project=row.project,
                 text=row.text,
                 priority=row.priority,
-                source="SCAN",
+                source=row.source,  # 'AI' or 'TYLER' — auto-classified by _classify_autonomy
+                autonomy_level=row.autonomy_level,
             )
             inserted += 1
         except sqlite3.IntegrityError:
@@ -404,7 +432,7 @@ def main() -> int:
         return 0
 
     inserted, skipped = _insert_selected(candidates, selected_ids)
-    print(f"Inserted SCAN todos: {inserted}; skipped duplicates: {skipped}")
+    print(f"Inserted todos (AI/TYLER auto-classified): {inserted}; skipped duplicates: {skipped}")
     return 0
 
 
