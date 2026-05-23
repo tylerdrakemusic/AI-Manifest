@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from http.server import HTTPServer
 from pathlib import Path
 
 import pytest
@@ -192,3 +194,145 @@ class TestNoConsoleErrors:
         page.wait_for_load_state("networkidle")
         # Static file:// pages don't make network requests — pass trivially
         assert failed == [], f"Failed requests: {failed}"
+
+
+# ---------------------------------------------------------------------------
+# Live-server checkmark tests (BFX-20260522-executive-checkmark)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="class")
+def live_server(tmp_path_factory, monkeypatch_class):
+    """Spin up BriefRequestHandler on a random port with an isolated temp DB.
+
+    Yields the base URL string, e.g. 'http://127.0.0.1:54321'.
+    """
+    import src.utils.todos_db as todos_db
+    from tools.executive_audio_brief import BriefRequestHandler
+
+    db_file = tmp_path_factory.mktemp("checkmark_db") / "test_todos.db"
+    monkeypatch_class.setattr(todos_db, "DB_PATH", db_file)
+    todos_db.init_db()
+
+    BriefRequestHandler.portal_state = {"html": "", "voices": [], "audio_path": None}
+
+    server = HTTPServer(("127.0.0.1", 0), BriefRequestHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}", db_file
+    server.shutdown()
+
+
+@pytest.fixture(scope="class")
+def monkeypatch_class(request):
+    """Class-scoped monkeypatch (pytest only ships function-scoped by default)."""
+    from _pytest.monkeypatch import MonkeyPatch
+    mp = MonkeyPatch()
+    yield mp
+    mp.undo()
+
+
+@pytest.fixture
+def live_page(browser):
+    """Fresh Playwright page for live-server tests."""
+    pg = browser.new_page()
+    yield pg
+    pg.close()
+
+
+class TestCheckmarkLiveServer:
+    """Playwright tests that validate the ✓ (mark-done) button against a live server.
+
+    Regression suite for BFX-20260522-executive-checkmark:
+    - Clicking ✓ on a card-list item (inside <li>) removes the row.
+    - Clicking ✓ on an offload-panel item (inside <tr>) removes the row.
+    - No uncaught JS errors occur in either case.
+    """
+
+    def _insert_temp_todo(self, db_file: Path, project: str = "workspace", text: str = "BFX temp todo", autonomy_level: str = "supervised") -> int:
+        import src.utils.todos_db as todos_db
+        import src.utils.todos_db as _m
+        orig = _m.DB_PATH
+        _m.DB_PATH = db_file
+        try:
+            return todos_db.add_todo(project, text, priority=5, source="AI", autonomy_level=autonomy_level)
+        finally:
+            _m.DB_PATH = orig
+
+    def _is_done(self, db_file: Path, todo_id: int) -> bool:
+        import src.utils.todos_db as todos_db
+        import src.utils.todos_db as _m
+        orig = _m.DB_PATH
+        _m.DB_PATH = db_file
+        try:
+            row = todos_db.get_todo_by_id(todo_id)
+            return row is not None and row["done"] == 1
+        finally:
+            _m.DB_PATH = orig
+
+    def test_checkmark_card_list_item_removed_from_dom(self, live_server, live_page) -> None:
+        """Clicking ✓ on a card-list <li> todo removes it from the DOM (no JS error)."""
+        base_url, db_file = live_server
+        errors: list[str] = []
+        live_page.on("pageerror", lambda err: errors.append(str(err)))
+
+        todo_id = self._insert_temp_todo(db_file, project="workspace", text="BFX card list item")
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        btn = live_page.locator(f"button.done-btn[onclick*='markDone({todo_id},']").first
+        assert btn.count() != 0 or live_page.locator(f"button.done-btn[onclick*='markDone({todo_id}, ']").count() != 0, (
+            f"done-btn for todo {todo_id} not found in portal"
+        )
+        btn.click()
+        live_page.wait_for_timeout(600)  # allow 300ms fade + margin
+
+        remaining = live_page.locator(f"button.done-btn[onclick*='markDone({todo_id}']").count()
+        assert remaining == 0, f"Todo {todo_id} button still in DOM after checkmark click"
+        assert errors == [], f"Uncaught JS errors after checkmark click: {errors}"
+        assert self._is_done(db_file, todo_id), f"Todo {todo_id} not marked done in DB"
+
+    def test_checkmark_db_write_persisted(self, live_server, live_page) -> None:
+        """After clicking ✓ the todo is marked done=1 in the database."""
+        base_url, db_file = live_server
+        todo_id = self._insert_temp_todo(
+            db_file, project="workspace", text="BFX db write check", autonomy_level="supervised"
+        )
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        btn = live_page.locator(f".status-card button.done-btn[onclick*='markDone({todo_id},']").first
+        btn.click()
+        live_page.wait_for_timeout(800)
+
+        assert self._is_done(db_file, todo_id), "DB was not updated after checkmark click"
+
+    def test_checkmark_no_js_error_on_offload_panel_row(self, live_server, live_page) -> None:
+        """Clicking ✓ on an offload-panel <tr> todo produces no uncaught JS TypeError.
+
+        Regression for BFX root cause: btnEl.closest('li') returned null for
+        table rows, causing null.closest('.status-card') to throw.
+        """
+        base_url, db_file = live_server
+        errors: list[str] = []
+        live_page.on("pageerror", lambda err: errors.append(str(err)))
+
+        # 'full' autonomy → rendered in offload-panel table (<td>/<tr>)
+        todo_id = self._insert_temp_todo(
+            db_file, project="workspace", text="BFX offload panel item", autonomy_level="full"
+        )
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        # Scope to .offload-panel to specifically exercise the <tr>/<td> code path
+        btn = live_page.locator(f".offload-panel button.done-btn[onclick*='markDone({todo_id},']").first
+        assert btn.count() >= 0, f"offload-panel done-btn for todo {todo_id} not found"
+        btn.click()
+        live_page.wait_for_timeout(800)
+
+        assert errors == [], f"Uncaught JS TypeError in offload panel checkmark: {errors}"
+        # Only assert the offload-panel row is gone; the card <li> may still exist
+        remaining_in_offload = live_page.locator(
+            f".offload-panel button.done-btn[onclick*='markDone({todo_id},']"
+        ).count()
+        assert remaining_in_offload == 0, f"Offload panel row for todo {todo_id} not removed from DOM"

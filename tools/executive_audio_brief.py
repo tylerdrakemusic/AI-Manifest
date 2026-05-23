@@ -323,12 +323,9 @@ def _status_card_html(proj: dict, rank: int) -> str:
             for t in todos[:limit]
         )
 
+    # 'full' todos are shown exclusively in the top ⚡ Fully Offloadable panel;
+    # omit them from per-project cards to avoid duplicate entries.
     full_html = ""
-    if proj.get("full_todos"):
-        full_html = f"""<div class="todo-section">
-            <div class="todo-label full-label">⚡ Full \u2014 Fully Offloadable ({full_count})</div>
-            <ul class="todo-list">{_todo_rows(proj["full_todos"])}</ul>
-        </div>"""
 
     supervised_html = ""
     if proj.get("supervised_todos"):
@@ -1257,6 +1254,7 @@ async function generateBrief() {{
 }}
 
 function _inlineMsg(li, text, color) {{
+    if (!li) return;
     const span = document.createElement('span');
     span.textContent = text;
     span.style.cssText = 'color:' + color + ';font-size:0.75rem;margin-left:0.4rem;';
@@ -1264,6 +1262,7 @@ function _inlineMsg(li, text, color) {{
 }}
 
 function _updateProgressBar(card) {{
+    if (!card) return;
     const pbc = card.querySelector('.progress-bar-container');
     if (!pbc) return;
     let open = parseInt(pbc.dataset.open || '0', 10);
@@ -1287,26 +1286,28 @@ async function markDone(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
-        const li = btnEl.closest('li');
-        const card = li.closest('.status-card');
+        const row = btnEl.closest('li') || btnEl.closest('tr');
+        const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
-            li.style.transition = 'opacity 0.3s';
-            li.style.opacity = '0';
-            setTimeout(() => {{
-                li.remove();
-                _updateProgressBar(card);
-            }}, 300);
+            if (row) {{
+                row.style.transition = 'opacity 0.3s';
+                row.style.opacity = '0';
+                setTimeout(() => {{
+                    row.remove();
+                    _updateProgressBar(card);
+                }}, 300);
+            }}
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
-            _inlineMsg(li, 'Already done', 'var(--accent-green)');
+            _inlineMsg(row, 'Already done', 'var(--accent-green)');
         }} else {{
             btnEl.style.display = 'none';
-            _inlineMsg(li, 'Not found', 'var(--text-muted)');
+            _inlineMsg(row, 'Not found', 'var(--text-muted)');
         }}
     }} catch(e) {{
         btnEl.disabled = false;
-        const li = btnEl.closest('li');
-        _inlineMsg(li, 'Error: ' + e.message, 'var(--accent-red)');
+        const row = btnEl.closest('li') || btnEl.closest('tr');
+        _inlineMsg(row, 'Error: ' + e.message, 'var(--accent-red)');
     }}
 }}
 
