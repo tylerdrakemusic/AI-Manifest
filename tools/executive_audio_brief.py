@@ -1779,23 +1779,28 @@ def main() -> None:
     print("👁 Executive Audio Brief Portal")
     print("=" * 60)
 
-    result = build_brief(text_only=args.text_only)
-
-    if args.text_only:
-        print("\n--- BRIEF SCRIPT ---")
-        print(result["script"])
-        print("--- END ---\n")
-
     if args.serve:
-        BriefRequestHandler.portal_state = result
+        # Bind port BEFORE build_brief() so the portal launcher's
+        # Wait-PortListening (15 s) never times out due to slow ElevenLabs API
+        # calls. Initial state is built in a background thread; _serve_portal()
+        # always rebuilds HTML from live DB so there is no stale-data window.
+        import threading
+        import webbrowser
+        BriefRequestHandler.portal_state = {}
         server = ThreadedHTTPServer(("127.0.0.1", args.port), BriefRequestHandler)
         url = f"http://127.0.0.1:{args.port}"
         print(f"\n🌐 Portal live at {url}")
         print("Press Ctrl+C to stop.\n")
-
-        # Auto-open in browser
-        import webbrowser
         webbrowser.open(url)
+
+        def _init_state() -> None:
+            try:
+                r = build_brief(text_only=args.text_only)
+                BriefRequestHandler.portal_state = r
+            except Exception as exc:
+                print(f"Background brief build failed: {exc}", file=sys.stderr)
+
+        threading.Thread(target=_init_state, daemon=True).start()
 
         try:
             server.serve_forever()
@@ -1803,8 +1808,13 @@ def main() -> None:
             print("\nShutting down portal.")
             server.server_close()
     else:
-        print(f"\nDone. Open {REPORT_PATH} in a browser.")
-        if not args.text_only:
+        result = build_brief(text_only=args.text_only)
+        if args.text_only:
+            print("\n--- BRIEF SCRIPT ---")
+            print(result["script"])
+            print("--- END ---\n")
+        else:
+            print(f"\nDone. Open {REPORT_PATH} in a browser.")
             import webbrowser
             webbrowser.open(str(REPORT_PATH))
 
