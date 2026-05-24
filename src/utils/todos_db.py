@@ -122,6 +122,16 @@ def init_db() -> None:
             "UPDATE todos SET autonomy_level = 'supervised'"
             " WHERE autonomy_level IS NULL OR autonomy_level = ''"
         )
+
+        # Migration guard: add priority_history table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS priority_history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id    INTEGER NOT NULL REFERENCES todos(id),
+                priority   INTEGER NOT NULL,
+                scored_at  TEXT NOT NULL
+            )
+        """)
         conn.commit()
 
 
@@ -200,14 +210,20 @@ def add_todo(
 
 
 def update_priority(todo_id: int, priority: int) -> bool:
-    """Update priority for a single todo. Returns True on success."""
+    """Update priority for a single todo and record the change in priority_history. Returns True on success."""
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
+    scored_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cur = conn.execute(
             "UPDATE todos SET priority=? WHERE id=?",
             (priority, todo_id),
         )
+        if cur.rowcount == 1:
+            conn.execute(
+                "INSERT INTO priority_history (todo_id, priority, scored_at) VALUES (?, ?, ?)",
+                (todo_id, priority, scored_at),
+            )
         conn.commit()
     return cur.rowcount == 1
 
