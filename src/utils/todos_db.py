@@ -123,6 +123,15 @@ def init_db() -> None:
             " WHERE autonomy_level IS NULL OR autonomy_level = ''"
         )
 
+        # Migration guard: add fr_id column for intake cross-reference linking
+        # Convention: fr_id IS NOT NULL means the todo is in-flight (linked to an active FR)
+        try:
+            conn.execute(
+                "ALTER TABLE todos ADD COLUMN fr_id TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         # Migration guard: add priority_history table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS priority_history (
