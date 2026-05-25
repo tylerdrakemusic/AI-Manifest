@@ -4,8 +4,9 @@ Schema
 ------
 todos(id, project, source, text, done, created_at, closed_at)
 
-- project: key string matching PROJECTS in executive_audio_brief.py
-  ('music', 'life', 'quantum', 'ai_manifest', 'workspace')
+- project: canonical lowercase key ('music', 'life', 'quantum', 'ai_manifest',
+  'workspace'). Sigil display names (e.g. '❤Music', '∞Life') are automatically
+  normalised to the canonical key by _normalize_project() at read/write time.
 - source: 'AI', 'TYLER', or 'SCAN'
 - done: 0 = open, 1 = closed
 - created_at / closed_at: ISO-8601 UTC strings
@@ -21,6 +22,23 @@ from typing import Any
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
+
+# Map sigil/display project names → canonical DB keys.
+# Agents writing directly via SQL sometimes use the display name; normalise at
+# write time so the executive dashboard (which queries by lowercase key) always
+# finds the rows.
+_SIGIL_TO_KEY: dict[str, str] = {
+    "∞Life":        "life",
+    "❤Music":       "music",
+    "⟨ψ⟩Quantum":   "quantum",
+    "👁AI-Manifest": "ai_manifest",
+    "⊕Workspace":   "workspace",
+}
+
+
+def _normalize_project(project: str) -> str:
+    """Return the canonical lowercase DB key for a project name."""
+    return _SIGIL_TO_KEY.get(project, project)
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -153,6 +171,8 @@ def count_todos() -> int:
 
 def get_open_todos(project: str | None = None) -> list[dict[str, Any]]:
     """Return all open (done=0) todos, optionally filtered by project."""
+    if project:
+        project = _normalize_project(project)
     with get_connection() as conn:
         if project:
             rows = conn.execute(
@@ -168,6 +188,8 @@ def get_open_todos(project: str | None = None) -> list[dict[str, Any]]:
 
 def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
     """Return all done (done=1) todos, optionally filtered by project."""
+    if project:
+        project = _normalize_project(project)
     with get_connection() as conn:
         if project:
             rows = conn.execute(
@@ -201,6 +223,7 @@ def add_todo(
     autonomy_level: str = "supervised",
 ) -> int:
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
+    project = _normalize_project(project)
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
     if source not in ALLOWED_SOURCES:
