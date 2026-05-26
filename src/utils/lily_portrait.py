@@ -192,6 +192,22 @@ def _try_huggingface(
         return None
 
 
+def _try_hf_spaces(prompt: str, save_dir: Path) -> Path | None:
+    """Attempt to generate via HF Spaces FLUX.1-schnell (ZeroGPU). Returns Path or None."""
+    try:
+        mod = _load_workspace_module(
+            "_ws_hf_spaces_client",
+            "src/integrations/huggingface/spaces_client.py",
+        )
+        if mod is None:
+            return None
+        client = mod.HFSpacesImageClient()
+        path = client.generate_image(prompt, output_dir=save_dir, width=1024, height=1024)
+        return path
+    except Exception:
+        return None
+
+
 def _try_pollinations(prompt: str, save_dir: Path) -> Path | None:
     """Attempt to generate the portrait via Pollinations.AI (free, no API key). Returns Path or None."""
     try:
@@ -224,9 +240,10 @@ def get_daily_portrait() -> Path:
     Generation cascade:
     1. Return cached portrait if already generated today.
     2. Try DALL-E 3 (requires ``OPENAPI_TOKEN``).
-    3. Fall back to HuggingFace Inference (requires ``HF_TOKEN``).
-    4. Try Pollinations.AI (free, no API key required).
-    5. Fall back to inline SVG silhouette (always succeeds).
+    3. Fall back to HuggingFace Inference API (requires ``HF_TOKEN`` with credits).
+    4. Try HuggingFace Spaces FLUX.1-schnell (free, ZeroGPU quota).
+    5. Try Pollinations.AI (free, photorealistic, no API key required).
+    6. Fall back to inline SVG silhouette (always succeeds).
 
     Returns
     -------
@@ -243,29 +260,35 @@ def get_daily_portrait() -> Path:
     positive_prompt, negative_prompt = _build_prompt()
     save_dir = _IMAGE_CACHE_DIR
 
-    # 2. HuggingFace (primary)
-    result = _try_huggingface(positive_prompt, save_dir, negative_prompt=negative_prompt)
-    if result and result.exists():
-        # Rename to canonical dated name so cache check works on re-entry
-        result.rename(today_path)
-        _prune_old_portraits()
-        return today_path
-
-    # 3. DALL-E 3 (fallback)
+    # 2. DALL-E 3
     result = _try_dalle3(positive_prompt, save_dir)
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
-    # 4. Pollinations.AI (free fallback — no API key)
+    # 3. HuggingFace Inference API (requires HF_TOKEN with credits)
+    result = _try_huggingface(positive_prompt, save_dir, negative_prompt=negative_prompt)
+    if result and result.exists():
+        result.rename(today_path)
+        _prune_old_portraits()
+        return today_path
+
+    # 4. HuggingFace Spaces FLUX.1-schnell (free, ZeroGPU quota)
+    result = _try_hf_spaces(positive_prompt, save_dir)
+    if result and result.exists():
+        result.rename(today_path)
+        _prune_old_portraits()
+        return today_path
+
+    # 5. Pollinations.AI (free, photorealistic, no API key)
     result = _try_pollinations(positive_prompt, save_dir)
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
-    # 5. SVG silhouette fallback (always works)
+    # 6. SVG silhouette fallback (always works)
     return _svg_fallback_path()
 
 
