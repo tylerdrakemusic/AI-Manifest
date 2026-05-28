@@ -106,3 +106,10 @@ src/data/backups/
 
 brief_log.txt
 output/report.txt
+
+# Proof / QA screenshots (ephemeral QA artifacts — not committed to git)
+proof/**/*.png
+proof/**/*.jpg
+proof/**/*.jpeg
+proof/**/*.webp
+proof/**/*.gif
