@@ -493,7 +493,6 @@ def generate_portal_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="60">
 <title>👁 Executive Audio Brief Portal</title>
 <style>
 :root {{
@@ -1419,6 +1418,18 @@ async function lilyModalSave() {{
         btn.textContent = 'Save & Regenerate';
     }}
 }}
+
+// Auto-refresh every 60s — skip the tick when audio is actively playing
+(function() {{
+    var REFRESH_INTERVAL = 60000;
+    setInterval(function() {{
+        var audio = document.getElementById('briefAudio');
+        var playing = audio && !audio.paused && !audio.ended && audio.readyState > 2;
+        if (!playing) {{
+            window.location.reload();
+        }}
+    }}, REFRESH_INTERVAL);
+}})();
 </script>
 </body>
 </html>"""
