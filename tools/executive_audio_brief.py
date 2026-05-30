@@ -1106,30 +1106,9 @@ footer {{
     background: rgba(210,153,34,0.05);
 }}
 
-/* ── Static Banner ───────────────────────────────────────────── */
-.static-banner {{
-    background: #2a2008;
-    border-bottom: 1px solid #5a4010;
-    color: #c8a048;
-    font-size: 0.85rem;
-    padding: 0.55rem 1.5rem;
-    text-align: center;
-    cursor: pointer;
-    transition: opacity 0.3s;
-}}
-.static-banner:hover {{ opacity: 0.75; }}
-.static-banner code {{
-    background: rgba(255,255,255,0.08);
-    padding: 0.1rem 0.35rem;
-    border-radius: 4px;
-    font-size: 0.82rem;
-}}
 </style>
 </head>
 <body>
-<div class="static-banner" onclick="this.style.display='none'" title="Click to dismiss">
-  📸 Static snapshot — auto-refreshes every 60s. Run with <code>--serve</code> for instant live updates.
-</div>
 <!-- Lily Prompt Modal -->
 <div class="modal-overlay" id="lily-prompt-modal" onclick="lilyModalClickOutside(event)">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="lily-modal-title">
