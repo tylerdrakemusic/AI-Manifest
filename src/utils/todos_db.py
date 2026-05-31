@@ -159,6 +159,18 @@ def init_db() -> None:
                 scored_at  TEXT NOT NULL
             )
         """)
+
+        # Migration guard: add rich-context columns (AC-2)
+        for _col, _default in [
+            ("rationale", None),
+            ("implementation_hints", None),
+            ("context_snapshot", None),
+            ("estimated_effort", None),
+            ("dependencies", None),
+        ]:
+            if not _has_column(conn, "todos", _col):
+                conn.execute(f"ALTER TABLE todos ADD COLUMN {_col} TEXT")  # nosec B608 — col name is a hardcoded literal
+
         conn.commit()
 
 
@@ -218,9 +230,14 @@ def mark_done(todo_id: int) -> bool:
 def add_todo(
     project: str,
     text: str,
-    priority: int,
+    priority: int = 5,
     source: str = "TYLER",
     autonomy_level: str = "supervised",
+    rationale: str | None = None,
+    implementation_hints: str | None = None,
+    context_snapshot: str | None = None,
+    estimated_effort: str | None = None,
+    dependencies: str | None = None,
 ) -> int:
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
     project = _normalize_project(project)
@@ -233,9 +250,15 @@ def add_todo(
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO todos (project, source, text, done, created_at, priority, autonomy_level)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?)",
-            (project, source, text, created_at, priority, autonomy_level),
+            "INSERT INTO todos"
+            " (project, source, text, done, created_at, priority, autonomy_level,"
+            "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                project, source, text, created_at, priority, autonomy_level,
+                rationale, implementation_hints, context_snapshot,
+                estimated_effort, dependencies,
+            ),
         )
         conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
