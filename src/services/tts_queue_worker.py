@@ -224,9 +224,9 @@ class TtsQueueWorker:
             try:
                 delay = float(retry_after_header)
             except ValueError:
-                delay = 2 ** new_count * 30 + random.uniform(-10, 10)
+                delay = 2 ** new_count * 30 + random.uniform(-10, 10)  # nosec B311
         else:
-            delay = 2 ** new_count * 30 + random.uniform(-10, 10)
+            delay = 2 ** new_count * 30 + random.uniform(-10, 10)  # nosec B311
 
         delay = max(0.0, delay)
         logger.warning(

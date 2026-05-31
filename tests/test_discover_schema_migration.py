@@ -32,7 +32,7 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _col_names(conn, table: str = "todos") -> list[str]:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # nosec B608
     return [r[1] for r in rows]
 
 
