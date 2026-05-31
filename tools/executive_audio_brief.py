@@ -37,7 +37,7 @@ REPORT_PATH = PROJECT_ROOT / "output" / "executive_brief_portal.html"
 # Add workspace root to path for shared integrations
 _WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
 if str(_WORKSPACE_ROOT) not in sys.path:
-    sys.path.insert(0, str(_WORKSPACE_ROOT))
+    sys.path.append(str(_WORKSPACE_ROOT))
 
 # Add project root to path for any remaining project-local imports
 if str(PROJECT_ROOT) not in sys.path:
@@ -150,18 +150,21 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     status["tyler_todos"] = []
     status["scan_todos"] = []
 
-    status["full_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
-        for r in open_rows if r.get("autonomy_level") == "full"
-    ]
-    status["supervised_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
-        for r in open_rows if r.get("autonomy_level") == "supervised"
-    ]
-    status["human_todos"] = [
-        {"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
-        for r in open_rows if r.get("autonomy_level") == "human" or r.get("autonomy_level") is None
-    ]
+    status["full_todos"] = sorted(
+        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+         for r in open_rows if r.get("autonomy_level") == "full"],
+        key=lambda t: t["priority"], reverse=True,
+    )
+    status["supervised_todos"] = sorted(
+        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+         for r in open_rows if r.get("autonomy_level") == "supervised"],
+        key=lambda t: t["priority"], reverse=True,
+    )
+    status["human_todos"] = sorted(
+        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+         for r in open_rows if r.get("autonomy_level") == "human" or r.get("autonomy_level") is None],
+        key=lambda t: t["priority"], reverse=True,
+    )
     status["active_tasks"] = len(open_rows)
     status["completed_tasks"] = done_count
 
@@ -218,8 +221,8 @@ def rank_projects(statuses: list[dict]) -> list[dict]:
 # Script generation
 # ---------------------------------------------------------------------------
 
-def generate_brief_script(top3: list[dict], timestamp: str) -> str:
-    """Generate the spoken executive brief text."""
+def generate_brief_script(all_statuses: list[dict], timestamp: str) -> str:
+    """Generate the spoken executive brief text covering all 5 projects."""
     lines = [
         f"Executive Project Brief — {timestamp}.",
         "",
@@ -227,15 +230,22 @@ def generate_brief_script(top3: list[dict], timestamp: str) -> str:
         "",
     ]
 
-    for i, proj in enumerate(top3, 1):
-        lines.append(f"Priority {i}: {proj['sigil']} {proj['name']}.")
+    ranked = sorted(all_statuses, key=lambda s: s.get("score", 0), reverse=True)
+    for i, proj in enumerate(ranked, 1):
+        if i <= 3:
+            lines.append(f"Priority {i}: {proj['sigil']} {proj['name']}.")
+        else:
+            lines.append(f"Also active: {proj['sigil']} {proj['name']}.")
         lines.append(proj["summary"])
+        if proj.get("full_todos"):
+            top_offload = proj["full_todos"][0]["text"]
+            lines.append(f"Fully offloadable: {top_offload}")
         lines.append("")
 
     # Closing
-    total_open = sum(p["active_tasks"] for p in top3)
+    total_open = sum(p["active_tasks"] for p in all_statuses)
     lines.append(
-        f"Across your top 3 priorities, you have {total_open} open tasks. "
+        f"Across all projects, you have {total_open} open tasks. "
         "Focus on the highest-impact items first. End of brief."
     )
     return "\n".join(lines)
@@ -348,10 +358,19 @@ def _status_card_html(proj: dict, rank: int) -> str:
   <span class="priority-hint">leave blank \u2192 AI scores</span>
 </div>"""
 
-    badge_class = "badge-1" if rank == 1 else ("badge-2" if rank == 2 else "badge-3")
+    if rank == 1:
+        badge_class = "badge-1"
+    elif rank == 2:
+        badge_class = "badge-2"
+    elif rank == 3:
+        badge_class = "badge-3"
+    else:
+        badge_class = "badge-secondary"
+
+    card_extra_class = " rank-secondary" if rank > 3 else ""
 
     return f"""
-    <div class="status-card">
+    <div class="status-card{card_extra_class}">
         <div class="card-header">
             <span class="priority-badge {badge_class}">#{rank}</span>
             <span class="project-sigil">{sigil}</span>
@@ -413,17 +432,18 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
 
 
 def generate_portal_html(
-    top3: list[dict],
+    all_statuses: list[dict],
     script: str,
     audio_path: Path | None,
     voices: list[dict],
-    all_statuses: list[dict],
     timestamp: str,
 ) -> str:
-    """Generate the full interactive portal HTML."""
+    """Generate the full interactive portal HTML covering all 5 projects."""
+    all_ranked = sorted(all_statuses, key=lambda s: s.get("score", 0), reverse=True)
     cards_html = "\n".join(
-        _status_card_html(p, i) for i, p in enumerate(top3, 1)
+        _status_card_html(p, i) for i, p in enumerate(all_ranked, 1)
     )
+    top3_keys = {s["key"] for s in all_ranked[:3]}
     offload_panel = _offload_panel_html(all_statuses)
 
     # Lily portrait — injected as inline data-URI img tag
@@ -477,7 +497,7 @@ def generate_portal_html(
         done = s["completed_tasks"]
         total = active + done
         pct = round(100 * done / total) if total > 0 else 0
-        in_brief = "✅" if s in top3 else ""
+        in_brief = "✅" if s["key"] in top3_keys else ""
         all_rows += f"""
         <tr>
             <td>{sigil} {name}</td>
@@ -685,6 +705,8 @@ header .subtitle {{
 .badge-1 {{ background: var(--music-pink); }}
 .badge-2 {{ background: var(--accent-orange); }}
 .badge-3 {{ background: var(--accent); }}
+.badge-secondary {{ background: rgba(139,148,158,0.35); }}
+.rank-secondary {{ opacity: 0.72; border-color: var(--border); }}
 
 .progress-bar-container {{
     position: relative;
@@ -1162,7 +1184,7 @@ footer {{
 
     {offload_panel}
 
-    <h2 style="margin-bottom:1rem;">Top 3 Priorities</h2>
+    <h2 style="margin-bottom:1rem;">Project Priorities</h2>
     <div class="cards-grid">
         {cards_html}
     </div>
@@ -1467,10 +1489,10 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_statuses = gather_all_statuses()
         top3 = rank_projects(all_statuses)
-        script = generate_brief_script(top3, timestamp)
+        script = generate_brief_script(all_statuses, timestamp)
         existing_audio = self.portal_state.get("audio_path")
         voices = self.portal_state.get("voices", [])
-        return generate_portal_html(top3, script, existing_audio, voices, all_statuses, timestamp)
+        return generate_portal_html(all_statuses, script, existing_audio, voices, timestamp)
 
     def _serve_portal(self) -> None:
         portal_html = self._build_fresh_portal_html()
@@ -1523,11 +1545,10 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             # Regenerate HTML with existing audio
             voices = self.portal_state.get("voices", [])
             result["html"] = generate_portal_html(
-                result["top3"],
+                result["all_statuses"],
                 result["script"],
                 existing_audio,
                 voices,
-                result["all_statuses"],
                 result["timestamp"],
             )
             self.portal_state.update(result)
@@ -1721,7 +1742,7 @@ def build_brief(
     print(f"Top 3: {', '.join(p['sigil'] + p['name'] for p in top3)}")
 
     # 3. Script
-    script = generate_brief_script(top3, timestamp)
+    script = generate_brief_script(all_statuses, timestamp)
     print(f"Brief script: {len(script)} chars")
 
     # 4. Voices — always fetch so the dropdown is populated in static-file mode.
@@ -1739,7 +1760,7 @@ def build_brief(
 
     # 5. Render HTML
     portal_html = generate_portal_html(
-        top3, script, audio_path, voices, all_statuses, timestamp
+        all_statuses, script, audio_path, voices, timestamp
     )
 
     # 6. Save HTML
