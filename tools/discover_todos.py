@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,84 @@ DISCOVERY_FILES: dict[str, list[str]] = {
     "ai_manifest": ["AGENT_STARTUP.md", "README.md", "docs/**/*.md", "research/**/*.md"],
     "workspace": ["AGENT_STARTUP.md", "README.md", ".github/FEATURE_REQUESTS.md", "REPO_VISIBILITY.md"],
 }
+
+_PREFERRED_MODEL = "llama3.3:70b"
+_OLLAMA_MODELS_PATH = r"F:\.ollama\models"
+
+
+def _select_model(override: str | None = None) -> str:
+    """Return the best available Ollama model name.
+
+    If *override* is given, return it immediately without querying Ollama.
+    Otherwise, detect the best local model:
+    1. llama3.3:70b (preferred)
+    2. Any 70b model
+    3. Any 13b model
+    4. llama3.1:8b
+    5. First available model
+    6. Absolute default: llama3.1:8b
+    """
+    if override is not None:
+        return override
+
+    model_names: list[str] = []
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+        lines = result.stdout.strip().splitlines()
+        for line in lines[1:]:  # skip header
+            parts = line.split()
+            if parts:
+                model_names.append(parts[0])
+    except Exception:
+        pass
+
+    if _PREFERRED_MODEL in model_names:
+        print(f"[discover] Using model: {_PREFERRED_MODEL}")
+        return _PREFERRED_MODEL
+
+    # Preferred not found — warn, set env, attempt pull
+    print(
+        f"[discover] {_PREFERRED_MODEL} not found. "
+        f"Set OLLAMA_MODELS={_OLLAMA_MODELS_PATH} and run: ollama pull {_PREFERRED_MODEL}"
+    )
+    os.environ["OLLAMA_MODELS"] = _OLLAMA_MODELS_PATH
+    try:
+        subprocess.run(
+            ["ollama", "pull", _PREFERRED_MODEL],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=600,
+        )
+    except Exception:
+        pass
+
+    # Fall back through preference order
+    for name in model_names:
+        if "70b" in name:
+            print(f"[discover] Using model: {name}")
+            return name
+    for name in model_names:
+        if "13b" in name:
+            print(f"[discover] Using model: {name}")
+            return name
+    for name in model_names:
+        if name == "llama3.1:8b":
+            print(f"[discover] Using model: {name}")
+            return name
+    if model_names:
+        print(f"[discover] Using model: {model_names[0]}")
+        return model_names[0]
+
+    # Absolute fallback
+    print("[discover] Using model: llama3.1:8b (default fallback)")
+    return "llama3.1:8b"
 
 
 # Keywords that strongly indicate a task can be executed autonomously by AI.
@@ -75,6 +154,11 @@ class Candidate:
     similar_to: str | None
     source: str = "TYLER"  # 'AI' or 'TYLER', auto-classified by _classify_autonomy
     autonomy_level: str = "supervised"  # 'full', 'supervised', or 'human'
+    rationale: str = ""
+    implementation_hints: str = ""
+    context_snapshot: str = ""
+    estimated_effort: str = ""
+    dependencies: str = ""
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -102,6 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="Skip confirmation prompts and insert all shown candidates in --apply mode.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Ollama model to use (default: auto-detect best available).",
     )
     return parser
 
@@ -140,10 +229,15 @@ def _discovery_prompt(project: str, context: str, target_count: int) -> str:
         f"Project key: {project}\n"
         f"Target suggestions: {target_count}\n"
         "Return STRICT JSON (no markdown) as an array of objects with keys:"
-        " project, text, rationale.\n"
+        " project, text, rationale, implementation_hints, context_snapshot, estimated_effort, dependencies.\n"
         "Rules:\n"
         "- project must equal the project key above\n"
         "- text must be <= 140 chars and action-oriented\n"
+        "- rationale: why this todo matters now (<= 400 chars)\n"
+        "- implementation_hints: suggested first steps / relevant files / APIs (<= 300 chars)\n"
+        "- context_snapshot: key project facts that led to this suggestion (<= 400 chars)\n"
+        "- estimated_effort: one of XS, S, M, L, XL\n"
+        "- dependencies: comma-separated todo IDs or FR IDs (empty string if none)\n"
         "- avoid duplicates / near-duplicates\n"
         "- keep suggestions realistic based on context\n\n"
         "Context:\n"
@@ -172,6 +266,10 @@ def _extract_json_candidates(raw: str, project: str) -> list[dict[str, str]]:
                         "project": project,
                         "text": text,
                         "rationale": str(item.get("rationale", "")).strip(),
+                        "implementation_hints": str(item.get("implementation_hints", "")).strip(),
+                        "context_snapshot": str(item.get("context_snapshot", "")).strip(),
+                        "estimated_effort": str(item.get("estimated_effort", "")).strip(),
+                        "dependencies": str(item.get("dependencies", "")).strip(),
                     }
                 )
             return rows
@@ -186,7 +284,9 @@ def _extract_json_candidates(raw: str, project: str) -> list[dict[str, str]]:
         s = re.sub(r"^\d+[.)]\s*", "", s).strip()
         if len(s) < 8:
             continue
-        rows.append({"project": project, "text": s, "rationale": ""})
+        rows.append({"project": project, "text": s, "rationale": "",
+                     "implementation_hints": "", "context_snapshot": "",
+                     "estimated_effort": "", "dependencies": ""})
     return rows
 
 
@@ -237,10 +337,12 @@ def _heuristic_candidates(project: str, context: str, limit: int) -> list[dict[s
         if len(unique) >= limit:
             break
 
-    return [{"project": project, "text": t, "rationale": "heuristic fallback"} for t in unique]
+    return [{"project": project, "text": t, "rationale": "heuristic fallback",
+             "implementation_hints": "", "context_snapshot": "",
+             "estimated_effort": "", "dependencies": ""} for t in unique]
 
 
-def _discover_for_project(project: str, limit: int) -> list[dict[str, str]]:
+def _discover_for_project(project: str, limit: int, model: str = "llama3.1:8b") -> list[dict[str, str]]:
     context = _collect_context(project)
     if not context:
         return []
@@ -248,7 +350,7 @@ def _discover_for_project(project: str, limit: int) -> list[dict[str, str]]:
     prompt = _discovery_prompt(project, context, target_count=max(3, min(8, limit)))
 
     try:
-        raw = OllamaClient().generate(prompt)
+        raw = OllamaClient(model=model).generate(prompt)
         rows = _extract_json_candidates(raw, project)
         if rows:
             return rows
@@ -302,7 +404,7 @@ def _nearest_open_match(text: str, open_texts: list[str], threshold: float = 0.6
     return None
 
 
-def _prepare_candidates(projects: list[str], limit: int) -> list[Candidate]:
+def _prepare_candidates(projects: list[str], limit: int, model: str = "llama3.1:8b") -> list[Candidate]:
     open_rows = get_open_todos()
     open_by_project: dict[str, list[dict[str, Any]]] = {}
     for row in open_rows:
@@ -313,7 +415,7 @@ def _prepare_candidates(projects: list[str], limit: int) -> list[Candidate]:
     seen: set[tuple[str, str]] = set()
 
     for project in projects:
-        discovered = _discover_for_project(project, limit=limit)
+        discovered = _discover_for_project(project, limit=limit, model=model)
         existing_rows = open_by_project.get(project, [])
         existing_texts = [str(r.get("text", "")) for r in existing_rows]
 
@@ -338,6 +440,11 @@ def _prepare_candidates(projects: list[str], limit: int) -> list[Candidate]:
                     similar_to=similar_to,
                     source=source,
                     autonomy_level=autonomy_level,
+                    rationale=row.get("rationale", ""),
+                    implementation_hints=row.get("implementation_hints", ""),
+                    context_snapshot=row.get("context_snapshot", ""),
+                    estimated_effort=row.get("estimated_effort", ""),
+                    dependencies=row.get("dependencies", ""),
                 )
             )
             if len(results) >= limit:
@@ -354,12 +461,14 @@ def _excerpt(text: str, max_len: int = 70) -> str:
 
 def _print_candidates(candidates: list[Candidate]) -> None:
     print("\nDiscovered epic/story todo opportunities")
-    print("ID   PROJECT      PRI  SOURCE  STATUS      TODO")
-    print("-" * 100)
+    print("ID   PROJECT      PRI  SOURCE  STATUS      TODO                                                            RATIONALE")
+    print("-" * 140)
     for idx, row in enumerate(candidates, start=1):
         status = "SIMILAR" if row.similar_to else "NEW"
+        rationale_col = _excerpt(row.rationale, max_len=80) if row.rationale else ""
         print(
-            f"{idx:<4} {row.project:<12} {row.priority:<4} {row.source:<7} {status:<10} {_excerpt(row.text)}"
+            f"{idx:<4} {row.project:<12} {row.priority:<4} {row.source:<7} {status:<10} "
+            f"{_excerpt(row.text):<63} {rationale_col}"
         )
         if row.similar_to:
             print(f"     similar to: {_excerpt(row.similar_to, max_len=80)}")
@@ -391,6 +500,11 @@ def _insert_selected(candidates: list[Candidate], selected_ids: set[int]) -> tup
                 priority=row.priority,
                 source=row.source,  # 'AI' or 'TYLER' — auto-classified by _classify_autonomy
                 autonomy_level=row.autonomy_level,
+                rationale=row.rationale or None,
+                implementation_hints=row.implementation_hints or None,
+                context_snapshot=row.context_snapshot or None,
+                estimated_effort=row.estimated_effort or None,
+                dependencies=row.dependencies or None,
             )
             inserted += 1
         except sqlite3.IntegrityError:
@@ -404,8 +518,10 @@ def main() -> int:
 
     init_db()
 
+    model = _select_model(override=args.model)
+
     projects = [args.project] if args.project else list(PROJECT_ROOTS.keys())
-    candidates = _prepare_candidates(projects=projects, limit=max(1, args.limit))
+    candidates = _prepare_candidates(projects=projects, limit=max(1, args.limit), model=model)
 
     if not candidates:
         print("No discovery candidates found.")
