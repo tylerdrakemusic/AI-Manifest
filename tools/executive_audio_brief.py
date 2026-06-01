@@ -73,6 +73,14 @@ PROJECTS = [
         "priority_weight": 5,
     },
     {
+        "sigil": "Σ",
+        "name": "Capital",
+        "key": "capital",
+        "root": WORKSPACE_ROOT / "ΣCapital",
+        "always_include": False,
+        "priority_weight": 4,
+    },
+    {
         "sigil": "⟨ψ⟩",
         "name": "Quantum",
         "key": "quantum",
