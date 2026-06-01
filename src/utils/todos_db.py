@@ -4,7 +4,7 @@ Schema
 ------
 todos(id, project, source, text, done, created_at, closed_at)
 
-- project: canonical lowercase key ('music', 'life', 'quantum', 'ai_manifest',
+- project: canonical lowercase key ('music', 'life', 'capital', 'quantum', 'ai_manifest',
   'workspace'). Sigil display names (e.g. '❤Music', '∞Life') are automatically
   normalised to the canonical key by _normalize_project() at read/write time.
 - source: 'AI', 'TYLER', or 'SCAN'
@@ -32,6 +32,7 @@ _SIGIL_TO_KEY: dict[str, str] = {
     "❤Music":       "music",
     "⟨ψ⟩Quantum":   "quantum",
     "👁AI-Manifest": "ai_manifest",
+    "ΣCapital":      "capital",
     "⊕Workspace":   "workspace",
 }
 
