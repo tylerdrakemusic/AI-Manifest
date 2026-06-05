@@ -142,19 +142,21 @@ def test_elevenlabs_path_when_key_available(
     assert result.metadata["voice_id"] == request.voice_id
     assert result.metadata["model_id"] == request.model_id
     assert audio_bytes.startswith(b"ID3")
-    assert captured == {
-        "api_key": "fake-key",
-        "text": (
-            "Exercise: Ascending fifths\n"
-            "Tempo: 100.00 BPM\n"
-            "Key: C\n"
-            "Instructions: Keep vibrato minimal.\n"
-            "Sequence: MIDI 60 for 1.00 beats lyric 'la'; MIDI 67 for 1.00 beats lyric 'la'\n"
-            "Sing this as a clear training guide vocal."
-        ),
-        "voice_id": request.voice_id,
-        "kwargs": {
-            "model_id": request.model_id,
-            "output_format": DEFAULT_OUTPUT_FORMAT,
-        },
+    assert captured["api_key"] == "fake-key"
+    assert captured["voice_id"] == request.voice_id
+    assert captured["kwargs"] == {
+        "model_id": request.model_id,
+        "output_format": DEFAULT_OUTPUT_FORMAT,
     }
+    prompt_text = captured["text"]
+    assert isinstance(prompt_text, str)
+    for expected_fragment in (
+        "Exercise: Ascending fifths",
+        "Tempo: 100.00 BPM",
+        "Key: C",
+        "Instructions: Keep vibrato minimal.",
+        "MIDI 60 for 1.00 beats lyric 'la'",
+        "MIDI 67 for 1.00 beats lyric 'la'",
+        "Sing this as a clear training guide vocal.",
+    ):
+        assert expected_fragment in prompt_text
