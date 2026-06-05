@@ -14,6 +14,7 @@ from src.integrations.vocal_synthesis import (
     ExerciseMetadata,
     NoteEvent,
     VocalRenderRequest,
+    VocalRenderResult,
     render_vocal_exercise,
 )
 
@@ -36,7 +37,7 @@ def _request(tmp_path: Path, stem: str = "exercise_take") -> VocalRenderRequest:
     )
 
 
-def _assert_common_contract(result, request: VocalRenderRequest) -> bytes:
+def _assert_common_contract(result: VocalRenderResult, request: VocalRenderRequest) -> bytes:
     audio_bytes = result.output_path.read_bytes()
     expected_duration = sum(note.duration_beats for note in request.notes) * (
         60.0 / request.exercise.tempo_bpm
@@ -91,7 +92,7 @@ def test_fallback_preserves_contract_when_remote_render_fails(
             self.api_key = api_key
 
         def text_to_speech(self, text: str, voice_id: str, **kwargs) -> bytes:
-            raise RuntimeError("synthetic elevenlabs failure")
+            raise RuntimeError("synthetic ElevenLabs failure")
 
     monkeypatch.setattr(
         "src.integrations.vocal_synthesis.ElevenLabsClient", _FailingClient
@@ -106,7 +107,7 @@ def test_fallback_preserves_contract_when_remote_render_fails(
     assert result.audio_format == "wav"
     assert result.output_path.suffix == ".wav"
     assert result.metadata["renderer"] == "deterministic_local"
-    assert result.metadata["fallback_reason"] == "synthetic elevenlabs failure"
+    assert result.metadata["fallback_reason"] == "synthetic ElevenLabs failure"
     with wave.open(BytesIO(audio_bytes), "rb") as wav_file:
         assert wav_file.getframerate() == result.sample_rate_hz
 
