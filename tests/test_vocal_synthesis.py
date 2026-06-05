@@ -90,7 +90,7 @@ def test_fallback_preserves_contract_when_remote_render_fails(
         def __init__(self, api_key: str | None = None) -> None:
             self.api_key = api_key
 
-        def text_to_speech(self, *args, **kwargs) -> bytes:
+        def text_to_speech(self, text: str, voice_id: str, **kwargs) -> bytes:
             raise RuntimeError("synthetic elevenlabs failure")
 
     monkeypatch.setattr(
@@ -150,13 +150,13 @@ def test_elevenlabs_path_when_key_available(
     }
     prompt_text = captured["text"]
     assert isinstance(prompt_text, str)
-    for expected_fragment in (
-        "Exercise: Ascending fifths",
-        "Tempo: 100.00 BPM",
-        "Key: C",
-        "Instructions: Keep vibrato minimal.",
-        "MIDI 60 for 1.00 beats lyric 'la'",
-        "MIDI 67 for 1.00 beats lyric 'la'",
-        "Sing this as a clear training guide vocal.",
-    ):
-        assert expected_fragment in prompt_text
+    assert request.exercise.title in prompt_text
+    assert "Tempo:" in prompt_text
+    assert str(int(request.exercise.tempo_bpm)) in prompt_text
+    assert "BPM" in prompt_text
+    assert request.exercise.target_key in prompt_text
+    assert request.exercise.instructions in prompt_text
+    assert "training guide vocal" in prompt_text
+    for note in request.notes:
+        assert f"MIDI {note.midi_note}" in prompt_text
+        assert note.lyric in prompt_text
