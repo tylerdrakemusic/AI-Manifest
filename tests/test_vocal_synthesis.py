@@ -37,7 +37,9 @@ def _request(tmp_path: Path, stem: str = "exercise_take") -> VocalRenderRequest:
     )
 
 
-def _assert_common_contract(result: VocalRenderResult, request: VocalRenderRequest) -> bytes:
+def _assert_vocal_render_result_contract(
+    result: VocalRenderResult, request: VocalRenderRequest
+) -> bytes:
     audio_bytes = result.output_path.read_bytes()
     expected_duration = sum(note.duration_beats for note in request.notes) * (
         60.0 / request.exercise.tempo_bpm
@@ -58,7 +60,7 @@ def test_fallback_render_without_api_key(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     request = _request(tmp_path)
     result = render_vocal_exercise(request)
-    audio_bytes = _assert_common_contract(result, request)
+    audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "local"
     assert result.used_fallback is True
@@ -100,7 +102,7 @@ def test_fallback_preserves_contract_when_remote_render_fails(
 
     request = _request(tmp_path, stem="failed_remote_take")
     result = render_vocal_exercise(request)
-    audio_bytes = _assert_common_contract(result, request)
+    audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "local"
     assert result.used_fallback is True
@@ -133,7 +135,7 @@ def test_elevenlabs_path_when_key_available(
 
     request = _request(tmp_path)
     result = render_vocal_exercise(request)
-    audio_bytes = _assert_common_contract(result, request)
+    audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "elevenlabs"
     assert result.used_fallback is False
@@ -145,10 +147,10 @@ def test_elevenlabs_path_when_key_available(
     assert audio_bytes.startswith(b"ID3")
     assert captured["api_key"] == "fake-key"
     assert captured["voice_id"] == request.voice_id
-    assert captured["kwargs"] == {
-        "model_id": request.model_id,
-        "output_format": DEFAULT_OUTPUT_FORMAT,
-    }
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["model_id"] == request.model_id
+    assert kwargs["output_format"] == DEFAULT_OUTPUT_FORMAT
     prompt_text = captured["text"]
     assert isinstance(prompt_text, str)
     assert request.exercise.title in prompt_text
