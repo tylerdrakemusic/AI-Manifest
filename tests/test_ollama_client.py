@@ -16,6 +16,7 @@ from src.integrations.ollama.client import (
     DEFAULT_MODEL,
     OllamaClient,
     OllamaError,
+    httpx,
 )
 
 _PATCH_HTTPX = "src.integrations.ollama.client.httpx"
