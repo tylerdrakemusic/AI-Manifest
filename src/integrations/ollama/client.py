@@ -1,8 +1,29 @@
 """AI-Manifest Ollama client wrapper.
 
 This module delegates to the canonical Ollama client implementation from the
-⊕Workspace project. It only adds a tiny import-time bootstrap so that the
-shared Workspace package can be imported directly.
+⊕Workspace project. It loads the shared Workspace client by path and
+re-exports the shared client symbols so AI-Manifest does not duplicate
+Ollama API logic.
+
+In CI and local multi-root development, set the WORKSPACE_ROOT environment
+variable to the root path of the ⊕Workspace checkout.
+
+Import from any project via::
+
+    import os
+    import sys
+    from pathlib import Path
+
+    workspace_root = Path(os.environ.get('WORKSPACE_ROOT', r'f:\⊕Workspace'))
+    sys.path.insert(0, str(workspace_root))
+    from src.integrations.ollama import OllamaClient
+
+Environment variables
+---------------------
+OLLAMA_BASE_URL : base URL of the running Ollama server
+    Default: http://localhost:11434
+OLLAMA_MODEL : model tag to use for generation
+    Default: llama3.1:8b
 """
 
 from __future__ import annotations

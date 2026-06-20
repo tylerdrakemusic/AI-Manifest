@@ -1470,6 +1470,8 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self._handle_lily_get_prompt()
         elif self.path == "/lily/portrait/regen":
             self._handle_lily_regen()
+        elif self.path == "/health":
+            self._serve_json({"ok": True, "port": self.server.server_address[1]})
         else:
             self.send_error(404)
 
