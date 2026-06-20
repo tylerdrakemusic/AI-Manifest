@@ -1,9 +1,9 @@
-"""👁AI-Manifest local Ollama integration.
+"""👁AI-Manifest Ollama integration.
 
-Self-contained mirror of the workspace canonical Ollama client so that
-AI-Manifest can run in CI without a cross-project sys.path hack.
+This package delegates to the shared canonical Ollama client implementation
+from the Workspace project when available, avoiding duplicate client code.
 
-Re-exports the primary client so callers can write::
+Callers can continue to import::
 
     from src.integrations.ollama import OllamaClient, OllamaError
 

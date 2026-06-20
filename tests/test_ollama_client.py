@@ -27,6 +27,19 @@ def client() -> OllamaClient:
     return OllamaClient(base_url="http://test-ollama:11434", model="test-model")
 
 
+def test_shim_exports_shared_httpx_for_mocking() -> None:
+    assert httpx is not None
+    assert hasattr(httpx, "get")
+    assert hasattr(httpx, "post")
+
+
+def test_shim_uses_workspace_shared_client_objects() -> None:
+    assert OllamaClient.__module__ == "workspace_ollama_client"
+    assert OllamaError.__module__ == "workspace_ollama_client"
+    assert DEFAULT_BASE_URL == "http://127.0.0.1:11434"
+    assert DEFAULT_MODEL == "llama3.1:8b"
+
+
 # ---------------------------------------------------------------------------
 # OllamaClient construction
 # ---------------------------------------------------------------------------
