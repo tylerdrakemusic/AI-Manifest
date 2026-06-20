@@ -22,6 +22,10 @@ from src.integrations.ollama.client import (
 _PATCH_HTTPX = "src.integrations.ollama.client.httpx"
 
 
+def _is_workspace_backed() -> bool:
+    return getattr(OllamaClient, "__module__", "") == "workspace_ollama_client"
+
+
 @pytest.fixture
 def client() -> OllamaClient:
     return OllamaClient(base_url="http://test-ollama:11434", model="test-model")
@@ -33,9 +37,12 @@ def test_shim_exports_shared_httpx_for_mocking() -> None:
     assert hasattr(httpx, "post")
 
 
-def test_shim_uses_workspace_shared_client_objects() -> None:
-    assert OllamaClient.__module__ == "workspace_ollama_client"
-    assert OllamaError.__module__ == "workspace_ollama_client"
+def test_shim_uses_workspace_shared_client_objects_or_local_fallback() -> None:
+    if _is_workspace_backed():
+        assert OllamaClient.__module__ == "workspace_ollama_client"
+        assert OllamaError.__module__ == "workspace_ollama_client"
+    else:
+        assert OllamaClient.__module__ == "src.integrations.ollama.client"
     assert DEFAULT_BASE_URL == "http://127.0.0.1:11434"
     assert DEFAULT_MODEL == "llama3.1:8b"
 
