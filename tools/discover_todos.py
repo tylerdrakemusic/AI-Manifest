@@ -47,7 +47,7 @@ DISCOVERY_FILES: dict[str, list[str]] = {
 }
 
 _PREFERRED_MODEL = "llama3.3:70b"
-_OLLAMA_MODELS_PATH = r"F:\.ollama\models"
+_OLLAMA_MODELS_PATH = r"G:\.ollama\models"
 
 
 def _select_model(override: str | None = None) -> str:
