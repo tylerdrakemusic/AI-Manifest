@@ -14,10 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out Workspace repository
+        uses: actions/checkout@v4
+        with:
+          repository: tylerdrakemusic/-Workspace
+          path: workspace
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Export Workspace root for shared imports
+        run: |
+          echo "WORKSPACE_ROOT=${GITHUB_WORKSPACE}/workspace" >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
