@@ -111,4 +111,4 @@ def test_ollama_models_env_set_when_preferred_absent(
     pull_result = MagicMock(returncode=1)
     with patch("subprocess.run", side_effect=[list_result, pull_result]):
         dt._select_model()
-    assert os.environ.get("OLLAMA_MODELS") == r"F:\.ollama\models"
+    assert os.environ.get("OLLAMA_MODELS") == r"G:\.ollama\models"

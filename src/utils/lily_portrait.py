@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import shutil
 import sys
+import threading
 from datetime import date, datetime
 from pathlib import Path
 
@@ -284,7 +286,17 @@ def get_daily_portrait() -> Path:
     # 5. Pollinations.AI (free, photorealistic, no API key)
     result = _try_pollinations(positive_prompt, save_dir)
     if result and result.exists():
-        result.rename(today_path)
+        try:
+            result.rename(today_path)
+        except FileExistsError:
+            if today_path.exists():
+                return today_path
+            raise
+        except PermissionError:
+            if today_path.exists():
+                return today_path
+            fallback = _svg_fallback_path()
+            return fallback
         _prune_old_portraits()
         return today_path
 
