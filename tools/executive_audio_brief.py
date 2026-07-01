@@ -46,6 +46,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
+from src.utils.roadmap_panel import (
+    load_roadmap_data,
+    render_roadmap_tab_html,
+    render_tab_nav_html,
+    ROADMAP_STYLES,
+    TAB_NAV_SCRIPT,
+)
 from src.utils.todos_db import (
     init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id,
     add_todo, update_priority, get_open_todos_by_autonomy,
@@ -453,6 +460,8 @@ def generate_portal_html(
     )
     top3_keys = {s["key"] for s in all_ranked[:3]}
     offload_panel = _offload_panel_html(all_statuses)
+    tab_nav_html = render_tab_nav_html()
+    roadmap_tab_html = render_roadmap_tab_html(load_roadmap_data())
 
     # Lily portrait — injected as inline data-URI img tag
     # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
@@ -1136,6 +1145,8 @@ footer {{
     background: rgba(210,153,34,0.05);
 }}
 
+{ROADMAP_STYLES}
+
 </style>
 </head>
 <body>
@@ -1190,6 +1201,10 @@ footer {{
         Run: <code>python tools/executive_audio_brief.py --serve</code>
     </div>
 
+    {tab_nav_html}
+
+    <div id="tab-overview" class="tab-panel active">
+
     {offload_panel}
 
     <h2 style="margin-bottom:1rem;">Project Priorities</h2>
@@ -1218,6 +1233,12 @@ footer {{
                 {all_rows}
             </tbody>
         </table>
+    </div>
+
+    </div>
+
+    <div id="tab-roadmap" class="tab-panel">
+        {roadmap_tab_html}
     </div>
 
     <footer>
@@ -1439,6 +1460,8 @@ async function lilyModalSave() {{
         }}
     }}, REFRESH_INTERVAL);
 }})();
+
+{TAB_NAV_SCRIPT}
 </script>
 </body>
 </html>"""

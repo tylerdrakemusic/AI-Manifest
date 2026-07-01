@@ -142,3 +142,60 @@ def test_generate_brief_script_skips_offload_when_none() -> None:
     script = generate_brief_script(statuses, "2026-05-30 12:00:00")
     assert "Fully offloadable:" not in script, \
         "Unexpected 'Fully offloadable:' line when full_todos is empty"
+
+
+# ---------------------------------------------------------------------------
+# FR-20260630-cross-project-roadmap-generator — Roadmap tab wiring tests
+# ---------------------------------------------------------------------------
+
+def _minimal_status(sigil: str, name: str, key: str) -> dict:
+    return {
+        "sigil": sigil, "name": name, "key": key,
+        "summary": f"{name} summary.", "active_tasks": 1, "completed_tasks": 1,
+        "full_todos": [], "supervised_todos": [], "human_todos": [], "score": 10,
+    }
+
+
+def test_generate_portal_html_includes_roadmap_tab_and_pill() -> None:
+    """The generated portal must include the Roadmap tab-pill and tab-panel,
+    wired automatically into the existing generation pipeline."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    statuses = [_minimal_status("⊕", "Workspace", "workspace")]
+
+    with patch(
+        "tools.executive_audio_brief.load_roadmap_data",
+        return_value={
+            "generated_at": "2026-06-30T00:00:00Z",
+            "nodes": [
+                {"id": "FR-A", "title": "Alpha", "project": "⊕Workspace",
+                 "state": "IN_PROGRESS", "risk": "medium", "quarter": "2026-Q3",
+                 "depends_on": []},
+            ],
+            "quarters": {"2026-Q3": ["FR-A"]},
+        },
+    ):
+        out = generate_portal_html(statuses, "script", None, [], "2026-06-30 00:00:00")
+
+    assert 'id="pill-roadmap"' in out, "Roadmap tab pill missing from generated portal HTML"
+    assert 'id="tab-roadmap"' in out, "Roadmap tab panel missing from generated portal HTML"
+    assert 'id="tab-overview"' in out, "Overview tab panel missing from generated portal HTML"
+    assert "Alpha" in out, "Roadmap FR title not rendered in generated portal HTML"
+    assert "2026-Q3" in out, "Roadmap quarter bucket not rendered in generated portal HTML"
+
+
+def test_generate_portal_html_roadmap_tab_handles_missing_roadmap_data() -> None:
+    """When no roadmap.json exists yet, the Roadmap tab must still render
+    (with a placeholder) rather than raising or breaking the pipeline."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    statuses = [_minimal_status("⊕", "Workspace", "workspace")]
+
+    with patch(
+        "tools.executive_audio_brief.load_roadmap_data",
+        return_value={"generated_at": "", "nodes": [], "quarters": {}},
+    ):
+        out = generate_portal_html(statuses, "script", None, [], "2026-06-30 00:00:00")
+
+    assert 'id="tab-roadmap"' in out
+    assert "No roadmap data" in out
