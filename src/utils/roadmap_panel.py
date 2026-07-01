@@ -443,6 +443,14 @@ function switchTab(name) {
     document.querySelectorAll('.tab-pill').forEach(el => el.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
     document.getElementById('pill-' + name).classList.add('active');
+    localStorage.setItem('activeTab', name);
+}
+
+function restoreActiveTab() {
+    var saved = localStorage.getItem('activeTab') || 'overview';
+    if (document.getElementById('tab-' + saved) && document.getElementById('pill-' + saved)) {
+        switchTab(saved);
+    }
 }
 """
 

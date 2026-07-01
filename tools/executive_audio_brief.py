@@ -17,6 +17,7 @@ import argparse
 import html
 import json
 import os
+import subprocess
 import sys
 import textwrap
 from datetime import datetime, timezone
@@ -33,6 +34,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(r"f:\\")
 OUTPUT_DIR = PROJECT_ROOT / "output" / "briefs"
 REPORT_PATH = PROJECT_ROOT / "output" / "executive_brief_portal.html"
+
+# FR-20260630-cross-project-roadmap-generator / BFX-20260701-roadmap-tab-follow-up
+# Contract assumed for the ⊕Workspace roadmap generator invocation. If the actual
+# ⊕Workspace-side entry point differs, update these two constants only.
+ROADMAP_GENERATOR_SCRIPT = Path(r"f:\⊕Workspace\src\utils\roadmap_generator.py")
+ROADMAP_GENERATOR_PYTHON = Path(r"C:\G\python.exe")
+ROADMAP_JSON_OUTPUT_PATH = Path(r"f:\⊕Workspace\src\data\roadmap.json")
+ROADMAP_GENERATOR_TIMEOUT_SECONDS = 30
 
 # Add workspace root to path for shared integrations
 _WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
@@ -446,6 +455,29 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
 </div>"""
 
 
+def _regenerate_roadmap_data() -> None:
+    """Best-effort attempt to regenerate roadmap.json via the ⊕Workspace
+    roadmap_generator.py before rendering the Roadmap tab. Never raises —
+    a failed/missing regenerator just falls back to whatever is on disk
+    (or the empty state) via load_roadmap_data()."""
+    try:
+        subprocess.run(
+            [
+                str(ROADMAP_GENERATOR_PYTHON),
+                str(ROADMAP_GENERATOR_SCRIPT),
+                "--out",
+                str(ROADMAP_JSON_OUTPUT_PATH),
+            ],
+            check=False,
+            timeout=ROADMAP_GENERATOR_TIMEOUT_SECONDS,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def generate_portal_html(
     all_statuses: list[dict],
     script: str,
@@ -461,6 +493,7 @@ def generate_portal_html(
     top3_keys = {s["key"] for s in all_ranked[:3]}
     offload_panel = _offload_panel_html(all_statuses)
     tab_nav_html = render_tab_nav_html()
+    _regenerate_roadmap_data()
     roadmap_tab_html = render_roadmap_tab_html(load_roadmap_data())
 
     # Lily portrait — injected as inline data-URI img tag
@@ -1460,6 +1493,13 @@ async function lilyModalSave() {{
         }}
     }}, REFRESH_INTERVAL);
 }})();
+
+// Restore the previously active tab (survives auto-refresh reloads)
+if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', restoreActiveTab);
+}} else {{
+    restoreActiveTab();
+}}
 
 {TAB_NAV_SCRIPT}
 </script>
