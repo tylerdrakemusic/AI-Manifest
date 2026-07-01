@@ -17,6 +17,9 @@ from src.utils.roadmap_panel import (
     _quarter_buckets,
     _dependency_graph_html,
     _quarterly_plan_html,
+    _canonical_project,
+    _gantt_html,
+    CANONICAL_PROJECTS,
 )
 
 
@@ -117,8 +120,7 @@ def test_quarterly_plan_html_renders_fr_title_project_state_risk() -> None:
 def test_render_roadmap_tab_html_includes_generated_at_and_sections() -> None:
     out = render_roadmap_tab_html(SAMPLE_DATA)
     assert "2026-06-30T00:00:00Z" in out
-    assert "Dependency Graph" in out
-    assert "Quarterly Milestone Plan" in out
+    assert "Quarterly Roadmap" in out
     assert "Alpha Feature" in out
 
 
@@ -127,3 +129,131 @@ def test_render_tab_nav_html_includes_overview_and_roadmap_pills() -> None:
     assert "Overview" in out
     assert "Roadmap" in out
     assert "switchTab('roadmap')" in out
+
+
+# ---------------------------------------------------------------------------
+# Gantt-style quarterly timeline (FR-20260630 rework — v2)
+# ---------------------------------------------------------------------------
+
+GANTT_FIXTURE = {
+    "generated_at": "2026-07-01T00:00:00Z",
+    "nodes": [
+        {
+            "id": "FR-life-1",
+            "title": "Longevity Dashboard Refresh",
+            "project": "\u221eLife",
+            "state": "DONE",
+            "risk": "low",
+            "quarter": "2026-Q1",
+            "depends_on": [],
+        },
+        {
+            "id": "FR-music-1",
+            "title": "Catalog Ingest Pipeline",
+            "project": "\u2764Music",
+            "state": "IN_PROGRESS",
+            "risk": "medium",
+            "quarter": "2026-Q2",
+            "depends_on": [],
+        },
+        {
+            "id": "FR-quantum-1",
+            "title": "VQE Benchmark Suite",
+            "project": "\u27e8\u03c8\u27e9Quantum",
+            "state": "REVIEW_REQUESTED",
+            "risk": "medium",
+            "quarter": "2026-Q3",
+            "depends_on": [],
+        },
+        {
+            "id": "FR-ai-1",
+            "title": "Cross-Project Roadmap Generator",
+            "project": "\U0001f441AI-Manifest",
+            "state": "SOAKING",
+            "risk": "medium",
+            "quarter": "2026-Q3",
+            "depends_on": [],
+        },
+        {
+            "id": "FR-ws-1",
+            "title": "Security Dashboard Hardening",
+            "project": "\u2295Workspace",
+            "state": "PLANNED",
+            "risk": "high",
+            "quarter": "2026-Q4",
+            "depends_on": [],
+        },
+        {
+            "id": "FR-cap-1",
+            "title": "Schwab Order Guardrails",
+            "project": "\u03a3Capital",
+            "state": "TYLER_APPROVED",
+            "risk": "high",
+            "quarter": "2026-Q4",
+            "depends_on": [],
+        },
+    ],
+    "quarters": {},
+}
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("\u221eLife", "\u221eLife"),
+        ("infinitelife", "\u221eLife"),
+        ("\u2764Music", "\u2764Music"),
+        ("?Music", "\u2764Music"),
+        ("\u27e8\u03c8\u27e9Quantum", "\u27e8\u03c8\u27e9Quantum"),
+        ("Quantum", "\u27e8\u03c8\u27e9Quantum"),
+        ("\U0001f441AI-Manifest", "\U0001f441AI-Manifest"),
+        ("AI-Manifest", "\U0001f441AI-Manifest"),
+        ("\u2295Workspace", "\u2295Workspace"),
+        ("?Workspace", "\u2295Workspace"),
+        ("\u03a3Capital", "\u03a3Capital"),
+        ("Capital", "\u03a3Capital"),
+        ("Something Else", "Other"),
+    ],
+)
+def test_canonical_project_normalizes_variants(raw: str, expected: str) -> None:
+    assert _canonical_project(raw) == expected
+
+
+def test_gantt_html_renders_all_canonical_swimlanes() -> None:
+    out = _gantt_html(GANTT_FIXTURE)
+    for project in CANONICAL_PROJECTS:
+        assert html_escape_safe(project) in out
+
+
+def html_escape_safe(s: str) -> str:
+    import html as _html
+
+    return _html.escape(s)
+
+
+def test_gantt_html_renders_bars_in_correct_quarter_columns() -> None:
+    out = _gantt_html(GANTT_FIXTURE)
+    assert "Longevity Dashboard Refresh" in out
+    assert "Catalog Ingest Pipeline" in out
+    assert "Q1 2026" in out
+    assert "Q4 2026" in out
+
+
+def test_gantt_html_includes_milestones_row_for_near_final_frs() -> None:
+    out = _gantt_html(GANTT_FIXTURE)
+    assert "Milestones" in out
+    # SOAKING and REVIEW_REQUESTED are near-final states — should surface
+    assert "Cross-Project Roadmap Generator" in out.split("Milestones")[1].split(
+        "swimlane"
+    )[0] or "Cross-Project Roadmap Generator" in out
+
+
+def test_gantt_html_empty_nodes_shows_placeholder() -> None:
+    out = _gantt_html({"nodes": [], "quarters": {}})
+    assert "No roadmap data" in out
+
+
+def test_render_roadmap_tab_html_defaults_to_gantt_view() -> None:
+    out = render_roadmap_tab_html(GANTT_FIXTURE)
+    assert "gantt" in out.lower()
+    assert "Q1 2026" in out

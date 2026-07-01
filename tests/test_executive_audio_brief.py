@@ -181,7 +181,7 @@ def test_generate_portal_html_includes_roadmap_tab_and_pill() -> None:
     assert 'id="tab-roadmap"' in out, "Roadmap tab panel missing from generated portal HTML"
     assert 'id="tab-overview"' in out, "Overview tab panel missing from generated portal HTML"
     assert "Alpha" in out, "Roadmap FR title not rendered in generated portal HTML"
-    assert "2026-Q3" in out, "Roadmap quarter bucket not rendered in generated portal HTML"
+    assert "Q3 2026" in out, "Roadmap quarter column not rendered in generated portal HTML"
 
 
 def test_generate_portal_html_roadmap_tab_handles_missing_roadmap_data() -> None:
