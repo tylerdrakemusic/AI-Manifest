@@ -199,3 +199,86 @@ def test_generate_portal_html_roadmap_tab_handles_missing_roadmap_data() -> None
 
     assert 'id="tab-roadmap"' in out
     assert "No roadmap data" in out
+
+
+# ---------------------------------------------------------------------------
+# BFX-20260701-roadmap-tab-follow-up — tab persistence + roadmap regen tests
+# ---------------------------------------------------------------------------
+
+def test_tab_nav_script_persists_and_restores_active_tab() -> None:
+    """AC2: switchTab must save to localStorage and a restoreActiveTab
+    function must read it back (defaulting to 'overview')."""
+    from src.utils.roadmap_panel import TAB_NAV_SCRIPT
+
+    assert "localStorage.setItem('activeTab', name)" in TAB_NAV_SCRIPT, \
+        "switchTab does not persist the active tab to localStorage"
+    assert "function restoreActiveTab" in TAB_NAV_SCRIPT, \
+        "restoreActiveTab function missing from TAB_NAV_SCRIPT"
+    assert "localStorage.getItem('activeTab')" in TAB_NAV_SCRIPT, \
+        "restoreActiveTab does not read the saved tab back from localStorage"
+    assert "'overview'" in TAB_NAV_SCRIPT, \
+        "restoreActiveTab does not default to 'overview'"
+
+
+def test_generate_portal_html_wires_restore_active_tab_on_load() -> None:
+    """AC2: the generated portal must call restoreActiveTab() on page load
+    so the 60s auto-refresh reload doesn't reset to Overview."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    statuses = [_minimal_status("⊕", "Workspace", "workspace")]
+
+    with patch(
+        "tools.executive_audio_brief.load_roadmap_data",
+        return_value={"generated_at": "", "nodes": [], "quarters": {}},
+    ), patch("tools.executive_audio_brief._regenerate_roadmap_data"):
+        out = generate_portal_html(statuses, "script", None, [], "2026-06-30 00:00:00")
+
+    assert "restoreActiveTab" in out, \
+        "generated portal HTML does not wire up restoreActiveTab() on load"
+
+
+def test_regenerate_roadmap_data_invokes_expected_command() -> None:
+    """AC1: portal build must attempt to regenerate roadmap.json via the
+    ⊕Workspace roadmap_generator.py before reading it."""
+    from tools.executive_audio_brief import (
+        _regenerate_roadmap_data,
+        ROADMAP_GENERATOR_SCRIPT,
+        ROADMAP_JSON_OUTPUT_PATH,
+    )
+
+    with patch("tools.executive_audio_brief.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        _regenerate_roadmap_data()
+
+    assert mock_run.called, "_regenerate_roadmap_data did not invoke subprocess.run"
+    args, kwargs = mock_run.call_args
+    cmd = args[0]
+    assert str(ROADMAP_GENERATOR_SCRIPT) in cmd, "roadmap_generator.py script path not in invoked command"
+    assert "--out" in cmd, "--out flag not in invoked command"
+    assert str(ROADMAP_JSON_OUTPUT_PATH) in cmd, "roadmap.json output path not in invoked command"
+    assert kwargs.get("check") is False
+
+
+def test_regenerate_roadmap_data_swallows_failures() -> None:
+    """AC1: a failed regeneration (exception) must not propagate/crash the portal build."""
+    from tools.executive_audio_brief import _regenerate_roadmap_data
+
+    with patch("tools.executive_audio_brief.subprocess.run", side_effect=OSError("boom")):
+        _regenerate_roadmap_data()  # must not raise
+
+
+def test_generate_portal_html_still_renders_when_regen_fails() -> None:
+    """AC1: even if regeneration fails, the Roadmap tab must still render
+    using whatever roadmap.json state exists on disk."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    statuses = [_minimal_status("⊕", "Workspace", "workspace")]
+
+    with patch(
+        "tools.executive_audio_brief.load_roadmap_data",
+        return_value={"generated_at": "", "nodes": [], "quarters": {}},
+    ), patch("tools.executive_audio_brief.subprocess.run", side_effect=OSError("boom")):
+        out = generate_portal_html(statuses, "script", None, [], "2026-06-30 00:00:00")
+
+    assert 'id="tab-roadmap"' in out
+    assert "No roadmap data" in out
