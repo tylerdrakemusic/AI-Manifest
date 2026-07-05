@@ -23,6 +23,41 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
 
+
+def resolve_worktree_db_path(start: Path, max_levels: int = 5) -> Path | None:
+    """Walk up from `start` looking for src/data/manifest_todos.db.
+
+    Git worktrees under `<main>/.worktrees/<branch>/` have their own empty
+    `data/` dir, so the default DB_PATH resolution above finds no DB there.
+    This walks up parent directories to find the main project root's live DB.
+    Returns None if not found within `max_levels` levels (e.g. when actually
+    running from the main tree, where the default DB_PATH is already correct).
+    """
+    candidate = start
+    for _ in range(max_levels):
+        db = candidate / "src" / "data" / "manifest_todos.db"
+        if db.exists():
+            return db
+        candidate = candidate.parent
+    return None
+
+
+def use_worktree_aware_db_path(start: Path) -> None:
+    """Switch module-level DB_PATH to the main project's live DB if `start`
+    is inside a git worktree that lacks its own data.
+
+    Call once, near the top of any `tools/*.py` script that touches
+    manifest_todos.db directly, before importing from this module:
+
+        _ROOT = Path(__file__).resolve().parent.parent
+        import utils.todos_db as todos_db
+        todos_db.use_worktree_aware_db_path(_ROOT)
+    """
+    global DB_PATH
+    resolved = resolve_worktree_db_path(start)
+    if resolved is not None:
+        DB_PATH = resolved
+
 # Map sigil/display project names → canonical DB keys.
 # Agents writing directly via SQL sometimes use the display name; normalise at
 # write time so the executive dashboard (which queries by lowercase key) always
