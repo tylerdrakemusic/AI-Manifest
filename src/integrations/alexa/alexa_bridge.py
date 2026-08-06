@@ -83,14 +83,26 @@ def launch_handler(handler_input: HandlerInput) -> Response:
 
 @skill_builder.request_handler(can_handle_func=is_intent_name("AddTodoIntent"))
 def add_todo_handler(handler_input: HandlerInput) -> Response:
+    from ask_sdk_model.dialog import ElicitSlotDirective
     slots = handler_input.request_envelope.request.intent.slots
-    todo_text = (slots.get("todoText") or slots.get("todo_text") or {}).get("value") if slots else None
+    todo_text = (slots.get("todoText") or {}).get("value") if slots else None
     project_spoken = (slots.get("project") or {}).get("value") if slots else None
     priority_val = (slots.get("priority") or {}).get("value") if slots else None
+    intent = handler_input.request_envelope.request.intent
 
-    if not todo_text or not project_spoken or not priority_val:
-        speech = "I need the todo text, project name, and priority number. Please try again."
-        return handler_input.response_builder.speak(speech).ask(speech).response
+    # Elicit missing slots one at a time
+    if not todo_text:
+        return handler_input.response_builder.speak("What would you like to add?").ask("What's the todo?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="todoText", updated_intent=intent)
+        ).response
+    if not project_spoken:
+        return handler_input.response_builder.speak("Which project? Workspace, music, quantum, capital, manifest, or life?").ask("Which project?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="project", updated_intent=intent)
+        ).response
+    if not priority_val:
+        return handler_input.response_builder.speak("What priority? Say a number from 1 to 10.").ask("What priority?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="priority", updated_intent=intent)
+        ).response
 
     project = _resolve_project(project_spoken)
     if not project:

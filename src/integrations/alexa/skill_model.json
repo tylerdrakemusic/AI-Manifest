@@ -11,10 +11,11 @@
             { "name": "priority", "type": "AMAZON.NUMBER" }
           ],
           "samples": [
-            "add {todoText} to {project} todos priority {priority}",
-            "add {todoText} to {project} backlog priority {priority}",
-            "create a todo {todoText} in {project} with priority {priority}",
-            "add todo {todoText} project {project} priority {priority}"
+            "add {todoText}",
+            "create a todo {todoText}",
+            "new todo {todoText}",
+            "add to {project} todos priority {priority}",
+            "add a todo to {project} priority {priority}"
           ]
         },
         {
