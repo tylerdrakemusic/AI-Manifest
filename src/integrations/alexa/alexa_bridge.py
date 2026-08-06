@@ -183,12 +183,31 @@ class _CIDict(dict):
 
 class _FixedSkillAdapter(SkillAdapter):
     """Wraps SkillAdapter to normalize headers before verification."""
+    # Alexa headers that Cloudflare HTTP/2 proxy lowercases/title-cases
+    _ALEXA_HEADERS = {
+        "signaturecertchainurl": "SignatureCertChainUrl",
+        "signature-256": "Signature-256",
+    }
+
     def dispatch_request(self):
         import flask as _flask
+        from ask_sdk_webservice_support.verifier import VerificationException
         body = _flask.request.data
-        headers = _CIDict({k: v for k, v in _flask.request.headers.items()})
-        response = self._webservice_handler.verify_request_and_dispatch(headers, body)
-        return _flask.Response(response=response, status=200, content_type="application/json")
+        # Re-normalize headers to exact casing the SDK verifier expects
+        headers = {}
+        for k, v in _flask.request.headers.items():
+            normalized = self._ALEXA_HEADERS.get(k.lower(), k)
+            headers[normalized] = v
+        log.debug("Normalized headers: %s", list(headers.keys()))
+        try:
+            response = self._webservice_handler.verify_request_and_dispatch(headers, body)
+            return _flask.Response(response=response, status=200, content_type="application/json")
+        except VerificationException as e:
+            log.warning("Verification failed: %s", e)
+            return _flask.Response(response="Bad request", status=400, content_type="text/plain")
+        except Exception as e:
+            log.error("Bridge error: %s", e, exc_info=True)
+            return _flask.Response(response="Internal error", status=500, content_type="text/plain")
 
 
 skill_adapter = _FixedSkillAdapter(
@@ -201,7 +220,7 @@ skill_adapter.register(app, route="/alexa")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     from waitress import serve
     log.info("Alexa bridge listening on http://localhost:8080")
     serve(app, host="127.0.0.1", port=8080)
