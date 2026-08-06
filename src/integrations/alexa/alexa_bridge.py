@@ -169,7 +169,29 @@ def catch_all_handler(handler_input: HandlerInput, exception: Exception) -> Resp
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-skill_adapter = SkillAdapter(
+
+
+class _CIDict(dict):
+    """Case-insensitive dict for HTTP/2 header lookup (Cloudflare lowercases headers)."""
+    def get(self, key, default=None):
+        lk = key.lower()
+        for k, v in self.items():
+            if k.lower() == lk:
+                return v
+        return default
+
+
+class _FixedSkillAdapter(SkillAdapter):
+    """Wraps SkillAdapter to normalize headers before verification."""
+    def dispatch_request(self):
+        import flask as _flask
+        body = _flask.request.data
+        headers = _CIDict({k: v for k, v in _flask.request.headers.items()})
+        response = self._webservice_handler.verify_request_and_dispatch(headers, body)
+        return _flask.Response(response=response, status=200, content_type="application/json")
+
+
+skill_adapter = _FixedSkillAdapter(
     skill=skill_builder.create(),
     skill_id=SKILL_ID,
     verifiers=[RequestVerifier(), TimestampVerifier()],
