@@ -1,0 +1,53 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "workspace assistant",
+      "intents": [
+        {
+          "name": "AddTodoIntent",
+          "slots": [
+            { "name": "todoText", "type": "AMAZON.SearchQuery" },
+            { "name": "project",  "type": "PROJECT_LIST" },
+            { "name": "priority", "type": "AMAZON.NUMBER" }
+          ],
+          "samples": [
+            "add {todoText} to {project} todos priority {priority}",
+            "add {todoText} to {project} backlog priority {priority}",
+            "create a todo {todoText} in {project} with priority {priority}",
+            "add todo {todoText} project {project} priority {priority}"
+          ]
+        },
+        {
+          "name": "QueryTodosIntent",
+          "slots": [
+            { "name": "project", "type": "PROJECT_LIST" }
+          ],
+          "samples": [
+            "what's in {project} backlog",
+            "what are my {project} todos",
+            "show me {project} todos",
+            "list {project} backlog",
+            "what's open in {project}"
+          ]
+        },
+        { "name": "AMAZON.CancelIntent",  "samples": [] },
+        { "name": "AMAZON.StopIntent",    "samples": [] },
+        { "name": "AMAZON.HelpIntent",    "samples": [] },
+        { "name": "AMAZON.FallbackIntent","samples": [] }
+      ],
+      "types": [
+        {
+          "name": "PROJECT_LIST",
+          "values": [
+            { "name": { "value": "workspace" } },
+            { "name": { "value": "sigmacapital", "synonyms": ["sigma capital", "capital"] } },
+            { "name": { "value": "music",        "synonyms": ["heart music"] } },
+            { "name": { "value": "quantum" } },
+            { "name": { "value": "aimanifest",   "synonyms": ["ai manifest", "manifest"] } },
+            { "name": { "value": "life",          "synonyms": ["infinite life"] } }
+          ]
+        }
+      ]
+    }
+  }
+}
