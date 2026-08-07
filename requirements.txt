@@ -12,6 +12,7 @@ soundfile>=0.12
 # Alexa integration
 ask-sdk>=1.19
 flask-ask-sdk>=1.0
+oscrypto>=1.3.0  # pin for OpenSSL 3.x compat on Ubuntu 22.04+ CI runners
 waitress>=3.0
 
 # Testing (dev)
