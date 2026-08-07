@@ -11,11 +11,12 @@
             { "name": "priority", "type": "AMAZON.NUMBER" }
           ],
           "samples": [
-            "add {todoText}",
-            "create a todo {todoText}",
-            "new todo {todoText}",
-            "add to {project} todos priority {priority}",
-            "add a todo to {project} priority {priority}"
+            "log {todoText}",
+            "add task {todoText}",
+            "queue {todoText}",
+            "log {todoText} to {project} backlog",
+            "add task {todoText} to {project} backlog priority {priority}",
+            "log {todoText} in {project} priority {priority}"
           ]
         },
         {
@@ -25,10 +26,10 @@
           ],
           "samples": [
             "what's in {project} backlog",
-            "what are my {project} todos",
-            "show me {project} todos",
+            "show {project} backlog",
             "list {project} backlog",
-            "what's open in {project}"
+            "what's open in {project}",
+            "read {project} backlog"
           ]
         },
         { "name": "AMAZON.CancelIntent",  "samples": [] },

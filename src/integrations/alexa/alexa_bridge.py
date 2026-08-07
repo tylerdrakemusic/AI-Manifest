@@ -3,6 +3,7 @@
 Architecture: Echo Dot → Amazon Cloud → https://alexa.wsbridge.uk/alexa → this server (port 8080)
 Auth: Amazon request signature verification + Skill ID check
 """
+import json
 import os
 import sqlite3
 import logging
@@ -47,28 +48,37 @@ def _resolve_project(spoken: str) -> str | None:
     return PROJECT_ALIASES.get(key) or (key if key in VALID_PROJECTS else None)
 
 
-def _insert_todo(text: str, project: str, priority: int) -> int:
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.execute(
-        "INSERT INTO todos (project, source, text, done, created_at, priority, autonomy_level)"
-        " VALUES (?, 'alexa', ?, 0, ?, ?, 'supervised')",
-        (project, text, datetime.now(timezone.utc).isoformat(), priority),
-    )
-    row_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return row_id
+def _insert_todo(text: str, project: str, priority: int, device_id: str | None = None) -> int:
+    ctx = json.dumps({"device_id": device_id} if device_id else {})
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.execute(
+            "INSERT INTO todos (project, source, text, done, created_at, priority, autonomy_level, context_snapshot)"
+            " VALUES (?, 'alexa', ?, 0, ?, ?, 'supervised', ?)",
+            (project, text, datetime.now(timezone.utc).isoformat(), priority, ctx),
+        )
+        row_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return row_id
+    except Exception:
+        log.exception("DB insert failed")
+        return -1
 
 
 def _query_todos(project: str, limit: int = 5) -> list[tuple[str, int]]:
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT text, priority FROM todos WHERE done=0 AND project=?"
-        " ORDER BY priority DESC LIMIT ?",
-        (project, limit),
-    ).fetchall()
-    conn.close()
-    return rows
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            "SELECT text, priority FROM todos WHERE done=0 AND project=?"
+            " ORDER BY priority DESC LIMIT ?",
+            (project, limit),
+        ).fetchall()
+        conn.close()
+        return rows
+    except Exception:
+        log.exception("DB query failed")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +108,7 @@ def add_todo_handler(handler_input: HandlerInput) -> Response:
 
     # Elicit missing slots one at a time
     if not todo_text:
-        return handler_input.response_builder.speak("What would you like to add?").ask("What's the todo?").add_directive(
+        return handler_input.response_builder.speak("What would you like to log?").ask("What's the task?").add_directive(
             ElicitSlotDirective(slot_to_elicit="todoText", updated_intent=intent)
         ).response
     if not project_spoken:
@@ -121,8 +131,12 @@ def add_todo_handler(handler_input: HandlerInput) -> Response:
         speech = f"Priority must be a number. Got {priority_val}."
         return handler_input.response_builder.speak(speech).ask(speech).response
 
-    _insert_todo(todo_text, project, priority)
-    speech = f"Added: {todo_text}. Project {project}, priority {priority}."
+    device_id = handler_input.request_envelope.context.system.device.device_id
+    row_id = _insert_todo(todo_text, project, priority, device_id=device_id)
+    if row_id == -1:
+        speech = "I had trouble saving that. Please try again."
+        return handler_input.response_builder.speak(speech).response
+    speech = f"Logged: {todo_text}. Project {project}, priority {priority}."
     return handler_input.response_builder.speak(speech).response
 
 
@@ -148,6 +162,22 @@ def query_todos_handler(handler_input: HandlerInput) -> Response:
         speech = f"Top {len(rows)} open todos for {project}: {items}."
 
     return handler_input.response_builder.speak(speech).response
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("AMAZON.HelpIntent"))
+def help_handler(handler_input: HandlerInput) -> Response:
+    speech = (
+        "You can log a task, add a task to a project backlog, "
+        "or ask what's in a project backlog. "
+        "Say log, then your task. Or say show workspace backlog."
+    )
+    return handler_input.response_builder.speak(speech).ask(speech).response
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("AMAZON.FallbackIntent"))
+def fallback_handler(handler_input: HandlerInput) -> Response:
+    speech = "I didn't catch that. Say log a task, or ask about a project backlog."
+    return handler_input.response_builder.speak(speech).ask(speech).response
 
 
 @skill_builder.request_handler(
