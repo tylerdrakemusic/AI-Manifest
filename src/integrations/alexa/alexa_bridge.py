@@ -87,7 +87,7 @@ def _query_todos(project: str, limit: int = 5) -> list[tuple[str, int]]:
 
 @skill_builder.request_handler(can_handle_func=is_request_type("LaunchRequest"))
 def launch_handler(handler_input: HandlerInput) -> Response:
-    speech = "Workspace Assistant ready. Say add a todo, or ask about your backlog."
+    speech = "Workspace Assistant ready. Say log a task, or ask about your backlog."
     return handler_input.response_builder.speak(speech).ask(speech).response
 
 

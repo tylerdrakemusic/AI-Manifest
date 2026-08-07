@@ -11,12 +11,13 @@
             { "name": "priority", "type": "AMAZON.NUMBER" }
           ],
           "samples": [
+            "log a task",
+            "add a task",
+            "queue a task",
+            "log something",
             "log {todoText}",
             "add task {todoText}",
-            "queue {todoText}",
-            "log {todoText} to {project} backlog",
-            "add task {todoText} to {project} backlog priority {priority}",
-            "log {todoText} in {project} priority {priority}"
+            "queue {todoText}"
           ]
         },
         {
