@@ -81,13 +81,19 @@ def launch_handler(handler_input: HandlerInput) -> Response:
     return handler_input.response_builder.speak(speech).ask(speech).response
 
 
+def _slot(slots, name: str):
+    """Extract slot value from SDK Slot object (not a dict)."""
+    slot = (slots or {}).get(name)
+    return slot.value if slot else None
+
+
 @skill_builder.request_handler(can_handle_func=is_intent_name("AddTodoIntent"))
 def add_todo_handler(handler_input: HandlerInput) -> Response:
     from ask_sdk_model.dialog import ElicitSlotDirective
     slots = handler_input.request_envelope.request.intent.slots
-    todo_text = (slots.get("todoText") or {}).get("value") if slots else None
-    project_spoken = (slots.get("project") or {}).get("value") if slots else None
-    priority_val = (slots.get("priority") or {}).get("value") if slots else None
+    todo_text = _slot(slots, "todoText")
+    project_spoken = _slot(slots, "project")
+    priority_val = _slot(slots, "priority")
     intent = handler_input.request_envelope.request.intent
 
     # Elicit missing slots one at a time
@@ -123,7 +129,7 @@ def add_todo_handler(handler_input: HandlerInput) -> Response:
 @skill_builder.request_handler(can_handle_func=is_intent_name("QueryTodosIntent"))
 def query_todos_handler(handler_input: HandlerInput) -> Response:
     slots = handler_input.request_envelope.request.intent.slots
-    project_spoken = (slots.get("project") or {}).get("value") if slots else None
+    project_spoken = _slot(slots, "project")
 
     if not project_spoken:
         speech = "Which project backlog would you like to hear?"
