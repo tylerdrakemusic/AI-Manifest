@@ -207,6 +207,10 @@ class _FixedSkillAdapter(SkillAdapter):
         log.debug("Normalized headers: %s", list(headers.keys()))
         try:
             response = self._webservice_handler.verify_request_and_dispatch(headers, body)
+            # SDK returns a dict; Flask iterates dicts as keys — serialize explicitly
+            if not isinstance(response, (str, bytes)):
+                import json as _json
+                response = _json.dumps(response)
             return _flask.Response(response=response, status=200, content_type="application/json")
         except VerificationException as e:
             log.warning("Verification failed: %s", e)
