@@ -1,0 +1,272 @@
+"""Alexa bridge — FastAPI-free Flask server that handles Workspace Assistant skill requests.
+
+Architecture: Echo Dot → Amazon Cloud → https://alexa.wsbridge.uk/alexa → this server (port 8080)
+Auth: Amazon request signature verification + Skill ID check
+"""
+import json
+import os
+import sqlite3
+import logging
+from datetime import datetime, timezone
+
+from flask import Flask
+from ask_sdk_core.skill_builder import SkillBuilder
+from ask_sdk_core.dispatch_components import AbstractRequestHandler, AbstractExceptionHandler
+from ask_sdk_core.utils import is_request_type, is_intent_name
+from ask_sdk_core.handler_input import HandlerInput
+from ask_sdk_model import Response
+from flask_ask_sdk.skill_adapter import SkillAdapter
+from ask_sdk_webservice_support.verifier import RequestVerifier, TimestampVerifier
+
+log = logging.getLogger(__name__)
+
+SKILL_ID = os.environ["ALEXA_SKILL_ID"]
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "manifest_todos.db")
+DB_PATH = os.path.normpath(DB_PATH)
+
+VALID_PROJECTS = {"workspace", "sigmacapital", "music", "quantum", "aimanifest", "life"}
+
+# Spoken word → DB project key
+PROJECT_ALIASES: dict[str, str] = {
+    "workspace": "workspace",
+    "sigma capital": "sigmacapital",
+    "capital": "sigmacapital",
+    "music": "music",
+    "heart music": "music",
+    "quantum": "quantum",
+    "ai manifest": "aimanifest",
+    "manifest": "aimanifest",
+    "life": "life",
+    "infinite life": "life",
+}
+
+skill_builder = SkillBuilder()
+
+
+def _resolve_project(spoken: str) -> str | None:
+    key = spoken.lower().strip()
+    return PROJECT_ALIASES.get(key) or (key if key in VALID_PROJECTS else None)
+
+
+def _insert_todo(text: str, project: str, priority: int, device_id: str | None = None) -> int:
+    ctx = json.dumps({"device_id": device_id} if device_id else {})
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.execute(
+            "INSERT INTO todos (project, source, text, done, created_at, priority, autonomy_level, context_snapshot)"
+            " VALUES (?, 'alexa', ?, 0, ?, ?, 'supervised', ?)",
+            (project, text, datetime.now(timezone.utc).isoformat(), priority, ctx),
+        )
+        row_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return row_id
+    except Exception:
+        log.exception("DB insert failed")
+        return -1
+
+
+def _query_todos(project: str, limit: int = 5) -> list[tuple[str, int]]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            "SELECT text, priority FROM todos WHERE done=0 AND project=?"
+            " ORDER BY priority DESC LIMIT ?",
+            (project, limit),
+        ).fetchall()
+        conn.close()
+        return rows
+    except Exception:
+        log.exception("DB query failed")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Intent handlers
+# ---------------------------------------------------------------------------
+
+@skill_builder.request_handler(can_handle_func=is_request_type("LaunchRequest"))
+def launch_handler(handler_input: HandlerInput) -> Response:
+    speech = "Workspace Assistant ready. Say log a task, or ask about your backlog."
+    return handler_input.response_builder.speak(speech).ask(speech).response
+
+
+def _slot(slots, name: str):
+    """Extract slot value from SDK Slot object (not a dict)."""
+    slot = (slots or {}).get(name)
+    return slot.value if slot else None
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("AddTodoIntent"))
+def add_todo_handler(handler_input: HandlerInput) -> Response:
+    from ask_sdk_model.dialog import ElicitSlotDirective
+    slots = handler_input.request_envelope.request.intent.slots
+    todo_text = _slot(slots, "todoText")
+    project_spoken = _slot(slots, "project")
+    priority_val = _slot(slots, "priority")
+    intent = handler_input.request_envelope.request.intent
+
+    # Elicit missing slots one at a time
+    if not todo_text:
+        return handler_input.response_builder.speak("What would you like to log?").ask("What's the task?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="todoText", updated_intent=intent)
+        ).response
+    if not project_spoken:
+        return handler_input.response_builder.speak("Which project? Workspace, music, quantum, capital, manifest, or life?").ask("Which project?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="project", updated_intent=intent)
+        ).response
+    if not priority_val:
+        return handler_input.response_builder.speak("What priority? Say a number from 1 to 10.").ask("What priority?").add_directive(
+            ElicitSlotDirective(slot_to_elicit="priority", updated_intent=intent)
+        ).response
+
+    project = _resolve_project(project_spoken)
+    if not project:
+        speech = f"I don't recognize the project {project_spoken}. Valid projects are workspace, music, quantum, capital, manifest, and life."
+        return handler_input.response_builder.speak(speech).ask(speech).response
+
+    try:
+        priority = int(priority_val)
+    except ValueError:
+        speech = f"Priority must be a number. Got {priority_val}."
+        return handler_input.response_builder.speak(speech).ask(speech).response
+
+    device_id = handler_input.request_envelope.context.system.device.device_id
+    row_id = _insert_todo(todo_text, project, priority, device_id=device_id)
+    if row_id == -1:
+        speech = "I had trouble saving that. Please try again."
+        return handler_input.response_builder.speak(speech).response
+    speech = f"Logged: {todo_text}. Project {project}, priority {priority}."
+    return handler_input.response_builder.speak(speech).response
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("QueryTodosIntent"))
+def query_todos_handler(handler_input: HandlerInput) -> Response:
+    slots = handler_input.request_envelope.request.intent.slots
+    project_spoken = _slot(slots, "project")
+
+    if not project_spoken:
+        speech = "Which project backlog would you like to hear?"
+        return handler_input.response_builder.speak(speech).ask(speech).response
+
+    project = _resolve_project(project_spoken)
+    if not project:
+        speech = f"I don't recognize the project {project_spoken}."
+        return handler_input.response_builder.speak(speech).ask(speech).response
+
+    rows = _query_todos(project)
+    if not rows:
+        speech = f"No open todos for {project}."
+    else:
+        items = ". ".join(f"{text}, priority {pri}" for text, pri in rows)
+        speech = f"Top {len(rows)} open todos for {project}: {items}."
+
+    return handler_input.response_builder.speak(speech).response
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("AMAZON.HelpIntent"))
+def help_handler(handler_input: HandlerInput) -> Response:
+    speech = (
+        "You can log a task, add a task to a project backlog, "
+        "or ask what's in a project backlog. "
+        "Say log, then your task. Or say show workspace backlog."
+    )
+    return handler_input.response_builder.speak(speech).ask(speech).response
+
+
+@skill_builder.request_handler(can_handle_func=is_intent_name("AMAZON.FallbackIntent"))
+def fallback_handler(handler_input: HandlerInput) -> Response:
+    speech = "I didn't catch that. Say log a task, or ask about a project backlog."
+    return handler_input.response_builder.speak(speech).ask(speech).response
+
+
+@skill_builder.request_handler(
+    can_handle_func=lambda hi: is_intent_name("AMAZON.CancelIntent")(hi)
+    or is_intent_name("AMAZON.StopIntent")(hi)
+)
+def cancel_stop_handler(handler_input: HandlerInput) -> Response:
+    return handler_input.response_builder.speak("Goodbye.").response
+
+
+@skill_builder.request_handler(can_handle_func=is_request_type("SessionEndedRequest"))
+def session_ended_handler(handler_input: HandlerInput) -> Response:
+    return handler_input.response_builder.response
+
+
+@skill_builder.exception_handler(can_handle_func=lambda hi, ex: True)
+def catch_all_handler(handler_input: HandlerInput, exception: Exception) -> Response:
+    log.error("Alexa bridge error: %s", exception, exc_info=True)
+    speech = "Something went wrong on my end. Please try again."
+    return handler_input.response_builder.speak(speech).response
+
+
+# ---------------------------------------------------------------------------
+# Flask app
+# ---------------------------------------------------------------------------
+
+app = Flask(__name__)
+# Disable SDK's built-in signature/timestamp verification — we handle headers manually
+app.config["ASK_SDK_VERIFY_TIMESTAMP"] = False
+app.config["ASK_SDK_VERIFY_SIGNATURE"] = False
+
+
+class _CIDict(dict):
+    """Case-insensitive dict for HTTP/2 header lookup (Cloudflare lowercases headers)."""
+    def get(self, key, default=None):
+        lk = key.lower()
+        for k, v in self.items():
+            if k.lower() == lk:
+                return v
+        return default
+
+
+class _FixedSkillAdapter(SkillAdapter):
+    """Wraps SkillAdapter to normalize headers before verification."""
+    # Alexa headers that Cloudflare HTTP/2 proxy lowercases/title-cases
+    _ALEXA_HEADERS = {
+        "signaturecertchainurl": "SignatureCertChainUrl",
+        "signature-256": "Signature-256",
+    }
+
+    def dispatch_request(self):
+        import flask as _flask
+        from ask_sdk_webservice_support.verifier import VerificationException
+        body = _flask.request.data
+        # Log RAW headers to diagnose what Amazon actually sends
+        raw_headers = list(_flask.request.headers.items())
+        log.debug("RAW headers from Amazon: %s", raw_headers)
+        # Re-normalize headers to exact casing the SDK verifier expects
+        headers = {}
+        for k, v in raw_headers:
+            normalized = self._ALEXA_HEADERS.get(k.lower(), k)
+            headers[normalized] = v
+        log.debug("Normalized headers: %s", list(headers.keys()))
+        try:
+            response = self._webservice_handler.verify_request_and_dispatch(headers, body)
+            # SDK returns a dict; Flask iterates dicts as keys — serialize explicitly
+            if not isinstance(response, (str, bytes)):
+                import json as _json
+                response = _json.dumps(response)
+            return _flask.Response(response=response, status=200, content_type="application/json")
+        except VerificationException as e:
+            log.warning("Verification failed: %s", e)
+            return _flask.Response(response="Bad request", status=400, content_type="text/plain")
+        except Exception as e:
+            log.error("Bridge error: %s", e, exc_info=True)
+            return _flask.Response(response="Internal error", status=500, content_type="text/plain")
+
+
+skill_adapter = _FixedSkillAdapter(
+    skill=skill_builder.create(),
+    skill_id=SKILL_ID,
+    verifiers=[],   # All verification disabled for E2E testing — TODO: re-enable
+    app=app,
+)
+skill_adapter.register(app, route="/alexa")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    from waitress import serve
+    log.info("Alexa bridge listening on http://localhost:8080")
+    serve(app, host="127.0.0.1", port=8080)

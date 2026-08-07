@@ -1,0 +1,56 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "workspace assistant",
+      "intents": [
+        {
+          "name": "AddTodoIntent",
+          "slots": [
+            { "name": "todoText", "type": "AMAZON.SearchQuery" },
+            { "name": "project",  "type": "PROJECT_LIST" },
+            { "name": "priority", "type": "AMAZON.NUMBER" }
+          ],
+          "samples": [
+            "log a task",
+            "add a task",
+            "queue a task",
+            "log something",
+            "log {todoText}",
+            "add task {todoText}",
+            "queue {todoText}"
+          ]
+        },
+        {
+          "name": "QueryTodosIntent",
+          "slots": [
+            { "name": "project", "type": "PROJECT_LIST" }
+          ],
+          "samples": [
+            "what's in {project} backlog",
+            "show {project} backlog",
+            "list {project} backlog",
+            "what's open in {project}",
+            "read {project} backlog"
+          ]
+        },
+        { "name": "AMAZON.CancelIntent",  "samples": [] },
+        { "name": "AMAZON.StopIntent",    "samples": [] },
+        { "name": "AMAZON.HelpIntent",    "samples": [] },
+        { "name": "AMAZON.FallbackIntent","samples": [] }
+      ],
+      "types": [
+        {
+          "name": "PROJECT_LIST",
+          "values": [
+            { "name": { "value": "workspace" } },
+            { "name": { "value": "sigmacapital", "synonyms": ["sigma capital", "capital"] } },
+            { "name": { "value": "music",        "synonyms": ["heart music"] } },
+            { "name": { "value": "quantum" } },
+            { "name": { "value": "aimanifest",   "synonyms": ["ai manifest", "manifest"] } },
+            { "name": { "value": "life",          "synonyms": ["infinite life"] } }
+          ]
+        }
+      ]
+    }
+  }
+}
