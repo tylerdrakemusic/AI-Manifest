@@ -12,10 +12,8 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
-import os
 import re
 import sqlite3
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +23,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.integrations.ollama import OllamaClient
 from src.utils.priority_scorer import score_priority
 from src.utils.todos_db import add_todo, get_open_todos, init_db
 
@@ -38,6 +35,15 @@ PROJECT_ROOTS: dict[str, Path] = {
     "workspace": WORKSPACE_ROOT / "⊕Workspace",
 }
 
+# tech-debt mode scans code only (no DB/data access), so ΣCapital is included
+# even though it's excluded from epic/story discovery above.
+TECH_DEBT_PROJECT_ROOTS: dict[str, Path] = {
+    **PROJECT_ROOTS,
+    "capital": WORKSPACE_ROOT / "ΣCapital",
+}
+
+TECH_DEBT_SEVERITY_THRESHOLD = 7  # auto-write threshold, no approval gate
+
 DISCOVERY_FILES: dict[str, list[str]] = {
     "music": ["AGENT_STARTUP.md", "README.md", "Brand/**/*.html", "docs/**/*.md"],
     "life": ["AGENT_STARTUP.md", "README.md", "docs/**/*.md", "research/**/*.md"],
@@ -46,83 +52,13 @@ DISCOVERY_FILES: dict[str, list[str]] = {
     "workspace": ["AGENT_STARTUP.md", "README.md", ".github/FEATURE_REQUESTS.md", "REPO_VISIBILITY.md"],
 }
 
-_PREFERRED_MODEL = "llama3.3:70b"
-_OLLAMA_MODELS_PATH = r"G:\.ollama\models"
-
-
-def _select_model(override: str | None = None) -> str:
-    """Return the best available Ollama model name.
-
-    If *override* is given, return it immediately without querying Ollama.
-    Otherwise, detect the best local model:
-    1. llama3.3:70b (preferred)
-    2. Any 70b model
-    3. Any 13b model
-    4. llama3.1:8b
-    5. First available model
-    6. Absolute default: llama3.1:8b
-    """
-    if override is not None:
-        return override
-
-    model_names: list[str] = []
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=15,
-        )
-        lines = result.stdout.strip().splitlines()
-        for line in lines[1:]:  # skip header
-            parts = line.split()
-            if parts:
-                model_names.append(parts[0])
-    except Exception:
-        pass
-
-    if _PREFERRED_MODEL in model_names:
-        print(f"[discover] Using model: {_PREFERRED_MODEL}")
-        return _PREFERRED_MODEL
-
-    # Preferred not found — warn, set env, attempt pull
-    print(
-        f"[discover] {_PREFERRED_MODEL} not found. "
-        f"Set OLLAMA_MODELS={_OLLAMA_MODELS_PATH} and run: ollama pull {_PREFERRED_MODEL}"
-    )
-    os.environ["OLLAMA_MODELS"] = _OLLAMA_MODELS_PATH
-    try:
-        subprocess.run(
-            ["ollama", "pull", _PREFERRED_MODEL],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=600,
-        )
-    except Exception:
-        pass
-
-    # Fall back through preference order
-    for name in model_names:
-        if "70b" in name:
-            print(f"[discover] Using model: {name}")
-            return name
-    for name in model_names:
-        if "13b" in name:
-            print(f"[discover] Using model: {name}")
-            return name
-    for name in model_names:
-        if name == "llama3.1:8b":
-            print(f"[discover] Using model: {name}")
-            return name
-    if model_names:
-        print(f"[discover] Using model: {model_names[0]}")
-        return model_names[0]
-
-    # Absolute fallback
-    print("[discover] Using model: llama3.1:8b (default fallback)")
-    return "llama3.1:8b"
+# Deterministic per-category templates for tech-debt narration (no LLM call).
+_TECH_DEBT_ACTION_TEMPLATES: dict[str, str] = {
+    "complexity": "Refactor {file} into smaller functions — {detail}.",
+    "monolith": "Split {file} into focused modules — {detail}.",
+    "coupling": "Decouple {file} from its import graph — {detail}.",
+    "filesystem": "Consolidate/rename overlapping paths near {file} — {detail}.",
+}
 
 
 # Keywords that strongly indicate a task can be executed autonomously by AI.
@@ -167,7 +103,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--project",
-        choices=sorted(PROJECT_ROOTS.keys()),
+        choices=sorted(TECH_DEBT_PROJECT_ROOTS.keys()),
         default=None,
         help="Optional single-project scope (default: all projects).",
     )
@@ -188,11 +124,86 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip confirmation prompts and insert all shown candidates in --apply mode.",
     )
     parser.add_argument(
-        "--model",
+        "--mode",
+        choices=["discovery", "tech-debt"],
+        default="discovery",
+        help="'discovery' (default) finds epic/story todos. 'tech-debt' scans for "
+             "code-quality/refactor opportunities (radon-ranked, deterministic narration) "
+             "and auto-writes severity>=7 findings to workspace.db's tech_debt table.",
+    )
+    parser.add_argument(
+        "--candidates-file",
         default=None,
-        help="Ollama model to use (default: auto-detect best available).",
+        help="Path to a JSON array of pre-generated candidates (discovery mode only). "
+             "When set, the calling agent has already done the reasoning in-session "
+             "(reading docs, synthesizing ideas) — this script only dedups/scores/inserts. "
+             "Each item: {project, text, rationale?, implementation_hints?, "
+             "context_snapshot?, estimated_effort?, dependencies?}.",
     )
     return parser
+
+
+def _run_tech_debt_scan(projects: list[str]) -> int:
+    """Scan projects for tech debt, narrate deterministically, auto-write severity>=7."""
+    # ⊕Workspace's utils live under its own "src.utils" package, which collides
+    # with this project's "src" namespace — import them as bare modules instead.
+    workspace_utils = WORKSPACE_ROOT / "⊕Workspace" / "src" / "utils"
+    if str(workspace_utils) not in sys.path:
+        sys.path.insert(0, str(workspace_utils))
+    import tech_debt_scanner  # noqa: E402
+    import init_db as workspace_init_db  # noqa: E402
+
+    workspace_init_db.init_db()
+
+    all_findings = []
+    for project in projects:
+        root = TECH_DEBT_PROJECT_ROOTS[project]
+        if not root.exists():
+            continue
+        all_findings.extend(tech_debt_scanner.scan_project(project, root))
+
+    if not all_findings:
+        print("No tech-debt findings.")
+        return 0
+
+    all_findings.sort(key=lambda f: f.severity, reverse=True)
+
+    template = _TECH_DEBT_ACTION_TEMPLATES
+    for f in all_findings:
+        f.action = template.get(f.category, "Address {file} — {detail}.").format(
+            file=_excerpt(f.file_path, max_len=60), detail=f.detail
+        )
+
+    print("\nTech-debt findings (ranked by severity)")
+    print("SEV  PROJECT      CATEGORY     FILE")
+    print("-" * 100)
+    for f in all_findings:
+        print(f"{f.severity:<4} {f.project:<12} {f.category:<12} {_excerpt(f.file_path, max_len=60)}")
+        if f.action:
+            print(f"     action: {_excerpt(f.action, max_len=90)}")
+
+    auto_write = [f for f in all_findings if f.severity >= TECH_DEBT_SEVERITY_THRESHOLD]
+    if not auto_write:
+        print(f"\nNo findings >= severity {TECH_DEBT_SEVERITY_THRESHOLD}; nothing written.")
+        return 0
+
+    conn = workspace_init_db.get_connection()
+    written = 0
+    for f in auto_write:
+        try:
+            conn.execute(
+                "INSERT INTO tech_debt (finding_id, project, category, file_path, severity, detail, action) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f.finding_id, f.project, f.category, f.file_path, f.severity, f.detail, f.action),
+            )
+            written += 1
+        except Exception:
+            continue
+    conn.commit()
+    conn.close()
+
+    print(f"\nAuto-wrote {written} finding(s) with severity >= {TECH_DEBT_SEVERITY_THRESHOLD} to workspace.db tech_debt table.")
+    return 0
 
 
 def _read_path_excerpt(path: Path, max_chars: int = 2400) -> str:
@@ -219,75 +230,6 @@ def _collect_context(project: str) -> str:
             snippets.append(f"[{project}:{rel}] {excerpt}")
 
     return "\n".join(snippets)
-
-
-def _discovery_prompt(project: str, context: str, target_count: int) -> str:
-    return (
-        "You are a product strategist. Read project context and propose backlog opportunities. "
-        "Only suggest epic/story-level outcomes (new capability, launch, integration, system-level improvement), "
-        "not code-style micro tasks.\n\n"
-        f"Project key: {project}\n"
-        f"Target suggestions: {target_count}\n"
-        "Return STRICT JSON (no markdown) as an array of objects with keys:"
-        " project, text, rationale, implementation_hints, context_snapshot, estimated_effort, dependencies.\n"
-        "Rules:\n"
-        "- project must equal the project key above\n"
-        "- text must be <= 140 chars and action-oriented\n"
-        "- rationale: why this todo matters now (<= 400 chars)\n"
-        "- implementation_hints: suggested first steps / relevant files / APIs (<= 300 chars)\n"
-        "- context_snapshot: key project facts that led to this suggestion (<= 400 chars)\n"
-        "- estimated_effort: one of XS, S, M, L, XL\n"
-        "- dependencies: comma-separated todo IDs or FR IDs (empty string if none)\n"
-        "- avoid duplicates / near-duplicates\n"
-        "- keep suggestions realistic based on context\n\n"
-        "Context:\n"
-        f"{context}\n"
-    )
-
-
-def _extract_json_candidates(raw: str, project: str) -> list[dict[str, str]]:
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-zA-Z]*", "", cleaned).strip()
-        cleaned = re.sub(r"```$", "", cleaned).strip()
-
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, list):
-            rows: list[dict[str, str]] = []
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                text = str(item.get("text", "")).strip()
-                if not text:
-                    continue
-                rows.append(
-                    {
-                        "project": project,
-                        "text": text,
-                        "rationale": str(item.get("rationale", "")).strip(),
-                        "implementation_hints": str(item.get("implementation_hints", "")).strip(),
-                        "context_snapshot": str(item.get("context_snapshot", "")).strip(),
-                        "estimated_effort": str(item.get("estimated_effort", "")).strip(),
-                        "dependencies": str(item.get("dependencies", "")).strip(),
-                    }
-                )
-            return rows
-    except Exception:
-        pass
-
-    rows = []
-    for line in raw.splitlines():
-        s = line.strip(" -\t")
-        if not s:
-            continue
-        s = re.sub(r"^\d+[.)]\s*", "", s).strip()
-        if len(s) < 8:
-            continue
-        rows.append({"project": project, "text": s, "rationale": "",
-                     "implementation_hints": "", "context_snapshot": "",
-                     "estimated_effort": "", "dependencies": ""})
-    return rows
 
 
 def _heuristic_candidates(project: str, context: str, limit: int) -> list[dict[str, str]]:
@@ -342,39 +284,15 @@ def _heuristic_candidates(project: str, context: str, limit: int) -> list[dict[s
              "estimated_effort": "", "dependencies": ""} for t in unique]
 
 
-def _discover_for_project(project: str, limit: int, model: str = "llama3.1:8b") -> list[dict[str, str]]:
+def _discover_for_project(project: str, limit: int) -> list[dict[str, str]]:
+    """Deterministic-only candidate generation (no LLM). For richer, context-aware
+    candidates, the calling agent should reason in-session and pass results via
+    `--candidates-file` instead of relying on this heuristic fallback.
+    """
     context = _collect_context(project)
     if not context:
         return []
-
-    prompt = _discovery_prompt(project, context, target_count=max(3, min(8, limit)))
-
-    try:
-        raw = OllamaClient(model=model).generate(prompt)
-        rows = _extract_json_candidates(raw, project)
-        if rows:
-            return rows
-    except Exception:
-        pass
-
-    try:
-        import openai  # type: ignore[import]
-
-        api_key = os.environ.get("OPENAPI_TOKEN")
-        if not api_key:
-            return []
-
-        client = openai.OpenAI(api_key=api_key, timeout=25)
-        response = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=700,
-        )
-        raw = response.choices[0].message.content or ""
-        return _extract_json_candidates(raw, project)
-    except Exception:
-        return _heuristic_candidates(project, context=context, limit=limit)
+    return _heuristic_candidates(project, context=context, limit=limit)
 
 
 def _normalize(text: str) -> str:
@@ -404,18 +322,42 @@ def _nearest_open_match(text: str, open_texts: list[str], threshold: float = 0.6
     return None
 
 
-def _prepare_candidates(projects: list[str], limit: int, model: str = "llama3.1:8b") -> list[Candidate]:
+def _load_candidates_file(path: str) -> dict[str, list[dict[str, str]]]:
+    """Load agent-supplied candidates JSON, grouped by project key."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    by_project: dict[str, list[dict[str, str]]] = {}
+    for item in data:
+        project = str(item.get("project", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if not project or not text:
+            continue
+        by_project.setdefault(project, []).append({
+            "project": project,
+            "text": text,
+            "priority": item.get("priority"),  # agent-supplied 1-10, or None to fall back to heuristic
+            "rationale": str(item.get("rationale", "")).strip(),
+            "implementation_hints": str(item.get("implementation_hints", "")).strip(),
+            "context_snapshot": str(item.get("context_snapshot", "")).strip(),
+            "estimated_effort": str(item.get("estimated_effort", "")).strip(),
+            "dependencies": str(item.get("dependencies", "")).strip(),
+        })
+    return by_project
+
+
+def _prepare_candidates(projects: list[str], limit: int, candidates_file: str | None = None) -> list[Candidate]:
     open_rows = get_open_todos()
     open_by_project: dict[str, list[dict[str, Any]]] = {}
     for row in open_rows:
         key = str(row.get("project", ""))
         open_by_project.setdefault(key, []).append(row)
 
+    supplied = _load_candidates_file(candidates_file) if candidates_file else {}
+
     results: list[Candidate] = []
     seen: set[tuple[str, str]] = set()
 
     for project in projects:
-        discovered = _discover_for_project(project, limit=limit, model=model)
+        discovered = supplied.get(project) or _discover_for_project(project, limit=limit)
         existing_rows = open_by_project.get(project, [])
         existing_texts = [str(r.get("text", "")) for r in existing_rows]
 
@@ -429,7 +371,13 @@ def _prepare_candidates(projects: list[str], limit: int, model: str = "llama3.1:
             seen.add(key)
 
             similar_to = _nearest_open_match(text, existing_texts)
-            priority = score_priority(text=text, project=project, existing_todos=existing_rows)
+            supplied_priority = row.get("priority")
+            if supplied_priority not in (None, ""):
+                # Agent already scored this in-session — skip score_priority()'s
+                # Ollama/OpenAI call entirely.
+                priority = max(1, min(10, int(supplied_priority)))
+            else:
+                priority = score_priority(text=text, project=project, existing_todos=existing_rows)
             source = _classify_autonomy(text)
             autonomy_level = _classify_autonomy_level(text, source)
             results.append(
@@ -516,12 +464,18 @@ def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
 
+    if args.mode == "tech-debt":
+        projects = [args.project] if args.project else list(TECH_DEBT_PROJECT_ROOTS.keys())
+        return _run_tech_debt_scan(projects=projects)
+
     init_db()
 
-    model = _select_model(override=args.model)
+    if args.project and args.project not in PROJECT_ROOTS:
+        print(f"'{args.project}' is only valid with --mode tech-debt (not in epic/story discovery scope).")
+        return 1
 
     projects = [args.project] if args.project else list(PROJECT_ROOTS.keys())
-    candidates = _prepare_candidates(projects=projects, limit=max(1, args.limit), model=model)
+    candidates = _prepare_candidates(projects=projects, limit=max(1, args.limit), candidates_file=args.candidates_file)
 
     if not candidates:
         print("No discovery candidates found.")
