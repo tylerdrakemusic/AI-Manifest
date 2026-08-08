@@ -143,16 +143,47 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_workspace_utils_path() -> Path:
+    """Locate ⊕Workspace's src/utils, checking known layouts (main checkout,
+    then any local git worktree of that repo) rather than assuming main exists.
+
+    Raises FileNotFoundError with an actionable message if neither is found —
+    this is a hard cross-repo dependency (tech_debt table lives in workspace.db),
+    so `--mode tech-debt` genuinely cannot run without it merged/present somewhere.
+    """
+    main_path = WORKSPACE_ROOT / "⊕Workspace" / "src" / "utils"
+    if (main_path / "tech_debt_scanner.py").exists():
+        return main_path
+
+    worktrees_root = WORKSPACE_ROOT / "⊕Workspace" / ".worktrees"
+    if worktrees_root.exists():
+        for candidate in sorted(worktrees_root.iterdir()):
+            candidate_utils = candidate / "src" / "utils"
+            if (candidate_utils / "tech_debt_scanner.py").exists():
+                return candidate_utils
+
+    raise FileNotFoundError(
+        "Could not find src/utils/tech_debt_scanner.py on ⊕Workspace main or in any "
+        "local worktree. --mode tech-debt requires FR-20260807-tech-debt-scanner's "
+        "⊕Workspace-side changes to be merged (or checked out in a worktree) first."
+    )
+
+
 def _run_tech_debt_scan(projects: list[str]) -> int:
     """Scan projects for tech debt, narrate deterministically, auto-write severity>=7."""
     # ⊕Workspace's utils live under its own "src.utils" package, which collides
     # with this project's "src" namespace — import them as bare modules instead.
-    workspace_utils = WORKSPACE_ROOT / "⊕Workspace" / "src" / "utils"
+    workspace_utils = _resolve_workspace_utils_path()
     if str(workspace_utils) not in sys.path:
         sys.path.insert(0, str(workspace_utils))
     import tech_debt_scanner  # noqa: E402
     import init_db as workspace_init_db  # noqa: E402
 
+    # If workspace_utils resolved inside a worktree (no ⊕Workspace main copy of
+    # tech_debt_scanner.py yet), avoid auto-creating a separate/isolated
+    # workspace.db there — walk up to the real one, same convention other
+    # tools/*.py scripts in this workspace already use.
+    workspace_init_db.use_worktree_aware_db_path(workspace_utils.parent.parent)
     workspace_init_db.init_db()
 
     all_findings = []
@@ -373,9 +404,12 @@ def _prepare_candidates(projects: list[str], limit: int, candidates_file: str | 
             similar_to = _nearest_open_match(text, existing_texts)
             supplied_priority = row.get("priority")
             if supplied_priority not in (None, ""):
-                # Agent already scored this in-session — skip score_priority()'s
-                # Ollama/OpenAI call entirely.
-                priority = max(1, min(10, int(supplied_priority)))
+                try:
+                    # Agent already scored this in-session — skip score_priority()'s
+                    # heuristic call entirely.
+                    priority = max(1, min(10, int(supplied_priority)))
+                except (TypeError, ValueError):
+                    priority = score_priority(text=text, project=project, existing_todos=existing_rows)
             else:
                 priority = score_priority(text=text, project=project, existing_todos=existing_rows)
             source = _classify_autonomy(text)
