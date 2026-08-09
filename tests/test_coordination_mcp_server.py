@@ -94,7 +94,7 @@ def test_link_does_not_overwrite_existing_fr_id(tmp_db):
     assert todos_db.get_todo_by_id(todo_id)["fr_id"] == "FR-20260809-first"
 
 
-def test_mcp_module_loads_by_absolute_path_from_outside_repo():
+def test_mcp_module_loads_by_absolute_path_from_outside_repo(tmp_path):
     module_path = (
         __file__.replace("tests\\test_coordination_mcp_server.py", "")
         + "src\\integrations\\coordination\\mcp_server.py"
@@ -106,7 +106,7 @@ def test_mcp_module_loads_by_absolute_path_from_outside_repo():
             "import runpy, sys; runpy.run_path(sys.argv[1])",
             module_path,
         ],
-        cwd="f:\\",
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         encoding="utf-8",
