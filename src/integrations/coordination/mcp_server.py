@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import FastMCP
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:

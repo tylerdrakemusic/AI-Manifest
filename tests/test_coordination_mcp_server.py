@@ -119,6 +119,12 @@ def test_mcp_module_loads_by_absolute_path_from_outside_repo(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_mcp_server_exports_fast_mcp():
+    from src.integrations.coordination.mcp_server import FastMCP
+
+    assert FastMCP.__name__ == "FastMCP"
+
+
 def test_list_open_todos_initializes_canonical_db_in_fresh_worktree(tmp_path, monkeypatch):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db
