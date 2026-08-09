@@ -21,4 +21,4 @@ pytest-cov>=5.0
 pytest-mock>=3.14
 
 # Model Context Protocol servers
-mcp>=1.27.0
+mcp>=1.27.0,<2
