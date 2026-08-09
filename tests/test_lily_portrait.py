@@ -105,6 +105,8 @@ def test_svg_fallback_when_all_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(_lp, "_try_dalle3", lambda prompt, save_dir: None)
     monkeypatch.setattr(_lp, "_try_huggingface", lambda prompt, save_dir, **kw: None)
+    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda prompt, save_dir: None)
+    monkeypatch.setattr(_lp, "_try_pollinations", lambda prompt, save_dir: None)
 
     result = _lp.get_daily_portrait()
     assert result.exists()
@@ -155,6 +157,8 @@ def test_img_tag_svg_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(_lp, "_try_dalle3", lambda p, d: None)
     monkeypatch.setattr(_lp, "_try_huggingface", lambda p, d, **kw: None)
+    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda p, d: None)
+    monkeypatch.setattr(_lp, "_try_pollinations", lambda p, d: None)
 
     tag = _lp.get_portrait_img_tag()
     assert "data:image/svg+xml;base64," in tag

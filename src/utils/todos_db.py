@@ -14,6 +14,7 @@ todos(id, project, source, text, done, created_at, closed_at)
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from typing import Any
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
+FR_ID_PATTERN = re.compile(r"^FR-\d{8}-[a-z0-9][a-z0-9-]*$")
 
 
 def resolve_worktree_db_path(start: Path, max_levels: int = 5) -> Path | None:
@@ -326,6 +328,19 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
             "SELECT * FROM todos WHERE id=?", (todo_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def link_todo_to_fr(todo_id: int, fr_id: str) -> bool:
+    """Link one unlinked todo to a syntactically valid feature request."""
+    if not FR_ID_PATTERN.fullmatch(fr_id):
+        raise ValueError(f"invalid FR id: {fr_id!r}")
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE todos SET fr_id=? WHERE id=? AND fr_id IS NULL",
+            (fr_id, todo_id),
+        )
+        conn.commit()
+    return cur.rowcount == 1
 
 
 def insert_todo(
