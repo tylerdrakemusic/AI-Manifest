@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import subprocess
 import sys
+from pathlib import Path
 
 
 @pytest.fixture()
@@ -96,8 +97,11 @@ def test_link_does_not_overwrite_existing_fr_id(tmp_db):
 
 def test_mcp_module_loads_by_absolute_path_from_outside_repo(tmp_path):
     module_path = (
-        __file__.replace("tests\\test_coordination_mcp_server.py", "")
-        + "src\\integrations\\coordination\\mcp_server.py"
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "integrations"
+        / "coordination"
+        / "mcp_server.py"
     )
     result = subprocess.run(
         [
