@@ -175,17 +175,20 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     status["scan_todos"] = []
 
     status["full_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "full"],
         key=lambda t: t["priority"], reverse=True,
     )
     status["supervised_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "supervised"],
         key=lambda t: t["priority"], reverse=True,
     )
     status["human_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "human" or r.get("autonomy_level") is None],
         key=lambda t: t["priority"], reverse=True,
     )
@@ -332,6 +335,21 @@ def _priority_badge(priority: int) -> str:
     return f'<span class="priority-badge-inline {cls}">P{priority}</span>'
 
 
+def _todo_signal_html(todo: dict[str, Any]) -> str:
+    """Render explicit refinement and FR-link signals independently."""
+    perfected = bool(todo.get("perfected_at"))
+    linked = bool(todo.get("fr_id"))
+    perfected_label = "Refined · perfect-scoped-td" if perfected else "Not perfected"
+    linked_label = "FR linked" if linked else "No FR link"
+    perfected_class = "signal-refined" if perfected else "signal-muted"
+    linked_class = "signal-linked" if linked else "signal-muted"
+    return (
+        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
+        f'<span class="todo-signal {linked_class}">{linked_label}</span>'
+    )
+
+
 def _status_card_html(proj: dict, rank: int) -> str:
     """Generate an HTML card for a project status."""
     sigil = html.escape(proj["sigil"])
@@ -350,6 +368,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
         return "".join(
             f'<li>'
             f'{_priority_badge(t.get("priority", 5))}'
+            f'{_todo_signal_html(t)}'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
             f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
@@ -425,6 +444,8 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
                 "id": t["id"],
                 "text": t["text"],
                 "source": t.get("source", ""),
+                "fr_id": t.get("fr_id"),
+                "perfected_at": t.get("perfected_at"),
             })
     rows.sort(key=lambda r: r["priority"], reverse=True)
 
@@ -439,7 +460,7 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
         f"<tr>"
         f"<td>{_priority_badge(r['priority'])}</td>"
         f"<td>{r['project']}</td>"
-        f"<td><span class='todo-text'>{html.escape(r['text'])}</span>"
+        f"<td>{_todo_signal_html(r)} <span class='todo-text'>{html.escape(r['text'])}</span>"
         f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
         f"<td><button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done'>✓</button></td>"
         f"</tr>"
@@ -799,6 +820,33 @@ header .subtitle {{
     display: flex;
     align-items: baseline;
     gap: 0.4rem;
+}}
+.todo-id {{
+    color: var(--accent-orange);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.todo-signal {{
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.signal-refined {{
+    color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.12);
+}}
+.signal-linked {{
+    color: var(--accent);
+    background: rgba(88, 166, 255, 0.12);
+}}
+.signal-muted {{
+    color: var(--text-muted);
+    background: rgba(122, 138, 160, 0.12);
 }}
 .todo-list li::before {{
     content: "☐ ";

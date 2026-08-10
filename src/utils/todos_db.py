@@ -2,7 +2,7 @@
 
 Schema
 ------
-todos(id, project, source, text, done, created_at, closed_at)
+todos(id, project, source, text, done, created_at, closed_at, perfected_at)
 
 - project: canonical lowercase key ('music', 'life', 'capital', 'quantum', 'ai_manifest',
   'workspace'). Sigil display names (e.g. '❤Music', '∞Life') are automatically
@@ -107,12 +107,14 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 done       INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 closed_at  TEXT,
-                priority   INTEGER NOT NULL DEFAULT 5
+                priority   INTEGER NOT NULL DEFAULT 5,
+                fr_id      TEXT,
+                perfected_at TEXT
             )
         """)
         conn.execute("""
-            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, priority)
-            SELECT id, project, source, text, done, created_at, closed_at, priority
+            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, priority, fr_id, perfected_at)
+            SELECT id, project, source, text, done, created_at, closed_at, priority, fr_id, perfected_at
             FROM todos
         """)
         conn.execute("DROP TABLE todos")
@@ -146,7 +148,9 @@ def init_db() -> None:
                 done       INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 closed_at  TEXT,
-                priority   INTEGER NOT NULL DEFAULT 5
+                priority   INTEGER NOT NULL DEFAULT 5,
+                fr_id      TEXT,
+                perfected_at TEXT
             )
         """)
         conn.execute("""
@@ -160,6 +164,14 @@ def init_db() -> None:
             )
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        # Migration guards needed before a possible table rebuild so the
+        # rebuild can preserve these fields from older schemas.
+        for _column in ("fr_id", "perfected_at"):
+            try:
+                conn.execute(f"ALTER TABLE todos ADD COLUMN {_column} TEXT")  # nosec B608 — column names are hardcoded above
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
         if _has_column(conn, "todos", "priority") and not _table_allows_scan_source(conn):
             _migrate_todos_for_scan_source(conn)
@@ -178,15 +190,6 @@ def init_db() -> None:
             "UPDATE todos SET autonomy_level = 'supervised'"
             " WHERE autonomy_level IS NULL OR autonomy_level = ''"
         )
-
-        # Migration guard: add fr_id column for intake cross-reference linking
-        # Convention: fr_id IS NOT NULL means the todo is in-flight (linked to an active FR)
-        try:
-            conn.execute(
-                "ALTER TABLE todos ADD COLUMN fr_id TEXT"
-            )
-        except sqlite3.OperationalError:
-            pass  # column already exists
 
         # Migration guard: add priority_history table
         conn.execute("""

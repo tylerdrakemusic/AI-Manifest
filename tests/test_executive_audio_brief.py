@@ -89,6 +89,62 @@ def test_gather_project_status_sorts_todos_by_priority() -> None:
         f"human_todos not sorted desc by priority: {[t['priority'] for t in human]}"
 
 
+def test_gather_project_status_preserves_provenance_fields_for_each_view_model() -> None:
+    """Every autonomy view model must retain identity and independent provenance fields."""
+    open_rows = [
+        {"id": 227, "text": "Perfected only", "priority": 9, "autonomy_level": "full", "source": "TYLER",
+         "fr_id": None, "perfected_at": "2026-08-09T00:00:00+00:00"},
+        {"id": 228, "text": "Linked only", "priority": 8, "autonomy_level": "supervised", "source": "AI",
+         "fr_id": "FR-20260809-example", "perfected_at": None},
+        {"id": 229, "text": "Both signals", "priority": 7, "autonomy_level": "human", "source": "SCAN",
+         "fr_id": "FR-20260809-example", "perfected_at": "2026-08-10T00:00:00+00:00"},
+    ]
+    project = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "root": Path("f:/⊕Workspace"),
+        "always_include": False, "priority_weight": 1,
+    }
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", return_value=open_rows),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[]),
+    ):
+        from tools.executive_audio_brief import gather_project_status
+        status = gather_project_status(project)
+
+    for view_name, todo_id in (("full_todos", 227), ("supervised_todos", 228), ("human_todos", 229)):
+        todo = status[view_name][0]
+        assert todo["id"] == todo_id
+        assert "fr_id" in todo
+        assert "perfected_at" in todo
+
+
+def test_status_card_renders_ids_and_independent_provenance_signals_without_changing_done_target() -> None:
+    from tools.executive_audio_brief import _status_card_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 3, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 227, "text": "Perfected only", "priority": 9, "source": "TYLER",
+             "fr_id": None, "perfected_at": "2026-08-09T00:00:00+00:00"},
+            {"id": 228, "text": "Linked only", "priority": 8, "source": "AI",
+             "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = _status_card_html(status, 1)
+
+    assert "TODO #227" in out
+    assert "TODO #228" in out
+    assert "Refined · perfect-scoped-td" in out
+    assert "Not perfected" in out
+    assert "FR linked" in out
+    assert "No FR link" in out
+    assert 'onclick="markDone(227, this)"' in out
+    assert 'onclick="markDone(228, this)"' in out
+
+
 def test_generate_brief_script_covers_all_5_projects() -> None:
     """Fix 2: generate_brief_script must mention all 5 project names in the output."""
     from tools.executive_audio_brief import generate_brief_script

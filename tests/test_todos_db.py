@@ -44,6 +44,40 @@ def test_init_db_idempotent(tmp_db: Path) -> None:
     todos_db.init_db()
 
 
+def test_init_db_adds_nullable_perfected_at_without_losing_existing_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.utils.todos_db as todos_db
+
+    db_file = tmp_path / "legacy_todos.db"
+    monkeypatch.setattr(todos_db, "DB_PATH", db_file)
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("""
+            CREATE TABLE todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('AI', 'TYLER')),
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                closed_at TEXT,
+                priority INTEGER NOT NULL DEFAULT 5,
+                autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+                fr_id TEXT
+            )
+        """)
+        conn.execute(
+            "INSERT INTO todos (id, project, source, text, created_at, fr_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (227, "workspace", "TYLER", "Preserve this todo", "2026-08-09T00:00:00+00:00", "FR-20260809-todo-provenance-signal-rail"),
+        )
+
+    todos_db.init_db()
+
+    with todos_db.get_connection() as conn:
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(todos)")}
+        row = conn.execute("SELECT id, fr_id, perfected_at FROM todos WHERE id=227").fetchone()
+    assert columns["perfected_at"][3] == 0
+    assert tuple(row) == (227, "FR-20260809-todo-provenance-signal-rail", None)
+
+
 # ---------------------------------------------------------------------------
 # insert_todo
 # ---------------------------------------------------------------------------
