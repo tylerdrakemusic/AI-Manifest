@@ -62,3 +62,34 @@ QA is blocked at `FUNCTIONAL_QA` because the required running-UI criterion lacks
 - Result: `1 passed, 19 deselected in 4.01s`.
 - Screenshot: `proof/screenshots/FR-20260809-todo-provenance-signal-rail-signal-rail.png`.
 - The temporary database and server were cleaned up; no production database was written. The preflight server was terminated after the test.
+
+## Readability Repair Rerun - 2026-08-11
+
+**Decision:** PASS
+**Agent:** ⊕workspace-qa
+**Repair commit:** `69c4a7fa096805f3a831de72437e25380e70dd48`
+**Perf run:** `c59ce793-db0e-49cd-b693-c8d38f955810`
+
+| # | Acceptance criterion | Test type | Result | Evidence |
+|---|---|---|---|---|
+| 1 | `perfected_at` is nullable, added by migration, and existing TODO identity and `fr_id` survive. | Focused pytest and compile check | PASS | AI-Manifest focused regressions: `34 passed`; `compileall=PASS`. |
+| 2 | Approved `perfect-scoped-td` refinement stamps UTC `perfected_at`; denied or failed refinement does not stamp it, and FR linkage remains explicit. | Skill contract and regression inspection | PASS with test-gap | Workspace skill diff preserves independent `perfected_at` and `fr_id` fields and approved transaction behavior. No executable skill harness exists for denied/failed mutation paths. |
+| 3 | Executive view models preserve TODO IDs and independent `perfected_at` and `fr_id` state; done buttons target the rendered TODO ID. | Focused pytest | PASS | Focused AI-Manifest regressions: `34 passed`; browser assertions verify exact `markDone(927/928/929, this)` targets. |
+| 4 | Executive Audio Brief Portal Signal rail/evidence stream renders TODO IDs and independent signal states in a running UI, with screenshot proof. | Fresh server preflight and exact Playwright test | PASS | Port 8200 `/health`: HTTP 200. `test_signal_states_render_with_explicit_ids`: `1 passed, 19 deselected`; desktop `1280x2422` and mobile `390x3474` screenshots. |
+
+## Rerun Checks
+
+- AI-Manifest worktree: `git diff main...HEAD --check` PASS; scoped files are the expected migration, portal implementation, focused tests, and QA report.
+- Workspace worktree: `git diff main...HEAD --check` PASS; only `.github/skills/perfect-scoped-td/SKILL.md` is changed.
+- AI-Manifest source and tests: `compileall=PASS`.
+- Fresh server teardown: PASS; temporary fixture database and server were cleaned up; production databases were not written.
+- Screenshot proof: [desktop](../screenshots/FR-20260809-todo-provenance-signal-rail-desktop.png), [mobile](../screenshots/FR-20260809-todo-provenance-signal-rail-mobile.png).
+
+## Residual Test Debt
+
+- The broader Workspace portal suite remains environmentally unrelated to this FR: `627 passed, 7 skipped, 6 failed, 11 deselected`. Failures include legacy generated output expecting 3 cards while current output has 6 and the configured ElevenLabs key returning no voices; these were not changed because they do not affect the repaired Signal rail acceptance criteria.
+- The AC2 denied/failed refinement paths remain a test-coverage gap; the skill contract and independent field behavior pass inspection, but no executable skill harness is present.
+
+## Rerun Verdict
+
+All four acceptance criteria have PASS evidence for the repaired readability commit. Advance the FR to `ARCHITECTURE_REVIEW`.
