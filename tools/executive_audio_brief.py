@@ -367,11 +367,16 @@ def _status_card_html(proj: dict, rank: int) -> str:
     def _todo_rows(todos: list, limit: int = 5) -> str:
         return "".join(
             f'<li>'
+            f'<div class="todo-meta">'
+            f'<span class="todo-project">{sigil}{name}</span>'
             f'{_priority_badge(t.get("priority", 5))}'
             f'{_todo_signal_html(t)}'
-            f'<span class="todo-text">{html.escape(t["text"])}</span>'
             f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
+            f'</div>'
+            f'<div class="todo-primary">'
+            f'<span class="todo-text">{html.escape(t["text"])}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</div>'
             f'</li>'
             for t in todos[:limit]
         )
@@ -817,9 +822,36 @@ header .subtitle {{
     padding: 0.25rem 0;
     border-bottom: 1px solid var(--border);
     color: var(--text);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+        "meta"
+        "primary";
+    row-gap: 0.35rem;
+    line-height: 1.45;
+}}
+.todo-meta {{
+    grid-area: meta;
     display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    padding-left: 1.2rem;
+}}
+.todo-primary {{
+    grid-area: primary;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    column-gap: 0.6rem;
+    min-width: 0;
+}}
+.todo-project {{
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
 }}
 .todo-id {{
     color: var(--accent-orange);
@@ -828,8 +860,9 @@ header .subtitle {{
     white-space: nowrap;
 }}
 .todo-signal {{
-    display: inline-block;
-    margin-left: 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    min-width: 7.5rem;
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.68rem;
@@ -851,10 +884,13 @@ header .subtitle {{
 .todo-list li::before {{
     content: "☐ ";
     color: var(--accent-orange);
-    flex-shrink: 0;
+    position: absolute;
+    margin-top: 0.25rem;
 }}
 .todo-text {{
-    flex: 1;
+    min-width: 0;
+    max-width: 70ch;
+    overflow-wrap: anywhere;
 }}
 .done-btn {{
     flex-shrink: 0;
@@ -1224,6 +1260,33 @@ footer {{
 }}
 .offload-table tr:hover td {{
     background: rgba(210,153,34,0.05);
+}}
+.offload-table td:nth-child(3) {{
+    min-width: 0;
+    max-width: 70ch;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}}
+.offload-table .todo-signal {{
+    margin-right: 0.35rem;
+}}
+
+@media (max-width: 700px) {{
+    .container {{ padding: 1rem; }}
+    .todo-list li {{
+        grid-template-areas:
+            "meta"
+            "primary";
+    }}
+    .todo-meta {{ align-items: flex-start; }}
+    .todo-list li > .todo-signal {{
+        min-width: 0;
+        white-space: normal;
+    }}
+    .todo-primary {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .todo-text {{ max-width: none; }}
+    .offload-panel {{ padding: 1rem; overflow-x: hidden; }}
+    .offload-table {{ display: block; overflow-x: auto; }}
 }}
 
 {ROADMAP_STYLES}

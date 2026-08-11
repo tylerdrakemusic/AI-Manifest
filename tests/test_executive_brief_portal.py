@@ -247,33 +247,50 @@ class TestProvenanceSignalRail:
 
     def test_signal_states_render_with_explicit_ids(self, browser, signal_rail_server) -> None:
         """All three fixture rows render their independent provenance states."""
-        screenshot_path = (
+        proof_dir = (
             Path(__file__).resolve().parent.parent
-            / "proof/screenshots/FR-20260809-todo-provenance-signal-rail-signal-rail.png"
+            / "proof/screenshots"
         )
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        proof_dir.mkdir(parents=True, exist_ok=True)
 
         page = browser.new_page()
         try:
-            response = page.goto(f"{signal_rail_server}/")
-            assert response is not None and response.status == 200
-            page.wait_for_load_state("domcontentloaded")
-
-            rendered_ids = set(page.locator(".todo-id").all_text_contents())
-            assert {"TODO #927", "TODO #928", "TODO #929"} <= rendered_ids
-
             expected_states = {
                 927: {"Refined · perfect-scoped-td", "No FR link"},
                 928: {"Not perfected", "FR linked"},
                 929: {"Refined · perfect-scoped-td", "FR linked"},
             }
-            for todo_id, expected_signals in expected_states.items():
-                item = page.locator("li").filter(has_text=f"TODO #{todo_id}")
-                assert item.count() == 1, f"Expected one rendered row for TODO #{todo_id}"
-                assert set(item.locator(".todo-signal").all_text_contents()) == expected_signals
-                assert item.locator(f"button.done-btn[onclick*='markDone({todo_id},']").count() == 1
+            viewports = {
+                "desktop": (1280, 900),
+                "mobile": (390, 844),
+            }
+            for viewport_name, viewport in viewports.items():
+                page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+                response = page.goto(f"{signal_rail_server}/")
+                assert response is not None and response.status == 200
+                page.wait_for_load_state("domcontentloaded")
 
-            page.screenshot(path=str(screenshot_path), full_page=True)
+                rendered_ids = set(page.locator(".todo-id").all_text_contents())
+                assert {"TODO #927", "TODO #928", "TODO #929"} <= rendered_ids
+                assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+
+                for todo_id, expected_signals in expected_states.items():
+                    item = page.locator("li").filter(has_text=f"TODO #{todo_id}")
+                    assert item.count() == 1, f"Expected one rendered row for TODO #{todo_id}"
+                    assert set(item.locator(".todo-signal").all_text_contents()) == expected_signals
+                    done_button = item.locator("button.done-btn")
+                    assert done_button.count() == 1
+                    assert done_button.get_attribute("onclick") == f"markDone({todo_id}, this)"
+
+                    text = item.locator(".todo-text")
+                    box = text.bounding_box()
+                    assert box is not None and box["width"] > 0 and box["height"] > 0
+                    assert text.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+
+                page.screenshot(
+                    path=str(proof_dir / f"FR-20260809-todo-provenance-signal-rail-{viewport_name}.png"),
+                    full_page=True,
+                )
         finally:
             page.close()
 

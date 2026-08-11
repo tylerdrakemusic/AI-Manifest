@@ -145,6 +145,56 @@ def test_status_card_renders_ids_and_independent_provenance_signals_without_chan
     assert 'onclick="markDone(228, this)"' in out
 
 
+def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 1, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 229, "text": "A deliberately long TODO title that must remain readable", "priority": 9,
+             "source": "AI", "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = generate_portal_html([status], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    assert ".todo-list li {" in out
+    assert "grid-template-columns:" in out
+    assert ".todo-text {" in out
+    assert "min-width: 0;" in out
+    assert "overflow-wrap: anywhere;" in out
+    assert "line-height: 1.45;" in out
+    assert ".todo-signal {" in out
+    assert "min-width: 7.5rem;" in out
+
+
+def test_status_card_todo_rows_group_metadata_and_primary_text_block() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 1, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 230, "text": "A readable primary TODO block", "priority": 9,
+             "source": "AI", "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = generate_portal_html([status], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    assert '<div class="todo-meta">' in out
+    assert '<div class="todo-primary">' in out
+    assert '<div class="todo-meta">' in out and '<span class="todo-id">TODO #230</span>' in out
+    assert '<div class="todo-primary"><span class="todo-text">' in out
+    assert ".todo-meta {" in out
+    assert ".todo-primary {" in out
+    assert "grid-template-columns: minmax(0, 1fr) auto;" in out
+    assert 'grid-template-areas:\n        "meta"\n        "primary";' in out
+
+
 def test_generate_brief_script_covers_all_5_projects() -> None:
     """Fix 2: generate_brief_script must mention all 5 project names in the output."""
     from tools.executive_audio_brief import generate_brief_script
