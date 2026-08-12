@@ -96,7 +96,8 @@ def test_gather_project_status_summary_does_not_duplicate_visible_todos() -> Non
     ])
     project = {
         "sigil": "⊕", "name": "Workspace", "key": "workspace",
-        "root": Path("f:/⊕Workspace"), "always_include": False, "priority_weight": 1,
+        "root": Path(__file__).resolve().parent.parent,
+        "always_include": False, "priority_weight": 1,
     }
 
     with (
