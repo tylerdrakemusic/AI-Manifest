@@ -175,17 +175,20 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     status["scan_todos"] = []
 
     status["full_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "full"],
         key=lambda t: t["priority"], reverse=True,
     )
     status["supervised_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "supervised"],
         key=lambda t: t["priority"], reverse=True,
     )
     status["human_todos"] = sorted(
-        [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"]}
+                [{"id": r["id"], "text": r["text"], "priority": r.get("priority", 5), "source": r["source"],
+                    "fr_id": r.get("fr_id"), "perfected_at": r.get("perfected_at")}
          for r in open_rows if r.get("autonomy_level") == "human" or r.get("autonomy_level") is None],
         key=lambda t: t["priority"], reverse=True,
     )
@@ -204,17 +207,10 @@ def gather_project_status(project: dict) -> dict[str, Any]:
 
     total = status["active_tasks"] + status["completed_tasks"]
     pct = round(100 * status["completed_tasks"] / total) if total > 0 else 0
-    top_texts = (
-        [t["text"] for t in status["full_todos"][:2]]
-        + [t["text"] for t in status["supervised_todos"][:2]]
-        + [t["text"] for t in status["human_todos"][:1]]
-    )
     summary_lines = [
         f"{project['sigil']}{project['name']}: {status['active_tasks']} open tasks, "
         f"{status['completed_tasks']} completed ({pct}% done)."
     ]
-    if top_texts:
-        summary_lines.append("Top priorities: " + "; ".join(top_texts[:3]) + ".")
     status["summary"] = " ".join(summary_lines)
 
     return status
@@ -332,6 +328,24 @@ def _priority_badge(priority: int) -> str:
     return f'<span class="priority-badge-inline {cls}">P{priority}</span>'
 
 
+def _todo_signal_html(todo: dict[str, Any]) -> str:
+    """Render explicit refinement and FR-link signals independently."""
+    perfected = bool(todo.get("perfected_at"))
+    linked = bool(todo.get("fr_id"))
+    perfected_label = "Refined · perfect-scoped-td" if perfected else "Not perfected"
+    linked_label = "FR linked" if linked else "No FR link"
+    perfected_class = "signal-refined" if perfected else "signal-muted"
+    linked_class = "signal-linked" if linked else "signal-muted"
+    return (
+        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'<span class="todo-signal perfected-badge">PERFECTED</span>' if perfected else
+        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+    ) + (
+        f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
+        f'<span class="todo-signal {linked_class}">{linked_label}</span>'
+    )
+
+
 def _status_card_html(proj: dict, rank: int) -> str:
     """Generate an HTML card for a project status."""
     sigil = html.escape(proj["sigil"])
@@ -349,10 +363,16 @@ def _status_card_html(proj: dict, rank: int) -> str:
     def _todo_rows(todos: list, limit: int = 5) -> str:
         return "".join(
             f'<li>'
-            f'{_priority_badge(t.get("priority", 5))}'
+            f'<div class="todo-primary">'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
-            f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</div>'
+            f'<div class="todo-meta">'
+            f'<span class="todo-project">{sigil}{name}</span>'
+            f'{_priority_badge(t.get("priority", 5))}'
+            f'{_todo_signal_html(t)}'
+            f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
+            f'</div>'
             f'</li>'
             for t in todos[:limit]
         )
@@ -425,6 +445,8 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
                 "id": t["id"],
                 "text": t["text"],
                 "source": t.get("source", ""),
+                "fr_id": t.get("fr_id"),
+                "perfected_at": t.get("perfected_at"),
             })
     rows.sort(key=lambda r: r["priority"], reverse=True)
 
@@ -439,7 +461,7 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
         f"<tr>"
         f"<td>{_priority_badge(r['priority'])}</td>"
         f"<td>{r['project']}</td>"
-        f"<td><span class='todo-text'>{html.escape(r['text'])}</span>"
+        f"<td>{_todo_signal_html(r)} <span class='todo-text'>{html.escape(r['text'])}</span>"
         f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
         f"<td><button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done'>✓</button></td>"
         f"</tr>"
@@ -793,20 +815,85 @@ header .subtitle {{
 }}
 .todo-list li {{
     font-size: 0.85rem;
-    padding: 0.25rem 0;
+    position: relative;
+    padding: 0.25rem 0 0.25rem 1.2rem;
     border-bottom: 1px solid var(--border);
     color: var(--text);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+        "primary"
+        "meta";
+    row-gap: 0.35rem;
+    line-height: 1.45;
+}}
+.todo-meta {{
+    grid-area: meta;
     display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    padding-left: 0;
+}}
+.todo-primary {{
+    grid-area: primary;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    column-gap: 0.6rem;
+    min-width: 0;
+}}
+.todo-project {{
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.todo-id {{
+    color: var(--accent-orange);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.todo-signal {{
+    display: inline-flex;
+    align-items: center;
+    min-width: 7.5rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.signal-refined {{
+    color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.12);
+}}
+.perfected-badge {{
+    color: #ffffff;
+    background: var(--accent-green);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}}
+.signal-linked {{
+    color: var(--accent);
+    background: rgba(88, 166, 255, 0.12);
+}}
+.signal-muted {{
+    color: var(--text-muted);
+    background: rgba(122, 138, 160, 0.12);
 }}
 .todo-list li::before {{
     content: "☐ ";
     color: var(--accent-orange);
-    flex-shrink: 0;
+    position: absolute;
+    top: 0.25rem;
+    left: 0;
 }}
 .todo-text {{
-    flex: 1;
+    min-width: 0;
+    max-width: 70ch;
+    overflow-wrap: anywhere;
 }}
 .done-btn {{
     flex-shrink: 0;
@@ -1176,6 +1263,33 @@ footer {{
 }}
 .offload-table tr:hover td {{
     background: rgba(210,153,34,0.05);
+}}
+.offload-table td:nth-child(3) {{
+    min-width: 0;
+    max-width: 70ch;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}}
+.offload-table .todo-signal {{
+    margin-right: 0.35rem;
+}}
+
+@media (max-width: 700px) {{
+    .container {{ padding: 1rem; }}
+    .todo-list li {{
+        grid-template-areas:
+            "primary"
+            "meta";
+    }}
+    .todo-meta {{ align-items: flex-start; }}
+    .todo-list li > .todo-signal {{
+        min-width: 0;
+        white-space: normal;
+    }}
+    .todo-primary {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .todo-text {{ max-width: none; }}
+    .offload-panel {{ padding: 1rem; overflow-x: hidden; }}
+    .offload-table {{ display: block; overflow-x: auto; }}
 }}
 
 {ROADMAP_STYLES}

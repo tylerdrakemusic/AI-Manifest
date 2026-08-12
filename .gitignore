@@ -108,6 +108,7 @@ brief_log.txt
 output/report.txt
 
 # Proof / QA screenshots (ephemeral QA artifacts — not committed to git)
+proof/
 proof/**/*.png
 proof/**/*.jpg
 proof/**/*.jpeg

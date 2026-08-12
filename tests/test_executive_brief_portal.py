@@ -10,10 +10,12 @@ Set PLAYWRIGHT_ENABLED=1 to run locally. Skipped in CI unless that env var is se
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 import threading
 from http.server import HTTPServer
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 
@@ -194,6 +196,112 @@ class TestNoConsoleErrors:
         page.wait_for_load_state("networkidle")
         # Static file:// pages don't make network requests — pass trivially
         assert failed == [], f"Failed requests: {failed}"
+
+
+# ---------------------------------------------------------------------------
+# Provenance signal rail fixture proof (FR-20260809-todo-provenance-signal-rail)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="class")
+def signal_rail_server(tmp_path_factory, monkeypatch_class):
+    """Serve the portal from an isolated DB containing all three signal states."""
+    import src.utils.todos_db as todos_db
+    from tools.executive_audio_brief import BriefRequestHandler
+
+    db_file = tmp_path_factory.mktemp("signal_rail_db") / "test_todos.db"
+    monkeypatch_class.setattr(todos_db, "DB_PATH", db_file)
+    todos_db.init_db()
+    with sqlite3.connect(db_file) as conn:
+        conn.executemany(
+            """
+            INSERT INTO todos
+                (id, project, source, text, done, created_at, priority,
+                 autonomy_level, fr_id, perfected_at)
+            VALUES (?, 'workspace', 'AI', ?, 0, ?, 9, 'supervised', ?, ?)
+            """,
+            [
+                (927, "Signal rail perfected only", "2026-08-10T00:00:00+00:00", None, "2026-08-10T01:00:00+00:00"),
+                (928, "Signal rail FR-linked only", "2026-08-10T00:01:00+00:00", "FR-20260809-todo-provenance-signal-rail", None),
+                (929, "Signal rail perfected and FR-linked", "2026-08-10T00:02:00+00:00", "FR-20260809-todo-provenance-signal-rail", "2026-08-10T02:00:00+00:00"),
+            ],
+        )
+        conn.commit()
+
+    BriefRequestHandler.portal_state = {"html": "", "voices": [], "audio_path": None}
+    server = HTTPServer(("127.0.0.1", 0), BriefRequestHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+    with urlopen(f"{base_url}/health", timeout=5) as response:
+        assert response.status == 200, "Signal rail server failed health preflight"
+
+    yield base_url
+
+    server.shutdown()
+    server.server_close()
+
+
+class TestProvenanceSignalRail:
+    """Running-portal proof for independent perfected and FR-linked signals."""
+
+    def test_signal_states_render_with_explicit_ids(self, browser, signal_rail_server) -> None:
+        """All three fixture rows render their independent provenance states."""
+        proof_dir = (
+            Path(__file__).resolve().parent.parent
+            / "proof/screenshots"
+        )
+        proof_dir.mkdir(parents=True, exist_ok=True)
+
+        page = browser.new_page()
+        try:
+            expected_states = {
+                927: {"PERFECTED", "Refined · perfect-scoped-td", "No FR link"},
+                928: {"Not perfected", "FR linked"},
+                929: {"PERFECTED", "Refined · perfect-scoped-td", "FR linked"},
+            }
+            viewports = {
+                "desktop": (1280, 900),
+                "mobile": (390, 844),
+            }
+            for viewport_name, viewport in viewports.items():
+                page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+                response = page.goto(f"{signal_rail_server}/")
+                assert response is not None and response.status == 200
+                page.wait_for_load_state("domcontentloaded")
+
+                rendered_ids = set(page.locator(".todo-id").all_text_contents())
+                assert {"TODO #927", "TODO #928", "TODO #929"} <= rendered_ids
+                assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+
+                for todo_id, expected_signals in expected_states.items():
+                    item = page.locator("li").filter(has_text=f"TODO #{todo_id}")
+                    assert item.count() == 1, f"Expected one rendered row for TODO #{todo_id}"
+                    assert set(item.locator(".todo-signal").all_text_contents()) == expected_signals
+                    primary = item.locator(":scope > .todo-primary")
+                    meta = item.locator(":scope > .todo-meta")
+                    assert primary.count() == 1 and meta.count() == 1
+                    assert item.locator(":scope > .todo-primary").evaluate(
+                        "primary => primary.nextElementSibling.classList.contains('todo-meta')"
+                    )
+                    assert (primary.text_content() or "").lstrip().startswith(
+                        f"Signal rail {('perfected only' if todo_id == 927 else 'FR-linked only' if todo_id == 928 else 'perfected and FR-linked')}"
+                    )
+                    done_button = item.locator("button.done-btn")
+                    assert done_button.count() == 1
+                    assert done_button.get_attribute("onclick") == f"markDone({todo_id}, this)"
+
+                    text = item.locator(".todo-text")
+                    box = text.bounding_box()
+                    assert box is not None and box["width"] > 0 and box["height"] > 0
+                    assert text.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+
+                page.screenshot(
+                    path=str(proof_dir / f"FR-20260809-todo-provenance-signal-rail-{viewport_name}.png"),
+                    full_page=True,
+                )
+        finally:
+            page.close()
 
 
 # ---------------------------------------------------------------------------

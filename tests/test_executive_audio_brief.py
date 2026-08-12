@@ -89,6 +89,176 @@ def test_gather_project_status_sorts_todos_by_priority() -> None:
         f"human_todos not sorted desc by priority: {[t['priority'] for t in human]}"
 
 
+def test_gather_project_status_summary_does_not_duplicate_visible_todos() -> None:
+    """Project summaries retain completion metrics without repeating TODO text."""
+    open_rows = _make_open_rows([
+        {"text": "Visible TODO text", "priority": 9, "autonomy_level": "supervised"},
+    ])
+    project = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace",
+        "root": Path(__file__).resolve().parent.parent,
+        "always_include": False, "priority_weight": 1,
+    }
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", return_value=open_rows),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[{"id": 99}]),
+    ):
+        from tools.executive_audio_brief import gather_project_status
+        status = gather_project_status(project)
+
+    assert status["summary"] == "⊕Workspace: 1 open tasks, 1 completed (50% done)."
+    assert "Top priorities:" not in status["summary"]
+    assert "Visible TODO text" not in status["summary"]
+
+
+def test_gather_project_status_preserves_provenance_fields_for_each_view_model() -> None:
+    """Every autonomy view model must retain identity and independent provenance fields."""
+    open_rows = [
+        {"id": 227, "text": "Perfected only", "priority": 9, "autonomy_level": "full", "source": "TYLER",
+         "fr_id": None, "perfected_at": "2026-08-09T00:00:00+00:00"},
+        {"id": 228, "text": "Linked only", "priority": 8, "autonomy_level": "supervised", "source": "AI",
+         "fr_id": "FR-20260809-example", "perfected_at": None},
+        {"id": 229, "text": "Both signals", "priority": 7, "autonomy_level": "human", "source": "SCAN",
+         "fr_id": "FR-20260809-example", "perfected_at": "2026-08-10T00:00:00+00:00"},
+    ]
+    project = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "root": Path("f:/⊕Workspace"),
+        "always_include": False, "priority_weight": 1,
+    }
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", return_value=open_rows),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[]),
+    ):
+        from tools.executive_audio_brief import gather_project_status
+        status = gather_project_status(project)
+
+    for view_name, todo_id in (("full_todos", 227), ("supervised_todos", 228), ("human_todos", 229)):
+        todo = status[view_name][0]
+        assert todo["id"] == todo_id
+        assert "fr_id" in todo
+        assert "perfected_at" in todo
+
+
+def test_status_card_renders_ids_and_independent_provenance_signals_without_changing_done_target() -> None:
+    from tools.executive_audio_brief import _status_card_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 3, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 227, "text": "Perfected only", "priority": 9, "source": "TYLER",
+             "fr_id": None, "perfected_at": "2026-08-09T00:00:00+00:00"},
+            {"id": 228, "text": "Linked only", "priority": 8, "source": "AI",
+             "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = _status_card_html(status, 1)
+
+    assert "TODO #227" in out
+    assert "TODO #228" in out
+    assert "PERFECTED" in out
+    assert "Refined · perfect-scoped-td" in out
+    assert "Not perfected" in out
+    assert "FR linked" in out
+    assert "No FR link" in out
+    assert 'onclick="markDone(227, this)"' in out
+    assert 'onclick="markDone(228, this)"' in out
+
+
+def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 1, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 229, "text": "A deliberately long TODO title that must remain readable", "priority": 9,
+             "source": "AI", "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = generate_portal_html([status], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    assert ".todo-list li {" in out
+    assert "grid-template-columns:" in out
+    assert ".todo-text {" in out
+    assert "min-width: 0;" in out
+    assert "overflow-wrap: anywhere;" in out
+    assert "line-height: 1.45;" in out
+    assert ".todo-signal {" in out
+    assert "min-width: 7.5rem;" in out
+
+
+def test_status_card_todo_rows_render_primary_text_before_metadata() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+        "active_tasks": 1, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [
+            {"id": 230, "text": "A readable primary TODO block", "priority": 9,
+             "source": "AI", "fr_id": "FR-20260809-example", "perfected_at": None},
+        ],
+        "human_todos": [],
+    }
+
+    out = generate_portal_html([status], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    primary_start = out.index('<div class="todo-primary">')
+    meta_start = out.index('<div class="todo-meta">')
+    assert primary_start < meta_start
+    assert '<div class="todo-meta">' in out and '<span class="todo-id">TODO #230</span>' in out
+    assert '<div class="todo-primary"><span class="todo-text">' in out
+    assert 'onclick="markDone(230, this)"' in out
+    assert ".todo-meta {" in out
+    assert ".todo-primary {" in out
+
+
+def test_status_card_todo_checkbox_has_a_stable_non_overlapping_gutter() -> None:
+    """The open-row marker must be anchored in a dedicated text gutter."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+            "sigil": "⊕",
+            "name": "Workspace",
+            "key": "workspace",
+            "summary": "Workspace summary.",
+            "active_tasks": 1,
+            "completed_tasks": 0,
+            "full_todos": [],
+            "supervised_todos": [{
+                "id": 231,
+                "text": "A readable task with a checkbox gutter",
+                "priority": 8,
+                "source": "TYLER",
+                "perfected_at": None,
+                "fr_id": None,
+            }],
+            "human_todos": [],
+    }
+
+    out = generate_portal_html(
+        [status],
+        "Brief script",
+        None,
+        [],
+        "2026-08-10T00:00:00+00:00",
+    )
+
+    assert "position: relative;" in out
+    assert "padding: 0.25rem 0 0.25rem 1.2rem;" in out
+    assert "left: 0;" in out
+    assert "padding-left: 0;" in out
+    assert 'grid-template-areas:\n        "primary"\n        "meta";' in out
+    assert "min-width: 0;" in out
+    assert "overflow-wrap: anywhere;" in out
+
+
 def test_generate_brief_script_covers_all_5_projects() -> None:
     """Fix 2: generate_brief_script must mention all 5 project names in the output."""
     from tools.executive_audio_brief import generate_brief_script
