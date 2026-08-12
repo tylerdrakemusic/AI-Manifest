@@ -207,17 +207,10 @@ def gather_project_status(project: dict) -> dict[str, Any]:
 
     total = status["active_tasks"] + status["completed_tasks"]
     pct = round(100 * status["completed_tasks"] / total) if total > 0 else 0
-    top_texts = (
-        [t["text"] for t in status["full_todos"][:2]]
-        + [t["text"] for t in status["supervised_todos"][:2]]
-        + [t["text"] for t in status["human_todos"][:1]]
-    )
     summary_lines = [
         f"{project['sigil']}{project['name']}: {status['active_tasks']} open tasks, "
         f"{status['completed_tasks']} completed ({pct}% done)."
     ]
-    if top_texts:
-        summary_lines.append("Top priorities: " + "; ".join(top_texts[:3]) + ".")
     status["summary"] = " ".join(summary_lines)
 
     return status
@@ -367,15 +360,15 @@ def _status_card_html(proj: dict, rank: int) -> str:
     def _todo_rows(todos: list, limit: int = 5) -> str:
         return "".join(
             f'<li>'
+            f'<div class="todo-primary">'
+            f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'</div>'
             f'<div class="todo-meta">'
             f'<span class="todo-project">{sigil}{name}</span>'
             f'{_priority_badge(t.get("priority", 5))}'
             f'{_todo_signal_html(t)}'
             f'<span class="source-tag">{html.escape(t.get("source", ""))}</span>'
-            f'</div>'
-            f'<div class="todo-primary">'
-            f'<span class="todo-text">{html.escape(t["text"])}</span>'
-            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
             f'</div>'
             f'</li>'
             for t in todos[:limit]
@@ -825,8 +818,8 @@ header .subtitle {{
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-        "meta"
-        "primary";
+        "primary"
+        "meta";
     row-gap: 0.35rem;
     line-height: 1.45;
 }}
@@ -1275,8 +1268,8 @@ footer {{
     .container {{ padding: 1rem; }}
     .todo-list li {{
         grid-template-areas:
-            "meta"
-            "primary";
+            "primary"
+            "meta";
     }}
     .todo-meta {{ align-items: flex-start; }}
     .todo-list li > .todo-signal {{

@@ -278,6 +278,15 @@ class TestProvenanceSignalRail:
                     item = page.locator("li").filter(has_text=f"TODO #{todo_id}")
                     assert item.count() == 1, f"Expected one rendered row for TODO #{todo_id}"
                     assert set(item.locator(".todo-signal").all_text_contents()) == expected_signals
+                    primary = item.locator(":scope > .todo-primary")
+                    meta = item.locator(":scope > .todo-meta")
+                    assert primary.count() == 1 and meta.count() == 1
+                    assert item.locator(":scope > .todo-primary").evaluate(
+                        "primary => primary.nextElementSibling.classList.contains('todo-meta')"
+                    )
+                    assert (primary.text_content() or "").lstrip().startswith(
+                        f"Signal rail {('perfected only' if todo_id == 927 else 'FR-linked only' if todo_id == 928 else 'perfected and FR-linked')}"
+                    )
                     done_button = item.locator("button.done-btn")
                     assert done_button.count() == 1
                     assert done_button.get_attribute("onclick") == f"markDone({todo_id}, this)"

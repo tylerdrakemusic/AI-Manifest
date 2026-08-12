@@ -93,3 +93,28 @@ QA is blocked at `FUNCTIONAL_QA` because the required running-UI criterion lacks
 ## Rerun Verdict
 
 All four acceptance criteria have PASS evidence for the repaired readability commit. Advance the FR to `ARCHITECTURE_REVIEW`.
+
+## Focused Follow-up QA - 2026-08-11
+
+**Decision:** PASS for the requested readability follow-up checks; no FR state transition performed.
+**Agent:** ⊕workspace-qa
+**Perf run:** `6185e601-78cb-48cd-922c-1bfae95ad6ce`
+
+| # | Requested check | Result | Evidence |
+|---|---|---|---|
+| 1 | Fresh Executive Audio Brief server preflight | PASS | Port 8200 was cleared, fresh worktree server PID 33240 started, and `/` returned HTTP 200. Server teardown completed after browser checks. |
+| 2 | Desktop `1280x900`: rendered TODO text precedes `.todo-meta`; `.todo-text` has positive readable bounds and no overflow | PASS | 24/24 live rows passed DOM order, positive bounding-box, and text overflow assertions; horizontal page overflow was false. |
+| 3 | Mobile `390x844`: same readability and ordering checks | PASS | 24/24 live rows passed DOM order, positive bounding-box, and text overflow assertions; document scroll width was exactly 390. |
+| 4 | Summary keeps completion stats and omits duplicate `Top priorities:` text | PASS | Live summary included open/completed percentage stats; `Top priorities:` was absent. |
+| 5 | TODO IDs, independent provenance signals, FR independence, and `markDone(id, this)` remain intact | PASS | Focused provenance fixture tests passed; live rows retained unique TODO IDs and exact `markDone(<id>, this)` handlers. |
+| 6 | Focused Python tests | PASS with unrelated suite caveat | Targeted subset: `6 passed, 32 deselected`. Broader focused suites: `37 passed, 1 failed`; the failure is existing `test_three_status_cards_rendered`, which expects 3 cards while the generated portal contains 6. |
+
+### Proof Artifacts
+
+- Desktop screenshot: [FR-20260809-todo-provenance-signal-rail-followup-desktop-1280x900.png](../screenshots/FR-20260809-todo-provenance-signal-rail-followup-desktop-1280x900.png)
+- Mobile screenshot: [FR-20260809-todo-provenance-signal-rail-followup-mobile-390x844.png](../screenshots/FR-20260809-todo-provenance-signal-rail-followup-mobile-390x844.png)
+- Proof IDs: `51b1adb96714`, `686872cb088f`, `0824524e8a79`, `2446c7231148`, `798fdb72fe41`
+
+### Scope
+
+No production code, database, or FR state was modified by QA. The only worktree changes observed besides the pre-existing readability refinement were the two proof screenshots and this report append. No merge was performed.

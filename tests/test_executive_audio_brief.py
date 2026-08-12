@@ -89,6 +89,28 @@ def test_gather_project_status_sorts_todos_by_priority() -> None:
         f"human_todos not sorted desc by priority: {[t['priority'] for t in human]}"
 
 
+def test_gather_project_status_summary_does_not_duplicate_visible_todos() -> None:
+    """Project summaries retain completion metrics without repeating TODO text."""
+    open_rows = _make_open_rows([
+        {"text": "Visible TODO text", "priority": 9, "autonomy_level": "supervised"},
+    ])
+    project = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace",
+        "root": Path("f:/⊕Workspace"), "always_include": False, "priority_weight": 1,
+    }
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", return_value=open_rows),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[{"id": 99}]),
+    ):
+        from tools.executive_audio_brief import gather_project_status
+        status = gather_project_status(project)
+
+    assert status["summary"] == "⊕Workspace: 1 open tasks, 1 completed (50% done)."
+    assert "Top priorities:" not in status["summary"]
+    assert "Visible TODO text" not in status["summary"]
+
+
 def test_gather_project_status_preserves_provenance_fields_for_each_view_model() -> None:
     """Every autonomy view model must retain identity and independent provenance fields."""
     open_rows = [
@@ -170,7 +192,7 @@ def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> 
     assert "min-width: 7.5rem;" in out
 
 
-def test_status_card_todo_rows_group_metadata_and_primary_text_block() -> None:
+def test_status_card_todo_rows_render_primary_text_before_metadata() -> None:
     from tools.executive_audio_brief import generate_portal_html
 
     status = {
@@ -185,14 +207,17 @@ def test_status_card_todo_rows_group_metadata_and_primary_text_block() -> None:
 
     out = generate_portal_html([status], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
 
-    assert '<div class="todo-meta">' in out
-    assert '<div class="todo-primary">' in out
+    primary_start = out.index('<div class="todo-primary">')
+    meta_start = out.index('<div class="todo-meta">')
+    assert primary_start < meta_start
     assert '<div class="todo-meta">' in out and '<span class="todo-id">TODO #230</span>' in out
     assert '<div class="todo-primary"><span class="todo-text">' in out
+    assert 'onclick="markDone(230, this)"' in out
     assert ".todo-meta {" in out
     assert ".todo-primary {" in out
-    assert "grid-template-columns: minmax(0, 1fr) auto;" in out
-    assert 'grid-template-areas:\n        "meta"\n        "primary";' in out
+    assert 'grid-template-areas:\n        "primary"\n        "meta";' in out
+    assert "min-width: 0;" in out
+    assert "overflow-wrap: anywhere;" in out
 
 
 def test_generate_brief_script_covers_all_5_projects() -> None:
