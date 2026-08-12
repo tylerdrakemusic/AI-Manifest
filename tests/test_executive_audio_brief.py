@@ -159,6 +159,7 @@ def test_status_card_renders_ids_and_independent_provenance_signals_without_chan
 
     assert "TODO #227" in out
     assert "TODO #228" in out
+    assert "PERFECTED" in out
     assert "Refined · perfect-scoped-td" in out
     assert "Not perfected" in out
     assert "FR linked" in out
@@ -215,6 +216,43 @@ def test_status_card_todo_rows_render_primary_text_before_metadata() -> None:
     assert 'onclick="markDone(230, this)"' in out
     assert ".todo-meta {" in out
     assert ".todo-primary {" in out
+
+
+def test_status_card_todo_checkbox_has_a_stable_non_overlapping_gutter() -> None:
+    """The open-row marker must be anchored in a dedicated text gutter."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = {
+            "sigil": "⊕",
+            "name": "Workspace",
+            "key": "workspace",
+            "summary": "Workspace summary.",
+            "active_tasks": 1,
+            "completed_tasks": 0,
+            "full_todos": [],
+            "supervised_todos": [{
+                "id": 231,
+                "text": "A readable task with a checkbox gutter",
+                "priority": 8,
+                "source": "TYLER",
+                "perfected_at": None,
+                "fr_id": None,
+            }],
+            "human_todos": [],
+    }
+
+    out = generate_portal_html(
+        [status],
+        "Brief script",
+        None,
+        [],
+        "2026-08-10T00:00:00+00:00",
+    )
+
+    assert "position: relative;" in out
+    assert "padding: 0.25rem 0 0.25rem 1.2rem;" in out
+    assert "left: 0;" in out
+    assert "padding-left: 0;" in out
     assert 'grid-template-areas:\n        "primary"\n        "meta";' in out
     assert "min-width: 0;" in out
     assert "overflow-wrap: anywhere;" in out

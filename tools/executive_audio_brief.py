@@ -338,6 +338,9 @@ def _todo_signal_html(todo: dict[str, Any]) -> str:
     linked_class = "signal-linked" if linked else "signal-muted"
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'<span class="todo-signal perfected-badge">PERFECTED</span>' if perfected else
+        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+    ) + (
         f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
     )
@@ -812,7 +815,8 @@ header .subtitle {{
 }}
 .todo-list li {{
     font-size: 0.85rem;
-    padding: 0.25rem 0;
+    position: relative;
+    padding: 0.25rem 0 0.25rem 1.2rem;
     border-bottom: 1px solid var(--border);
     color: var(--text);
     display: grid;
@@ -830,7 +834,7 @@ header .subtitle {{
     align-items: center;
     gap: 0.35rem;
     min-width: 0;
-    padding-left: 1.2rem;
+    padding-left: 0;
 }}
 .todo-primary {{
     grid-area: primary;
@@ -866,6 +870,11 @@ header .subtitle {{
     color: var(--accent-green);
     background: rgba(63, 185, 80, 0.12);
 }}
+.perfected-badge {{
+    color: #ffffff;
+    background: var(--accent-green);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}}
 .signal-linked {{
     color: var(--accent);
     background: rgba(88, 166, 255, 0.12);
@@ -878,7 +887,8 @@ header .subtitle {{
     content: "☐ ";
     color: var(--accent-orange);
     position: absolute;
-    margin-top: 0.25rem;
+    top: 0.25rem;
+    left: 0;
 }}
 .todo-text {{
     min-width: 0;
