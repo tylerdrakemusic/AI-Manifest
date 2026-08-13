@@ -452,3 +452,37 @@ def test_generate_portal_html_still_renders_when_regen_fails() -> None:
 
     assert 'id="tab-roadmap"' in out
     assert "No roadmap data" in out
+
+
+def test_open_todo_surfaces_render_accessible_done_and_cancel_controls() -> None:
+    """Card and fully-offloadable rows expose both terminal actions."""
+    from tools.executive_audio_brief import _offload_panel_html, _status_card_html
+
+    card = _status_card_html({
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
+        "active_tasks": 1, "completed_tasks": 0,
+        "supervised_todos": [{"id": 301, "text": "Card task", "priority": 7}],
+        "human_todos": [], "full_todos": [],
+    }, 1)
+    offload = _offload_panel_html([{
+        "sigil": "⊕", "name": "Workspace",
+        "full_todos": [{"id": 302, "text": "Offload task", "priority": 8}],
+    }])
+
+    for output, todo_id in ((card, 301), (offload, 302)):
+        assert f' onclick="markDone({todo_id}, this)"' in output or f" onclick=\"markDone({todo_id}, this)\"" in output
+        assert f'cancelTodo({todo_id}, this)' in output
+        assert f'aria-label="Mark TODO #{todo_id} done"' in output or f"aria-label='Mark TODO #{todo_id} done'" in output
+        assert f'aria-label="Cancel TODO #{todo_id}"' in output or f"aria-label='Cancel TODO #{todo_id}'" in output
+
+
+def test_portal_script_confirms_cancellation_and_posts_to_dedicated_api() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    status = _minimal_status("⊕", "Workspace", "workspace")
+    status["supervised_todos"] = [{"id": 303, "text": "Confirm me", "priority": 5}]
+    with patch("tools.executive_audio_brief._regenerate_roadmap_data"):
+        out = generate_portal_html([status], "script", None, [], "2026-06-30 00:00:00")
+
+    assert "window.confirm('Cancel this todo?')" in out
+    assert "fetch('/api/todo/cancel'" in out

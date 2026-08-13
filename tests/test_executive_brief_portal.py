@@ -378,6 +378,17 @@ class TestCheckmarkLiveServer:
         finally:
             _m.DB_PATH = orig
 
+    def _closure_reason(self, db_file: Path, todo_id: int) -> str | None:
+        import src.utils.todos_db as todos_db
+        import src.utils.todos_db as _m
+        orig = _m.DB_PATH
+        _m.DB_PATH = db_file
+        try:
+            row = todos_db.get_todo_by_id(todo_id)
+            return row["closure_reason"] if row else None
+        finally:
+            _m.DB_PATH = orig
+
     def test_checkmark_card_list_item_removed_from_dom(self, live_server, live_page) -> None:
         """Clicking ✓ on a card-list <li> todo removes it from the DOM (no JS error)."""
         base_url, db_file = live_server
@@ -444,3 +455,53 @@ class TestCheckmarkLiveServer:
             f".offload-panel button.done-btn[onclick*='markDone({todo_id},']"
         ).count()
         assert remaining_in_offload == 0, f"Offload panel row for todo {todo_id} not removed from DOM"
+
+    def test_cancel_card_requires_confirmation_and_removes_row(self, live_server, live_page) -> None:
+        """Accepting card cancellation removes the row and persists cancelled."""
+        base_url, db_file = live_server
+        todo_id = self._insert_temp_todo(db_file, project="workspace", text="Cancel card item")
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        btn = live_page.locator(f".status-card button.cancel-btn[onclick*='cancelTodo({todo_id},']").first
+        assert btn.get_attribute("title") == "Cancel todo"
+        assert btn.get_attribute("aria-label") == f"Cancel TODO #{todo_id}"
+        live_page.once("dialog", lambda dialog: dialog.accept())
+        btn.click()
+        live_page.wait_for_timeout(600)
+
+        assert live_page.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
+        assert self._closure_reason(db_file, todo_id) == "cancelled"
+
+    def test_cancel_reject_keeps_card_open(self, live_server, live_page) -> None:
+        """Rejecting the cancellation confirmation leaves the row open."""
+        base_url, db_file = live_server
+        todo_id = self._insert_temp_todo(db_file, project="workspace", text="Keep card item")
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        btn = live_page.locator(f".status-card button.cancel-btn[onclick*='cancelTodo({todo_id},']").first
+        live_page.once("dialog", lambda dialog: dialog.dismiss())
+        btn.click()
+        live_page.wait_for_timeout(100)
+
+        assert live_page.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 1
+        assert not self._is_done(db_file, todo_id)
+
+    def test_cancel_offload_row_removes_table_row(self, live_server, live_page) -> None:
+        """Accepting offload-table cancellation removes the table row and persists cancelled."""
+        base_url, db_file = live_server
+        todo_id = self._insert_temp_todo(
+            db_file, project="workspace", text="Cancel offload item", autonomy_level="full"
+        )
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+
+        btn = live_page.locator(f".offload-panel button.cancel-btn[onclick*='cancelTodo({todo_id},']").first
+        assert btn.get_attribute("aria-label") == f"Cancel TODO #{todo_id}"
+        live_page.once("dialog", lambda dialog: dialog.accept())
+        btn.click()
+        live_page.wait_for_timeout(600)
+
+        assert live_page.locator(f".offload-panel button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
+        assert self._closure_reason(db_file, todo_id) == "cancelled"

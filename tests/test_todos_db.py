@@ -178,6 +178,28 @@ def test_mark_done_sets_closed_at(tmp_db: Path) -> None:
     assert done[0]["closed_at"] is not None
 
 
+def test_mark_done_records_completed_closure_reason(tmp_db: Path) -> None:
+    import src.utils.todos_db as todos_db
+    row_id = todos_db.insert_todo("quantum", "AI", "Record completion reason")
+
+    assert todos_db.mark_done(row_id) is True
+
+    done = todos_db.get_done_todos()
+    assert done[0]["closure_reason"] == "completed"
+
+
+def test_cancel_todo_records_cancelled_closure_reason(tmp_db: Path) -> None:
+    import src.utils.todos_db as todos_db
+    row_id = todos_db.insert_todo("quantum", "AI", "Cancel me")
+
+    assert todos_db.cancel_todo(row_id) is True
+
+    cancelled = todos_db.get_done_todos()
+    assert cancelled[0]["done"] == 1
+    assert cancelled[0]["closed_at"] is not None
+    assert cancelled[0]["closure_reason"] == "cancelled"
+
+
 def test_mark_done_already_done_returns_false(tmp_db: Path) -> None:
     import src.utils.todos_db as todos_db
     row_id = todos_db.insert_todo("workspace", "AI", "Close twice")

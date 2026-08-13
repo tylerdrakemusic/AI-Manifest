@@ -63,7 +63,7 @@ from src.utils.roadmap_panel import (
     TAB_NAV_SCRIPT,
 )
 from src.utils.todos_db import (
-    init_db, get_open_todos, get_done_todos, mark_done, get_todo_by_id,
+    init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, get_todo_by_id,
     add_todo, update_priority, get_open_todos_by_autonomy,
 )
 from src.utils.priority_scorer import score_priority
@@ -365,7 +365,10 @@ def _status_card_html(proj: dict, rank: int) -> str:
             f'<li>'
             f'<div class="todo-primary">'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
-            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done">✓</button>'
+            f'<span class="todo-actions">'
+            f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done" aria-label="Mark TODO #{t["id"]} done">✓</button>'
+            f'<button class="cancel-btn" onclick="cancelTodo({t["id"]}, this)" title="Cancel todo" aria-label="Cancel TODO #{t["id"]}">×</button>'
+            f'</span>'
             f'</div>'
             f'<div class="todo-meta">'
             f'<span class="todo-project">{sigil}{name}</span>'
@@ -463,7 +466,10 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
         f"<td>{r['project']}</td>"
         f"<td>{_todo_signal_html(r)} <span class='todo-text'>{html.escape(r['text'])}</span>"
         f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
-        f"<td><button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done'>✓</button></td>"
+        f"<td><span class='todo-actions'>"
+        f"<button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done' aria-label='Mark TODO #{r['id']} done'>✓</button>"
+        f"<button class='cancel-btn' onclick=\"cancelTodo({r['id']}, this)\" title='Cancel todo' aria-label='Cancel TODO #{r['id']}'>×</button>"
+        f"</span></td>"
         f"</tr>"
         for r in rows
     )
@@ -1487,6 +1493,41 @@ async function markDone(todoId, btnEl) {{
     }}
 }}
 
+async function cancelTodo(todoId, btnEl) {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
+    if (!window.confirm('Cancel this todo?')) return;
+    btnEl.disabled = true;
+    try {{
+        const resp = await fetch('/api/todo/cancel', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{id: todoId}})
+        }});
+        const row = btnEl.closest('li') || btnEl.closest('tr');
+        const card = row ? row.closest('.status-card') : null;
+        if (resp.ok) {{
+            if (row) {{
+                row.style.transition = 'opacity 0.3s';
+                row.style.opacity = '0';
+                setTimeout(() => {{
+                    row.remove();
+                    _updateProgressBar(card);
+                }}, 300);
+            }}
+        }} else if (resp.status === 409) {{
+            btnEl.style.display = 'none';
+            _inlineMsg(row, 'Already closed', 'var(--accent-green)');
+        }} else {{
+            btnEl.style.display = 'none';
+            _inlineMsg(row, 'Not found', 'var(--text-muted)');
+        }}
+    }} catch(e) {{
+        btnEl.disabled = false;
+        const row = btnEl.closest('li') || btnEl.closest('tr');
+        _inlineMsg(row, 'Error: ' + e.message, 'var(--accent-red)');
+    }}
+}}
+
 async function refreshStatus() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
@@ -1659,6 +1700,8 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self._handle_refresh()
         elif self.path == "/api/todo/done":
             self._handle_todo_done()
+        elif self.path == "/api/todo/cancel":
+            self._handle_todo_cancel()
         elif self.path == "/api/todos/add":
             self._handle_todos_add()
         elif self.path == "/api/todos/priority":
@@ -1781,6 +1824,41 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"ok": false, "error": "not found or already done"}')
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(str(e).encode("utf-8"))
+
+    def _handle_todo_cancel(self) -> None:
+        """POST /api/todo/cancel — close a single todo as cancelled."""
+        try:
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len))
+            todo_id = int(body["id"])
+
+            todo = get_todo_by_id(todo_id)
+            if todo is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "todo not found"}')
+                return
+
+            if todo["done"] == 1:
+                self.send_response(409)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "already closed"}')
+                return
+
+            if cancel_todo(todo_id):
+                self._serve_json({"ok": True})
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok": false, "error": "not found or already closed"}')
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")

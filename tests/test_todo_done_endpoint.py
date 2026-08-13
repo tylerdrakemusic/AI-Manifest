@@ -123,3 +123,21 @@ class TestTodoDoneEndpoint:
 
         assert status == 404
         assert body.get("ok") is False
+
+
+class TestTodoCancelEndpoint:
+    def test_cancel_persists_terminal_outcome(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """POST /api/todo/cancel closes an open todo as cancelled."""
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        row_id = todos_db.insert_todo("music", "AI", "Cancel through API")
+
+        status, body = _post_json(f"{todo_server}/api/todo/cancel", {"id": row_id})
+
+        assert status == 200
+        assert body.get("ok") is True
+        row = todos_db.get_todo_by_id(row_id)
+        assert row is not None
+        assert row["done"] == 1
+        assert row["closure_reason"] == "cancelled"
+        assert row["closed_at"] is not None
