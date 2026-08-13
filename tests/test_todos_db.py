@@ -78,6 +78,55 @@ def test_init_db_adds_nullable_perfected_at_without_losing_existing_identity(tmp
     assert tuple(row) == (227, "FR-20260809-todo-provenance-signal-rail", None)
 
 
+def test_init_db_preserves_closure_reason_during_scan_source_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.utils.todos_db as todos_db
+
+    db_file = tmp_path / "legacy_cancelled_todos.db"
+    monkeypatch.setattr(todos_db, "DB_PATH", db_file)
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("""
+            CREATE TABLE todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('AI', 'TYLER')),
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                closed_at TEXT,
+                closure_reason TEXT CHECK(closure_reason IN ('completed', 'cancelled', 'stale')),
+                priority INTEGER NOT NULL DEFAULT 5
+            )
+        """)
+        conn.execute(
+            """
+            INSERT INTO todos
+                (id, project, source, text, done, created_at, closed_at, closure_reason)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (
+                314,
+                "workspace",
+                "TYLER",
+                "Preserve cancellation history",
+                "2026-08-11T00:00:00+00:00",
+                "2026-08-11T01:00:00+00:00",
+                "cancelled",
+            ),
+        )
+
+    todos_db.init_db()
+
+    with todos_db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT done, closed_at, closure_reason FROM todos WHERE id=314"
+        ).fetchone()
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'"
+        ).fetchone()[0]
+    assert tuple(row) == (1, "2026-08-11T01:00:00+00:00", "cancelled")
+    assert "'SCAN'" in table_sql
+
+
 # ---------------------------------------------------------------------------
 # insert_todo
 # ---------------------------------------------------------------------------

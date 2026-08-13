@@ -97,6 +97,7 @@ def _table_allows_scan_source(conn: sqlite3.Connection) -> bool:
 
 def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
     # Rebuild the table because SQLite cannot ALTER an existing CHECK constraint.
+    closure_reason_expression = "closure_reason" if _has_column(conn, "todos", "closure_reason") else "NULL"
     conn.execute("BEGIN")
     try:
         conn.execute("""
@@ -116,9 +117,9 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
         """)
         conn.execute("""
             INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at)
-            SELECT id, project, source, text, done, created_at, closed_at, NULL, priority, fr_id, perfected_at
+            SELECT id, project, source, text, done, created_at, closed_at, {closure_reason_expression}, priority, fr_id, perfected_at
             FROM todos
-        """)
+        """.format(closure_reason_expression=closure_reason_expression))
         conn.execute("DROP TABLE todos")
         conn.execute("ALTER TABLE todos_new RENAME TO todos")
         conn.execute("""
