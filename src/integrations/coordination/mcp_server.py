@@ -14,7 +14,11 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.utils import todos_db
 
-_ALLOWED_OPERATIONS = frozenset({"todo.list_open", "todo.link_fr"})
+_ALLOWED_OPERATIONS = frozenset({
+    "todo.list_open", "todo.link_fr", "todo.link_prerequisite",
+    "todo.required", "todo.required_by", "todo.readiness",
+    "todo.related", "todo.fr_links", "todo.decompose",
+})
 _FORBIDDEN_ARGUMENTS = frozenset({"db", "sql"})
 
 
@@ -36,14 +40,39 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
     allowed_fields = {
         "todo.list_open": {"project"},
         "todo.link_fr": {"todo_id", "fr_id", "confirmed"},
+        "todo.link_prerequisite": {"todo_id", "prerequisite_id", "allowed_terminal_states", "confirmed"},
+        "todo.required": {"todo_id"},
+        "todo.required_by": {"todo_id"},
+        "todo.readiness": {"todo_id"},
+        "todo.related": {"todo_id"},
+        "todo.fr_links": {"todo_id"},
+        "todo.decompose": {"parent_id", "children", "confirmed"},
     }[operation]
     if set(payload) - allowed_fields:
         raise ValueError("unexpected arguments for todo operation")
     if operation == "todo.list_open":
         return todos_db.get_open_todos(payload.get("project"))
-    return link_todo_to_fr(
-        payload["todo_id"], payload["fr_id"], payload.get("confirmed", False)
-    )
+    if operation == "todo.link_fr":
+        return link_todo_to_fr(payload["todo_id"], payload["fr_id"], payload.get("confirmed", False))
+    if operation == "todo.link_prerequisite":
+        if payload.get("confirmed") is not True:
+            raise PermissionError("confirmation is required before linking a prerequisite")
+        return todos_db.link_prerequisite(
+            payload["todo_id"], payload["prerequisite_id"], payload.get("allowed_terminal_states")
+        )
+    if operation == "todo.required":
+        return todos_db.get_required_todos(payload["todo_id"])
+    if operation == "todo.required_by":
+        return todos_db.get_required_by_todos(payload["todo_id"])
+    if operation == "todo.readiness":
+        return todos_db.get_readiness(payload["todo_id"])
+    if operation == "todo.related":
+        return todos_db.get_related_todos(payload["todo_id"])
+    if operation == "todo.fr_links":
+        return todos_db.get_todo_fr_links(payload["todo_id"])
+    if payload.get("confirmed") is not True:
+        raise PermissionError("confirmation is required before decomposing a todo")
+    return todos_db.decompose_todo(payload["parent_id"], payload["children"])
 
 
 mcp = FastMCP(
@@ -68,6 +97,28 @@ def link_confirmed_todo_to_fr(todo_id: int, fr_id: str, confirmed: bool = False)
         "todo.link_fr",
         {"todo_id": todo_id, "fr_id": fr_id, "confirmed": confirmed},
     )
+
+
+@mcp.tool()
+def link_confirmed_prerequisite(
+    todo_id: int,
+    prerequisite_id: int,
+    allowed_terminal_states: list[str] | None = None,
+    confirmed: bool = False,
+) -> bool:
+    """Add a prerequisite edge after explicit confirmation."""
+    return invoke_todo_operation("todo.link_prerequisite", {
+        "todo_id": todo_id,
+        "prerequisite_id": prerequisite_id,
+        "allowed_terminal_states": allowed_terminal_states,
+        "confirmed": confirmed,
+    })
+
+
+@mcp.tool()
+def todo_readiness(todo_id: int) -> dict[str, Any]:
+    """Explain whether a manifest todo is ready for completion."""
+    return invoke_todo_operation("todo.readiness", {"todo_id": todo_id})
 
 
 if __name__ == "__main__":

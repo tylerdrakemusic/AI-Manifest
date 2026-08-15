@@ -124,6 +124,20 @@ class TestTodoDoneEndpoint:
         assert status == 404
         assert body.get("ok") is False
 
+    def test_returns_409_with_blocking_explanation(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A prerequisite-blocked completion is a conflict, not a missing todo."""
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        prerequisite = todos_db.insert_todo("music", "AI", "Pending approval")
+        dependent = todos_db.insert_todo("music", "AI", "Publish approval")
+        todos_db.link_prerequisite(dependent, prerequisite)
+
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": dependent})
+
+        assert status == 409
+        assert body.get("ok") is False
+        assert "Pending approval" in body.get("error", "")
+
 
 class TestTodoCancelEndpoint:
     def test_cancel_persists_terminal_outcome(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:

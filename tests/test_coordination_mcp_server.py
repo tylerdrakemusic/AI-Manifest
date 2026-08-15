@@ -8,10 +8,12 @@ from pathlib import Path
 
 @pytest.fixture()
 def tmp_db(tmp_path, monkeypatch):
+    from src.integrations.coordination import mcp_server
     from src.utils import todos_db
 
     db_file = tmp_path / "todos.db"
     monkeypatch.setattr(todos_db, "DB_PATH", db_file)
+    monkeypatch.setattr(mcp_server, "_REPO_ROOT", tmp_path)
     todos_db.init_db()
     return db_file
 
@@ -141,3 +143,32 @@ def test_list_open_todos_initializes_canonical_db_in_fresh_worktree(tmp_path, mo
             "SELECT name FROM sqlite_master WHERE type='table' AND name='todos'"
         ).fetchone()
     assert table is not None
+
+
+def test_mcp_graph_read_operations_are_allowlisted(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    prerequisite = todos_db.insert_todo("life", "AI", "Graph prerequisite")
+    dependent = todos_db.insert_todo("workspace", "AI", "Graph dependent")
+    assert mcp_server.invoke_todo_operation(
+        "todo.link_prerequisite",
+        {"todo_id": dependent, "prerequisite_id": prerequisite, "confirmed": True},
+    ) is True
+    result = mcp_server.invoke_todo_operation("todo.readiness", {"todo_id": dependent})
+    assert result["ready"] is False
+    assert mcp_server.invoke_todo_operation("todo.related", {"todo_id": dependent})[0]["id"] == prerequisite
+    assert mcp_server.invoke_todo_operation("todo.fr_links", {"todo_id": dependent}) == []
+
+
+def test_mcp_graph_mutations_require_confirmation(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    prerequisite = todos_db.insert_todo("life", "AI", "Needs approval")
+    dependent = todos_db.insert_todo("workspace", "AI", "Wait for approval")
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.invoke_todo_operation(
+            "todo.link_prerequisite",
+            {"todo_id": dependent, "prerequisite_id": prerequisite},
+        )
