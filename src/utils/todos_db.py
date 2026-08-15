@@ -15,6 +15,7 @@ todos(id, project, source, text, done, created_at, closed_at, closure_reason, pe
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
 FR_ID_PATTERN = re.compile(r"^FR-\d{8}-[a-z0-9][a-z0-9-]*$")
+TERMINAL_STATES = frozenset({"completed", "cancelled", "stale"})
+DEFAULT_TERMINAL_STATES = TERMINAL_STATES
 
 
 def resolve_worktree_db_path(start: Path, max_levels: int = 5) -> Path | None:
@@ -98,6 +101,8 @@ def _table_allows_scan_source(conn: sqlite3.Connection) -> bool:
 def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
     # Rebuild the table because SQLite cannot ALTER an existing CHECK constraint.
     closure_reason_expression = "closure_reason" if _has_column(conn, "todos", "closure_reason") else "NULL"
+    parent_expression = "parent_id" if _has_column(conn, "todos", "parent_id") else "NULL"
+    dependencies_expression = "dependencies" if _has_column(conn, "todos", "dependencies") else "NULL"
     conn.execute("BEGIN")
     try:
         conn.execute("""
@@ -112,14 +117,20 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 closure_reason TEXT CHECK(closure_reason IN ('completed', 'cancelled', 'stale')),
                 priority   INTEGER NOT NULL DEFAULT 5,
                 fr_id      TEXT,
-                perfected_at TEXT
+                perfected_at TEXT,
+                parent_id INTEGER,
+                dependencies TEXT
             )
         """)
         conn.execute("""
-            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at)
-            SELECT id, project, source, text, done, created_at, closed_at, {closure_reason_expression}, priority, fr_id, perfected_at
+            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at, parent_id, dependencies)
+            SELECT id, project, source, text, done, created_at, closed_at, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}
             FROM todos
-        """.format(closure_reason_expression=closure_reason_expression))
+        """.format(
+            closure_reason_expression=closure_reason_expression,
+            parent_expression=parent_expression,
+            dependencies_expression=dependencies_expression,
+        ))
         conn.execute("DROP TABLE todos")
         conn.execute("ALTER TABLE todos_new RENAME TO todos")
         conn.execute("""
@@ -130,6 +141,29 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
     except Exception:
         conn.rollback()
         raise
+
+
+def _create_graph_schema(conn: sqlite3.Connection) -> None:
+    """Create normalized prerequisite and FR-link tables."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS todo_prerequisites (
+            todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+            prerequisite_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+            allowed_terminal_states TEXT NOT NULL DEFAULT '["completed", "cancelled", "stale"]',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (todo_id, prerequisite_id),
+            CHECK(todo_id <> prerequisite_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS todo_fr_links (
+            todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+            fr_id TEXT NOT NULL,
+            confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0, 1)),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (todo_id, fr_id)
+        )
+    """)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -224,6 +258,11 @@ def init_db() -> None:
             if not _has_column(conn, "todos", _col):
                 conn.execute(f"ALTER TABLE todos ADD COLUMN {_col} TEXT")  # nosec B608 — col name is a hardcoded literal
 
+        if not _has_column(conn, "todos", "parent_id"):
+            conn.execute("ALTER TABLE todos ADD COLUMN parent_id INTEGER")
+
+        _create_graph_schema(conn)
+
         conn.commit()
 
 
@@ -271,6 +310,8 @@ def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
 def mark_done(todo_id: int) -> bool:
     """Flip done=1 and set closed_at for a single todo. Returns True on success."""
     closed_at = datetime.now(timezone.utc).isoformat()
+    if not can_complete_todo(todo_id)["ready"]:
+        return False
     with get_connection() as conn:
         cur = conn.execute(
             "UPDATE todos SET done=1, closed_at=?, closure_reason='completed'"
@@ -305,6 +346,7 @@ def add_todo(
     context_snapshot: str | None = None,
     estimated_effort: str | None = None,
     dependencies: str | None = None,
+    parent_id: int | None = None,
 ) -> int:
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
     project = _normalize_project(project)
@@ -319,12 +361,12 @@ def add_todo(
         cur = conn.execute(
             "INSERT INTO todos"
             " (project, source, text, done, created_at, priority, autonomy_level,"
-            "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 project, source, text, created_at, priority, autonomy_level,
                 rationale, implementation_hints, context_snapshot,
-                estimated_effort, dependencies,
+                estimated_effort, dependencies, parent_id,
             ),
         )
         conn.commit()
@@ -359,6 +401,193 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _terminal_policy(states: Iterable[str] | None) -> list[str]:
+    policy = DEFAULT_TERMINAL_STATES if states is None else frozenset(states)
+    if not policy or not policy.issubset(TERMINAL_STATES):
+        raise ValueError(f"allowed terminal states must be a non-empty subset of {sorted(TERMINAL_STATES)!r}")
+    return sorted(policy)
+
+
+def link_prerequisite(
+    todo_id: int,
+    prerequisite_id: int,
+    allowed_terminal_states: Iterable[str] | None = None,
+) -> bool:
+    """Atomically add a prerequisite edge, rejecting cycles."""
+    policy = _terminal_policy(allowed_terminal_states)
+    if todo_id == prerequisite_id:
+        raise ValueError("prerequisite cycle rejected")
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            exists = conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE id IN (?, ?)",
+                (todo_id, prerequisite_id),
+            ).fetchone()[0]
+            if exists != 2:
+                raise ValueError("todo and prerequisite must exist")
+            reaches_dependent = conn.execute(
+                """
+                WITH RECURSIVE reachable(id) AS (
+                    SELECT prerequisite_id FROM todo_prerequisites WHERE todo_id=?
+                    UNION
+                    SELECT edge.prerequisite_id
+                    FROM todo_prerequisites edge JOIN reachable ON edge.todo_id=reachable.id
+                )
+                SELECT 1 FROM reachable WHERE id=?
+                """,
+                (prerequisite_id, todo_id),
+            ).fetchone()
+            if reaches_dependent:
+                raise ValueError("prerequisite cycle rejected")
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO todo_prerequisites
+                    (todo_id, prerequisite_id, allowed_terminal_states, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (todo_id, prerequisite_id, json.dumps(policy), datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            return cur.rowcount == 1
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def _graph_rows(sql: str, todo_id: int) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(sql, (todo_id,)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["allowed_terminal_states"] = json.loads(item.pop("_policy"))
+        result.append(item)
+    return result
+
+
+def get_required_todos(todo_id: int) -> list[dict[str, Any]]:
+    """Return direct prerequisites for a todo, including edge policies."""
+    return _graph_rows(
+        """
+        SELECT prerequisite.*, edge.allowed_terminal_states AS _policy
+        FROM todo_prerequisites edge JOIN todos prerequisite ON prerequisite.id=edge.prerequisite_id
+        WHERE edge.todo_id=? ORDER BY prerequisite.id
+        """,
+        todo_id,
+    )
+
+
+def get_required_by_todos(todo_id: int) -> list[dict[str, Any]]:
+    """Return direct todos that require the supplied todo."""
+    return _graph_rows(
+        """
+        SELECT dependent.*, edge.allowed_terminal_states AS _policy
+        FROM todo_prerequisites edge JOIN todos dependent ON dependent.id=edge.todo_id
+        WHERE edge.prerequisite_id=? ORDER BY dependent.id
+        """,
+        todo_id,
+    )
+
+
+def get_todo_fr_links(todo_id: int) -> list[dict[str, Any]]:
+    """Return confirmed normalized FR links for a todo."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT todo_id, fr_id, confirmed, created_at FROM todo_fr_links WHERE todo_id=? ORDER BY fr_id",
+            (todo_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_related_todos(todo_id: int) -> list[dict[str, Any]]:
+    """Return prerequisite and dependent todos, preserving cross-project context."""
+    prerequisites = get_required_todos(todo_id)
+    dependents = get_required_by_todos(todo_id)
+    seen: set[int] = set()
+    related: list[dict[str, Any]] = []
+    for row in prerequisites + dependents:
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            related.append(row)
+    return related
+
+
+def get_readiness(todo_id: int) -> dict[str, Any]:
+    """Explain whether every prerequisite satisfies its edge policy."""
+    todo = get_todo_by_id(todo_id)
+    if todo is None:
+        return {"ready": False, "blocking": [], "explanation": "todo not found"}
+    blocking = []
+    for prerequisite in get_required_todos(todo_id):
+        if prerequisite["closure_reason"] not in prerequisite["allowed_terminal_states"]:
+            blocking.append(prerequisite)
+    explanation = "ready" if not blocking else "blocked by: " + ", ".join(
+        item["text"] for item in blocking
+    )
+    return {"ready": not blocking, "blocking": blocking, "explanation": explanation}
+
+
+def can_complete_todo(todo_id: int) -> dict[str, Any]:
+    """Return the shared completion-guard result for a todo."""
+    readiness = get_readiness(todo_id)
+    return {"ready": readiness["ready"], "blocking": readiness["blocking"], "explanation": readiness["explanation"]}
+
+
+def get_blocking_explanation(todo_id: int) -> str:
+    """Return a human-readable prerequisite blocking explanation."""
+    return can_complete_todo(todo_id)["explanation"]
+
+
+def decompose_todo(
+    parent_id: int,
+    children: Iterable[str | dict[str, Any]],
+    inherit_confirmed_fr_link: bool = True,
+) -> list[int]:
+    """Atomically create implementation-ready children while preserving parent."""
+    child_specs = list(children)
+    if not child_specs:
+        raise ValueError("at least one child is required")
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            parent = conn.execute("SELECT * FROM todos WHERE id=?", (parent_id,)).fetchone()
+            if parent is None:
+                raise ValueError("parent todo not found")
+            fr_id = parent["fr_id"] if inherit_confirmed_fr_link else None
+            created_at = datetime.now(timezone.utc).isoformat()
+            child_ids: list[int] = []
+            for spec in child_specs:
+                values = spec if isinstance(spec, dict) else {"text": spec}
+                text = str(values.get("text", "")).strip()
+                if not text:
+                    raise ValueError("child text is required")
+                cur = conn.execute(
+                    """
+                    INSERT INTO todos
+                        (project, source, text, done, created_at, priority, autonomy_level, fr_id, parent_id)
+                    VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        values.get("project", parent["project"]), values.get("source", parent["source"]),
+                        text, created_at, values.get("priority", parent["priority"]),
+                        values.get("autonomy_level", parent["autonomy_level"]), fr_id, parent_id,
+                    ),
+                )
+                child_id = int(cur.lastrowid)
+                child_ids.append(child_id)
+                if fr_id:
+                    conn.execute(
+                        "INSERT INTO todo_fr_links (todo_id, fr_id, confirmed, created_at) VALUES (?, ?, 1, ?)",
+                        (child_id, fr_id, created_at),
+                    )
+            conn.commit()
+            return child_ids
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def link_todo_to_fr(todo_id: int, fr_id: str) -> bool:
     """Link one unlinked todo to a syntactically valid feature request."""
     if not FR_ID_PATTERN.fullmatch(fr_id):
@@ -368,6 +597,11 @@ def link_todo_to_fr(todo_id: int, fr_id: str) -> bool:
             "UPDATE todos SET fr_id=? WHERE id=? AND fr_id IS NULL",
             (fr_id, todo_id),
         )
+        if cur.rowcount == 1:
+            conn.execute(
+                "INSERT OR IGNORE INTO todo_fr_links (todo_id, fr_id, confirmed, created_at) VALUES (?, ?, 1, ?)",
+                (todo_id, fr_id, datetime.now(timezone.utc).isoformat()),
+            )
         conn.commit()
     return cur.rowcount == 1
 
@@ -377,6 +611,7 @@ def insert_todo(
     source: str,
     text: str,
     autonomy_level: str = "supervised",
+    parent_id: int | None = None,
 ) -> int | None:
     """Insert a todo; returns new row id or None if it already exists (idempotent)."""
     if source not in ALLOWED_SOURCES:
@@ -387,9 +622,9 @@ def insert_todo(
     with get_connection() as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO todos (project, source, text, done, created_at, autonomy_level)"
-                " VALUES (?, ?, ?, 0, ?, ?)",
-                (project, source, text, created_at, autonomy_level),
+                "INSERT INTO todos (project, source, text, done, created_at, autonomy_level, parent_id)"
+                " VALUES (?, ?, ?, 0, ?, ?, ?)",
+                (project, source, text, created_at, autonomy_level, parent_id),
             )
             conn.commit()
             return cur.lastrowid
