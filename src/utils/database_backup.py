@@ -13,39 +13,52 @@ MANIFEST_KEY_ENV = "WORKSPACE_BACKUP_MANIFEST_KEY"
 DATABASE_KEY_ENV = "MANIFEST_TODOS_DB_KEY"
 CANONICAL_DATABASE_ID = "manifest-todos"
 CANONICAL_DATABASE_NAME = "manifest_todos.db"
+CANONICAL_DATABASE_PATH = "ai_manifest/coordination-store"
+
+
+def _shared_engine_path() -> Path:
+    configured = os.environ.get("WORKSPACE_BACKUP_ENGINE_PATH", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+    else:
+        workspace_root = os.environ.get("WORKSPACE_ROOT", "").strip()
+        if not workspace_root:
+            raise ImportError(
+                "configured Workspace database backup contract is unavailable: "
+                "WORKSPACE_ROOT or WORKSPACE_BACKUP_ENGINE_PATH is required"
+            )
+        candidate = Path(workspace_root).expanduser() / "src" / "utils" / "database_backup.py"
+    if not candidate.is_file():
+        raise ImportError(
+            "configured Workspace database backup contract is unavailable: "
+            f"{candidate}"
+        )
+    return candidate.resolve()
 
 
 def _load_shared_engine() -> ModuleType:
-    configured = os.environ.get("WORKSPACE_BACKUP_ENGINE_PATH", "")
-    candidates = [
-        Path(configured) if configured else None,
-        Path(r"f:\⊕Workspace\src\utils\database_backup.py"),
-        Path(r"f:\⊕Workspace\.worktrees\feature-FR-20260816-workspace-local-database-backup-operational-pilot\src\utils\database_backup.py"),
-    ]
-    for candidate in candidates:
-        if candidate is None or not candidate.is_file():
-            continue
-        specification = importlib.util.spec_from_file_location(
-            "workspace_database_backup_contract", candidate
-        )
-        if specification is None or specification.loader is None:
-            continue
-        engine_root = candidate.parents[2]
-        if str(engine_root) not in sys.path:
-            sys.path.insert(0, str(engine_root))
-        scope_path = candidate.with_name("database_backup_scope.py")
-        scope_specification = importlib.util.spec_from_file_location(
-            "src.utils.database_backup_scope", scope_path
-        )
-        if scope_specification is not None and scope_specification.loader is not None:
-            scope_module = importlib.util.module_from_spec(scope_specification)
-            sys.modules["src.utils.database_backup_scope"] = scope_module
-            scope_specification.loader.exec_module(scope_module)
-        module = importlib.util.module_from_spec(specification)
-        sys.modules["workspace_database_backup_contract"] = module
-        specification.loader.exec_module(module)
-        return module
-    raise ImportError("the merged Workspace database backup contract is unavailable")
+    candidate = _shared_engine_path()
+    specification = importlib.util.spec_from_file_location(
+        "workspace_database_backup_contract", candidate
+    )
+    if specification is None or specification.loader is None:
+        raise ImportError(f"unable to load Workspace database backup contract: {candidate}")
+    engine_root = candidate.parents[2]
+    if str(engine_root) not in sys.path:
+        sys.path.insert(0, str(engine_root))
+    scope_path = candidate.with_name("database_backup_scope.py")
+    scope_specification = importlib.util.spec_from_file_location(
+        "src.utils.database_backup_scope", scope_path
+    )
+    if scope_specification is None or scope_specification.loader is None:
+        raise ImportError(f"Workspace database backup scope is unavailable: {scope_path}")
+    scope_module = importlib.util.module_from_spec(scope_specification)
+    sys.modules["src.utils.database_backup_scope"] = scope_module
+    scope_specification.loader.exec_module(scope_module)
+    module = importlib.util.module_from_spec(specification)
+    sys.modules["workspace_database_backup_contract"] = module
+    specification.loader.exec_module(module)
+    return module
 
 
 _SHARED_ENGINE = _load_shared_engine()
@@ -73,6 +86,7 @@ class LocalVolumeDestination:
 
 
 def _inventory_manifest(entry: Mapping[str, Any]) -> dict[str, Any]:
+    _validate_canonical_entry(entry)
     discovery = entry.get("discovery")
     if not isinstance(discovery, Mapping):
         raise BackupError("approved database entry requires discovery metadata")
@@ -101,6 +115,7 @@ def _inventory_manifest(entry: Mapping[str, Any]) -> dict[str, Any]:
 
 def resolve_approved_source(project_root: Path, entry: Mapping[str, Any]) -> Path:
     """Resolve an approved inventory source beneath the project data root."""
+    _validate_canonical_entry(entry)
     if not entry.get("backup_allowed"):
         raise BackupError("database entry is not an approved source")
     discovery = entry.get("discovery")
@@ -113,6 +128,17 @@ def resolve_approved_source(project_root: Path, entry: Mapping[str, Any]) -> Pat
         label = "canonical source" if basename == CANONICAL_DATABASE_NAME else "approved source"
         raise BackupError(f"{label} is missing: {source}")
     return source
+
+
+def _validate_canonical_entry(entry: Mapping[str, Any]) -> None:
+    discovery = entry.get("discovery")
+    basename = discovery.get("basename") if isinstance(discovery, Mapping) else entry.get("basename")
+    if (
+        entry.get("id") != CANONICAL_DATABASE_ID
+        or entry.get("path") != CANONICAL_DATABASE_PATH
+        or basename != CANONICAL_DATABASE_NAME
+    ):
+        raise BackupError("only manifest-todos is approved for AI-Manifest backup")
 
 
 def run_manifest_backup(

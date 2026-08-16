@@ -94,10 +94,8 @@ def test_backup_selection_is_inventory_driven_and_default_denies_excluded_stores
 
     inventory = load_database_inventory(inventory_path)
 
-    assert [entry["id"] for entry in get_backupable_databases(inventory)] == [
-        "manifest-todos",
-        "manifest-approved-future-store",
-    ]
+    with pytest.raises(ValueError, match="only manifest-todos is approved"):
+        get_backupable_databases(inventory)
 
 
 def test_inventory_projects_approved_entries_into_generic_backup_manifest() -> None:

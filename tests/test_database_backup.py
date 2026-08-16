@@ -17,6 +17,7 @@ from src.utils.database_backup import (
     validate_backup,
     validate_sqlcipher_restore,
 )
+import src.utils.database_backup as database_backup_module
 from tools.register_database_backup_task import build_task_spec
 from tools.restore_database_backup import restore_backup
 from tools.run_database_backup import run_backup
@@ -68,6 +69,32 @@ def test_resolve_approved_source_rejects_missing_canonical_database(tmp_path: Pa
 
     with pytest.raises(BackupError, match="canonical source is missing"):
         resolve_approved_source(tmp_path, entry)
+
+
+def test_shared_engine_uses_configured_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    engine_path = workspace_root / "src" / "utils" / "database_backup.py"
+    engine_path.parent.mkdir(parents=True)
+    engine_path.write_text("CONTRACT_MARKER = 'configured'\n", encoding="utf-8")
+    monkeypatch.delenv("WORKSPACE_BACKUP_ENGINE_PATH", raising=False)
+    monkeypatch.setenv("WORKSPACE_ROOT", str(workspace_root))
+
+    assert database_backup_module._shared_engine_path() == engine_path
+
+
+def test_shared_engine_fails_closed_when_configured_contract_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("WORKSPACE_BACKUP_ENGINE_PATH", raising=False)
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "missing-workspace"))
+
+    with pytest.raises(
+        ImportError,
+        match="configured Workspace database backup contract is unavailable",
+    ):
+        database_backup_module._shared_engine_path()
 
 
 def _approved_entry() -> dict[str, object]:
@@ -238,12 +265,8 @@ def test_runner_uses_inventory_as_authoritative_approved_scope(
     )
     monkeypatch.setenv("WORKSPACE_BACKUP_VOLUME_ID", "trusted-volume")
 
-    manifest_path = run_backup(project_root, inventory_path, destination_root)
-
-    assert manifest_path.is_file()
-    assert (
-        manifest_path.parent / "ai_manifest" / "future-store"
-    ).read_bytes() == source.read_bytes()
+    with pytest.raises(ValueError, match="only manifest-todos is approved"):
+        run_backup(project_root, inventory_path, destination_root)
 
 
 def test_operator_restore_entry_point_validates_sqlcipher_after_copy(
@@ -291,7 +314,7 @@ def test_retention_keeps_only_the_configured_number_of_generations(
 def test_restored_sqlcipher_generation_reopens_with_environment_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sqlcipher3 = pytest.importorskip("sqlcipher3")
+    import sqlcipher3
     key = "sqlcipher-test-key"
     monkeypatch.setenv("WORKSPACE_BACKUP_MANIFEST_KEY", "manifest-test-key")
     monkeypatch.setenv("MANIFEST_TODOS_DB_KEY", key)
@@ -314,7 +337,9 @@ def test_restored_sqlcipher_generation_reopens_with_environment_key(
         project_root, destination, "trusted-volume", now=lambda: "2026-08-16T12:00:00Z"
     ).run(_approved_entry())
     restore_root = tmp_path / "isolated-restore"
-    DatabaseBackup.restore(result.manifest_path, destination, restore_root, True, "trusted-volume")
+    monkeypatch.setenv("WORKSPACE_BACKUP_VOLUME", str(destination_root))
+    monkeypatch.setenv("WORKSPACE_BACKUP_VOLUME_ID", "trusted-volume")
+    restore_backup(result.manifest_path, restore_root, operator_approved=True)
 
     metadata = validate_backup(result.manifest_path)
-    validate_sqlcipher_restore(restore_root, metadata)
+    assert metadata["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
