@@ -24,11 +24,12 @@ def _inventory(databases: list[dict[str, object]]) -> dict[str, object]:
 def _database(**overrides: object) -> dict[str, object]:
     database: dict[str, object] = {
         "id": "manifest-todos",
-        "path": "src/data/manifest_todos.db",
+        "locator": "ai_manifest/coordination-store",
+        "basename": "manifest_todos.db",
         "classification": "coordination",
         "backup_allowed": True,
         "encryption": "sqlcipher",
-        "key_env": "MANIFEST_TODOS_DB_KEY",
+        "key_env_var": "MANIFEST_TODOS_DB_KEY",
         "reason": "Canonical manifest coordination database.",
     }
     database.update(overrides)
@@ -45,7 +46,7 @@ def test_committed_inventory_registers_manifest_todos_without_key_material() -> 
     assert entries[0]["id"] == "manifest-todos"
     assert entries[0]["backup_allowed"] is True
     assert entries[0]["encryption"] == "sqlcipher"
-    assert entries[0]["key_env"] == "MANIFEST_TODOS_DB_KEY"
+    assert entries[0]["key_env_var"] == "MANIFEST_TODOS_DB_KEY"
     assert "key_value" not in json.dumps(inventory).lower()
     assert "secret" not in json.dumps(inventory).lower()
 
@@ -55,10 +56,11 @@ def test_backup_selection_is_inventory_driven_and_default_denies_excluded_stores
 ) -> None:
     future_approved = _database(
         id="manifest-approved-future-store",
-        path="src/data/future_store.sqlite3",
+        locator="ai_manifest/future-store",
+        basename="future_store.sqlite3",
         classification="canonical",
         backup_allowed=True,
-        key_env="FUTURE_STORE_DB_KEY",
+        key_env_var="FUTURE_STORE_DB_KEY",
         reason="Explicitly approved future canonical store.",
     )
     inventory_path = tmp_path / "database_backup_inventory.json"
@@ -70,14 +72,16 @@ def test_backup_selection_is_inventory_driven_and_default_denies_excluded_stores
                     future_approved,
                     _database(
                         id="manifest-todos-legacy",
-                        path="src/data/todos.db",
+                        locator="ai_manifest/legacy-store",
+                        basename="todos.db",
                         classification="legacy",
                         backup_allowed=False,
                         reason="Superseded coordination store.",
                     ),
                     _database(
                         id="manifest-lily-config",
-                        path="src/data/lily_config.db",
+                        locator="ai_manifest/lily-config-store",
+                        basename="lily_config.db",
                         classification="derived",
                         backup_allowed=False,
                         reason="Generated configuration store.",
@@ -102,6 +106,11 @@ def test_inventory_projects_approved_entries_into_generic_backup_manifest() -> N
     assert manifest["databases"][0]["id"] == "manifest-todos"
     assert manifest["databases"][0]["encryption"] == "sqlcipher"
     assert manifest["databases"][0]["key_env"] == "MANIFEST_TODOS_DB_KEY"
+    assert manifest["databases"][0]["path"] == "ai_manifest/coordination-store"
+    assert manifest["databases"][0]["discovery"] == {
+        "project": "ai_manifest",
+        "basename": "manifest_todos.db",
+    }
 
 
 def test_resolve_database_path_stays_within_project_root(tmp_path: Path) -> None:
@@ -115,9 +124,9 @@ def test_resolve_database_path_stays_within_project_root(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "entry",
     [
-        _database(path="../../outside.db"),
+        _database(locator="../outside-store"),
         _database(encryption="sqlite"),
-        _database(key_env="not-an-environment-variable"),
+        _database(key_env_var="not-an-environment-variable"),
         _database(backup_allowed=True, classification="approval-required"),
     ],
 )

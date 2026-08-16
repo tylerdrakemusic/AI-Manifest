@@ -4,29 +4,32 @@
   "databases": [
     {
       "id": "manifest-todos",
-      "path": "src/data/manifest_todos.db",
+      "locator": "ai_manifest/coordination-store",
+      "basename": "manifest_todos.db",
       "classification": "coordination",
       "backup_allowed": true,
       "encryption": "sqlcipher",
-      "key_env": "MANIFEST_TODOS_DB_KEY",
+      "key_env_var": "MANIFEST_TODOS_DB_KEY",
       "reason": "Canonical manifest coordination database."
     },
     {
       "id": "manifest-todos-legacy",
-      "path": "src/data/todos.db",
+      "locator": "ai_manifest/legacy-store",
+      "basename": "todos.db",
       "classification": "legacy",
       "backup_allowed": false,
       "encryption": "sqlcipher",
-      "key_env": "MANIFEST_TODOS_DB_KEY",
+      "key_env_var": "MANIFEST_TODOS_DB_KEY",
       "reason": "Superseded coordination store."
     },
     {
       "id": "manifest-lily-config",
-      "path": "src/data/lily_config.db",
+      "locator": "ai_manifest/lily-config-store",
+      "basename": "lily_config.db",
       "classification": "derived",
       "backup_allowed": false,
       "encryption": "sqlcipher",
-      "key_env": "LILY_CONFIG_DB_KEY",
+      "key_env_var": "LILY_CONFIG_DB_KEY",
       "reason": "Generated configuration store."
     }
   ]
