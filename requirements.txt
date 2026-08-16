@@ -19,6 +19,7 @@ waitress>=3.0
 pytest>=8.0
 pytest-cov>=5.0
 pytest-mock>=3.14
+sqlcipher3>=0.6.2
 
 # Model Context Protocol servers
 mcp>=1.27.0,<2

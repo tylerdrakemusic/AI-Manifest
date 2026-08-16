@@ -31,6 +31,9 @@ _CLASSIFICATIONS = {
 _DATABASE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 _KEY_ENV_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+_CANONICAL_DATABASE_ID = "manifest-todos"
+_CANONICAL_DATABASE_PATH = "ai_manifest/coordination-store"
+_CANONICAL_DATABASE_NAME = "manifest_todos.db"
 
 
 def _validate_database_entry(entry: Any) -> None:
@@ -117,13 +120,21 @@ def load_database_inventory(path: Path) -> dict[str, Any]:
 
 
 def get_backupable_databases(inventory: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return explicitly approved entries without special-casing database IDs."""
+    """Return the single explicitly approved AI-Manifest database entry."""
     databases = inventory.get("databases")
     if not isinstance(databases, list):
         raise ValueError("database inventory databases must be a list")
     for entry in databases:
         _validate_database_entry(entry)
-    return [entry for entry in databases if entry["backup_allowed"]]
+    approved = [entry for entry in databases if entry["backup_allowed"]]
+    for entry in approved:
+        if (
+            entry["id"] != _CANONICAL_DATABASE_ID
+            or entry["locator"] != _CANONICAL_DATABASE_PATH
+            or entry["basename"] != _CANONICAL_DATABASE_NAME
+        ):
+            raise ValueError("only manifest-todos is approved for AI-Manifest backup")
+    return approved
 
 
 def resolve_database_path(project_root: Path, entry: dict[str, Any]) -> Path:
