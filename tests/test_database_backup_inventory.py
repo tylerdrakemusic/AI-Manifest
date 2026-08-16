@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,16 @@ from src.utils.database_backup_inventory import (
     get_backupable_databases,
     load_database_inventory,
     resolve_database_path,
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "⊕Workspace" / ".worktrees" / "feature-FR-20260816-workspace-local-database-backup"))
+import src.utils  # noqa: E402
+src.utils.__path__.insert(0, str(Path(__file__).resolve().parents[4] / "⊕Workspace" / ".worktrees" / "feature-FR-20260816-workspace-local-database-backup" / "src" / "utils"))
+from src.utils.database_backup import (  # noqa: E402
+    DatabaseBackup,
+    LocalVolumeDestination,
+    discover_and_validate_manifest,
+    validate_recent_backups,
 )
 
 
@@ -140,3 +151,30 @@ def test_load_database_inventory_rejects_unsafe_or_denied_contract_entries(
 
     with pytest.raises(ValueError):
         load_database_inventory(inventory_path)
+
+
+def test_committed_inventory_runs_shared_backup_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WORKSPACE_BACKUP_MANIFEST_KEY", "test-manifest-key")
+    project_root = Path(__file__).resolve().parent.parent
+    manifest = build_backup_manifest(load_database_inventory(project_root / "src" / "config" / "database_backup_inventory.json"))
+    source_root = tmp_path / "ai_manifest"
+    source = source_root / "src" / "data" / "manifest_todos.db"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"isolated-fixture")
+    destination = LocalVolumeDestination(tmp_path / "external", "manifest-volume", provision=True)
+    for second in (0, 1):
+        DatabaseBackup(manifest, {"ai_manifest": source_root}, destination, "manifest-volume", now=lambda second=second: f"2026-08-16T12:00:0{second}Z", retention=1).run()
+    assert len(list((destination.path() / "generations").iterdir())) == 1
+    drift = source_root / "src" / "data" / "unexpected.db"
+    drift.write_bytes(b"drift")
+    with pytest.raises(ValueError, match="unregistered"):
+        discover_and_validate_manifest(manifest, {"ai_manifest": source_root})
+    drift.unlink()
+    manifest_path = next((destination.path() / "generations").glob("*/manifest.json"))
+    restore_root = tmp_path / "restore"
+    DatabaseBackup.restore(manifest_path, destination, restore_root, True, "manifest-volume", allow_canonical_restore=True)
+    assert (restore_root / "ai_manifest/coordination-store").read_bytes() == b"isolated-fixture"
+    validate_recent_backups(destination, "manifest-volume", restore_validator=lambda *_: None)
+    assert str(restore_root) not in (destination.path() / "backup-audit.jsonl").read_text(encoding="utf-8")
