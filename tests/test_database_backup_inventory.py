@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.utils.database_backup_inventory import (
+    build_backup_manifest,
     get_backupable_databases,
     load_database_inventory,
     resolve_database_path,
@@ -93,6 +94,14 @@ def test_backup_selection_is_inventory_driven_and_default_denies_excluded_stores
         "manifest-todos",
         "manifest-approved-future-store",
     ]
+
+
+def test_inventory_projects_approved_entries_into_generic_backup_manifest() -> None:
+    manifest = build_backup_manifest(_inventory([_database()]))
+
+    assert manifest["databases"][0]["id"] == "manifest-todos"
+    assert manifest["databases"][0]["encryption"] == "sqlcipher"
+    assert manifest["databases"][0]["key_env"] == "MANIFEST_TODOS_DB_KEY"
 
 
 def test_resolve_database_path_stays_within_project_root(tmp_path: Path) -> None:
