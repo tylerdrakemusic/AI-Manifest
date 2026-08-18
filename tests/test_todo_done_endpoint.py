@@ -124,19 +124,24 @@ class TestTodoDoneEndpoint:
         assert status == 404
         assert body.get("ok") is False
 
-    def test_returns_409_with_blocking_explanation(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A prerequisite-blocked completion is a conflict, not a missing todo."""
+    def test_deliberate_dashboard_completion_overrides_readiness(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A deliberate check-mark completes a blocked todo without changing its prerequisite edge."""
         import src.utils.todos_db as todos_db
         monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
-        prerequisite = todos_db.insert_todo("music", "AI", "Pending approval")
-        dependent = todos_db.insert_todo("music", "AI", "Publish approval")
+        prerequisite = todos_db.insert_todo("music", "AI", "Still pending")
+        dependent = todos_db.insert_todo("music", "AI", "Complete from dashboard")
         todos_db.link_prerequisite(dependent, prerequisite)
 
         status, body = _post_json(f"{todo_server}/api/todo/done", {"id": dependent})
 
-        assert status == 409
-        assert body.get("ok") is False
-        assert "Pending approval" in body.get("error", "")
+        assert status == 200
+        assert body.get("ok") is True
+        completed = todos_db.get_todo_by_id(dependent)
+        assert completed is not None
+        assert completed["done"] == 1
+        assert completed["closed_at"] is not None
+        assert completed["closure_reason"] == "completed"
+        assert [row["id"] for row in todos_db.get_required_todos(dependent)] == [prerequisite]
 
 
 class TestTodoCancelEndpoint:

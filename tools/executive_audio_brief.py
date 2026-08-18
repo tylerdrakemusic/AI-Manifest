@@ -64,7 +64,7 @@ from src.utils.roadmap_panel import (
 )
 from src.utils.todos_db import (
     init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, get_todo_by_id,
-    add_todo, update_priority, get_open_todos_by_autonomy, get_readiness,
+    add_todo, update_priority, get_open_todos_by_autonomy,
 )
 from src.utils.priority_scorer import score_priority
 
@@ -1816,15 +1816,7 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"ok": false, "error": "already done"}')
                 return
 
-            readiness = get_readiness(todo_id)
-            if not readiness["ready"]:
-                self.send_response(409)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"ok": False, "error": readiness["explanation"]}).encode("utf-8"))
-                return
-
-            success = mark_done(todo_id)
+            success = mark_done(todo_id, force=True)
             if success:
                 self._serve_json({"ok": True})
             else:
