@@ -1536,6 +1536,7 @@ async function refreshStatus() {{
     try {{
         const resp = await fetch('/api/refresh', {{ method: 'POST' }});
         if (resp.ok) {{
+            _preserveEditableStateBeforeReload();
             window.location.reload();
         }} else {{
             alert('Refresh failed');
@@ -1637,6 +1638,91 @@ async function lilyModalSave() {{
     }}
 }}
 
+const EDITABLE_STATE_KEY = 'executiveBriefPortal.editableState';
+
+function _editableControls() {{
+    return Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'));
+}}
+
+function _editableControlKey(element, index) {{
+    return element.id || element.name || `${{element.tagName.toLowerCase()}}:${{index}}`;
+}}
+
+function _preserveEditableStateBeforeReload() {{
+    const controls = _editableControls();
+    const state = {{
+        controls: controls.map((element, index) => {{
+            const entry = {{
+                key: _editableControlKey(element, index),
+                index,
+                tagName: element.tagName,
+                value: element.value,
+                checked: element.type === 'checkbox' || element.type === 'radio' ? element.checked : undefined,
+                textContent: element.isContentEditable ? element.textContent : undefined,
+            }};
+            if (document.activeElement === element && 'selectionStart' in element) {{
+                entry.selectionStart = element.selectionStart;
+                entry.selectionEnd = element.selectionEnd;
+                entry.selectionDirection = element.selectionDirection;
+            }}
+            if (element.tagName === 'SELECT' && element.multiple) {{
+                entry.selectedValues = Array.from(element.selectedOptions).map(option => option.value);
+            }}
+            return entry;
+        }}),
+        focusedIndex: controls.indexOf(document.activeElement),
+    }};
+    try {{
+        sessionStorage.setItem(EDITABLE_STATE_KEY, JSON.stringify(state));
+    }} catch (e) {{
+        // Storage may be unavailable in restricted browser contexts.
+    }}
+}}
+
+function _restoreEditableStateAfterReload() {{
+    let state;
+    try {{
+        const stored = sessionStorage.getItem(EDITABLE_STATE_KEY);
+        if (!stored) return;
+        state = JSON.parse(stored);
+        sessionStorage.removeItem(EDITABLE_STATE_KEY);
+    }} catch (e) {{
+        return;
+    }}
+
+    const controls = _editableControls();
+    const controlsByKey = new Map(controls.map((element, index) => [
+        _editableControlKey(element, index), element,
+    ]));
+    for (const entry of state.controls || []) {{
+        const element = controlsByKey.get(entry.key) || controls[entry.index];
+        if (!element || element.disabled || element.tagName !== entry.tagName) continue;
+        if (element.isContentEditable) {{
+            element.textContent = entry.textContent || '';
+        }} else if (element.type === 'checkbox' || element.type === 'radio') {{
+            element.checked = Boolean(entry.checked);
+        }} else if (element.tagName === 'SELECT' && element.multiple && entry.selectedValues) {{
+            Array.from(element.options).forEach(option => {{
+                option.selected = entry.selectedValues.includes(option.value);
+            }});
+        }} else if ('value' in element && entry.value !== undefined) {{
+            element.value = entry.value;
+        }}
+        if (entry.selectionStart !== undefined && 'setSelectionRange' in element) {{
+            try {{
+                element.setSelectionRange(entry.selectionStart, entry.selectionEnd, entry.selectionDirection);
+            }} catch (e) {{
+                // Some control types expose selection properties but reject ranges.
+            }}
+        }}
+    }}
+
+    const focused = state.focusedIndex >= 0 ? controls[state.focusedIndex] : null;
+    if (focused && !focused.disabled) {{
+        try {{ focused.focus({{preventScroll: true}}); }} catch (e) {{ focused.focus(); }}
+    }}
+}}
+
 // Auto-refresh every 60s — skip the tick when audio is actively playing
 (function() {{
     var REFRESH_INTERVAL = 60000;
@@ -1644,6 +1730,7 @@ async function lilyModalSave() {{
         var audio = document.getElementById('briefAudio');
         var playing = audio && !audio.paused && !audio.ended && audio.readyState > 2;
         if (!playing) {{
+            _preserveEditableStateBeforeReload();
             window.location.reload();
         }}
     }}, REFRESH_INTERVAL);
@@ -1651,8 +1738,12 @@ async function lilyModalSave() {{
 
 // Restore the previously active tab (survives auto-refresh reloads)
 if (document.readyState === 'loading') {{
-    document.addEventListener('DOMContentLoaded', restoreActiveTab);
+    document.addEventListener('DOMContentLoaded', function() {{
+        _restoreEditableStateAfterReload();
+        restoreActiveTab();
+    }});
 }} else {{
+    _restoreEditableStateAfterReload();
     restoreActiveTab();
 }}
 
