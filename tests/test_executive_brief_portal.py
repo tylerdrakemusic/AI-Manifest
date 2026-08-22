@@ -78,11 +78,12 @@ class TestPortalLoads:
 
 
 class TestStatusCards:
-    def test_three_status_cards_rendered(self, page) -> None:
-        """Exactly 3 project status cards should be present."""
+    def test_all_project_status_cards_rendered(self, page) -> None:
+        """All six project status cards should be present; top-three ranking is separate."""
         page.goto(PORTAL_URL)
         cards = page.locator(".status-card")
-        assert cards.count() == 3
+        # The generator emits every project card and uses rank styling for the top three.
+        assert cards.count() == 6
 
     def test_priority_badges_visible(self, page) -> None:
         """Priority badges #1, #2, #3 should all be rendered."""
@@ -216,6 +217,13 @@ class TestRefreshPreservesEditableState:
             assert page.locator(".add-todo-input").first.evaluate(
                 "element => [element.selectionStart, element.selectionEnd]"
             ) == [11, 11]
+            proof_path = (
+                Path(__file__).resolve().parent.parent
+                / "proof/screenshots"
+                / "FR-20260821-executive-portal-refresh-state-manual-refresh.png"
+            )
+            proof_path.parent.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(proof_path), full_page=True)
         finally:
             page.close()
 
