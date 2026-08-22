@@ -78,11 +78,12 @@ class TestPortalLoads:
 
 
 class TestStatusCards:
-    def test_three_status_cards_rendered(self, page) -> None:
-        """Exactly 3 project status cards should be present."""
+    def test_all_project_status_cards_rendered(self, page) -> None:
+        """All six project status cards should be present; top-three ranking is separate."""
         page.goto(PORTAL_URL)
         cards = page.locator(".status-card")
-        assert cards.count() == 3
+        # The generator emits every project card and uses rank styling for the top three.
+        assert cards.count() == 6
 
     def test_priority_badges_visible(self, page) -> None:
         """Priority badges #1, #2, #3 should all be rendered."""
@@ -172,6 +173,87 @@ class TestStaticModeUX:
         page.wait_for_load_state("domcontentloaded")
         page.click("#refreshBtn")
         assert errors == [], f"JS error after clicking Refresh: {errors}"
+
+
+class TestRefreshPreservesEditableState:
+    """Editable portal state survives a manual status refresh."""
+
+    def test_manual_refresh_preserves_values_focus_and_cursor(self, live_server, browser, monkeypatch) -> None:
+        import tools.executive_audio_brief as executive_audio_brief
+        from tools.executive_audio_brief import BriefRequestHandler
+
+        voices = [
+            {"voice_id": "voice-a", "name": "Voice A"},
+            {"voice_id": "voice-b", "name": "Voice B"},
+        ]
+        BriefRequestHandler.portal_state["voices"] = voices
+        monkeypatch.setattr(executive_audio_brief, "list_available_voices", lambda: voices)
+        page = browser.new_page()
+        try:
+            page.goto(live_server[0])
+            page.wait_for_load_state("domcontentloaded")
+
+            todo_input = page.locator(".add-todo-input").first
+            priority_input = page.locator(".add-todo-priority").first
+            todo_input.fill("unfinished todo draft")
+            priority_input.fill("8")
+            page.select_option("#voiceSelect", "voice-b")
+
+            page.click(".lily-edit-btn")
+            prompt = page.locator("#lily-positive-prompt")
+            prompt.fill("unfinished Lily prompt")
+            prompt.evaluate("element => { element.focus(); element.setSelectionRange(10, 10); }")
+            todo_input.focus()
+            todo_input.evaluate("element => element.setSelectionRange(11, 11)")
+
+            page.evaluate("refreshStatus()")
+            page.wait_for_load_state("domcontentloaded")
+
+            assert page.locator(".add-todo-input").first.input_value() == "unfinished todo draft"
+            assert page.locator(".add-todo-priority").first.input_value() == "8"
+            assert page.locator("#voiceSelect").input_value() == "voice-b"
+            assert page.locator("#lily-positive-prompt").input_value() == "unfinished Lily prompt"
+            assert page.evaluate("document.activeElement.matches('.add-todo-input')")
+            assert page.locator(".add-todo-input").first.evaluate(
+                "element => [element.selectionStart, element.selectionEnd]"
+            ) == [11, 11]
+            proof_path = (
+                Path(__file__).resolve().parent.parent
+                / "proof/screenshots"
+                / "FR-20260821-executive-portal-refresh-state-manual-refresh.png"
+            )
+            proof_path.parent.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(proof_path), full_page=True)
+        finally:
+            page.close()
+
+    def test_automatic_refresh_preserves_partial_form(self, live_server, browser) -> None:
+        page = browser.new_page()
+        page.add_init_script(
+            """
+            window.__executiveRefreshTick = null;
+            window.setInterval = callback => {
+                window.__executiveRefreshTick = callback;
+                return 0;
+            };
+            """
+        )
+        try:
+            page.goto(live_server[0])
+            page.wait_for_load_state("domcontentloaded")
+            todo_input = page.locator(".add-todo-input").first
+            priority_input = page.locator(".add-todo-priority").first
+            todo_input.fill("partial automatic draft")
+            priority_input.focus()
+
+            page.evaluate("window.__executiveRefreshTick()")
+            page.wait_for_load_state("domcontentloaded")
+
+            assert page.locator(".add-todo-input").first.input_value() == "partial automatic draft"
+            assert page.locator(".add-todo-priority").first.input_value() == ""
+            assert page.evaluate("document.activeElement.matches('.add-todo-priority')")
+        finally:
+            page.close()
 
 
 class TestNoConsoleErrors:

@@ -307,10 +307,10 @@ def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def mark_done(todo_id: int) -> bool:
-    """Flip done=1 and set closed_at for a single todo. Returns True on success."""
+def mark_done(todo_id: int, *, force: bool = False) -> bool:
+    """Complete one open todo, optionally bypassing prerequisite readiness."""
     closed_at = datetime.now(timezone.utc).isoformat()
-    if not can_complete_todo(todo_id)["ready"]:
+    if not force and not can_complete_todo(todo_id)["ready"]:
         return False
     with get_connection() as conn:
         cur = conn.execute(
