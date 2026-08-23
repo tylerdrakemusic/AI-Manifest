@@ -78,6 +78,21 @@ def test_dalle3_success_renames_to_canonical(tmp_path: Path, monkeypatch: pytest
     assert result.exists()
 
 
+def test_daily_portrait_accepts_injected_provider_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
+    generated = tmp_path / "adapter_stub.png"
+    generated.write_bytes(b"adapter image")
+
+    class FakeProviderAdapter:
+        def generate_dalle3(self, prompt: str, save_dir: Path) -> Path:
+            return generated
+
+    result = _lp.get_daily_portrait(provider_adapter=FakeProviderAdapter())
+
+    assert result.name == f"lily_portrait_{date.today().isoformat()}.png"
+    assert result.exists()
+
+
 # ---------------------------------------------------------------------------
 # get_daily_portrait — DALL-E 3 fails, HuggingFace succeeds
 # ---------------------------------------------------------------------------
@@ -95,6 +110,51 @@ def test_huggingface_fallback_when_dalle3_fails(tmp_path: Path, monkeypatch: pyt
     today = date.today().isoformat()
     assert result.name == f"lily_portrait_{today}.png"
     assert result.exists()
+
+
+def test_injected_adapter_preserves_provider_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
+    calls: list[str] = []
+    generated = tmp_path / "pollinations_stub.png"
+    generated.write_bytes(b"pollinations image")
+
+    class OrderedAdapter:
+        def generate_dalle3(self, prompt: str, save_dir: Path) -> None:
+            calls.append("dalle3")
+            return None
+
+        def generate_huggingface(self, prompt: str, save_dir: Path, negative_prompt: str | None = None) -> None:
+            calls.append("huggingface")
+            return None
+
+        def generate_hf_spaces(self, prompt: str, save_dir: Path) -> None:
+            calls.append("hf_spaces")
+            return None
+
+        def generate_pollinations(self, prompt: str, save_dir: Path) -> Path:
+            calls.append("pollinations")
+            return generated
+
+    result = _lp.get_daily_portrait(provider_adapter=OrderedAdapter())
+
+    assert calls == ["dalle3", "huggingface", "hf_spaces", "pollinations"]
+    assert result.name == f"lily_portrait_{date.today().isoformat()}.png"
+
+
+def test_adapter_provider_errors_are_skipped(tmp_path: Path) -> None:
+    adapter = _lp.WorkspaceImageProviderAdapter(
+        dalle3_factory=lambda: (_ for _ in ()).throw(EnvironmentError("missing OPENAPI_TOKEN")),
+        huggingface_factory=lambda: (_ for _ in ()).throw(RuntimeError("HF unavailable")),
+    )
+
+    assert _lp._try_dalle3("prompt", tmp_path, adapter) is None
+    assert _lp._try_huggingface("prompt", tmp_path, provider_adapter=adapter) is None
+
+
+def test_workspace_src_uses_configured_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
+
+    assert _lp._workspace_src_path() == tmp_path / "src"
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +229,8 @@ def test_img_tag_respects_max_width(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(_lp, "_try_dalle3", lambda p, d: None)
     monkeypatch.setattr(_lp, "_try_huggingface", lambda p, d, **kw: None)
+    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda p, d: None)
+    monkeypatch.setattr(_lp, "_try_pollinations", lambda p, d: None)
 
     tag = _lp.get_portrait_img_tag(max_width=80)
     assert "max-width:80px" in tag

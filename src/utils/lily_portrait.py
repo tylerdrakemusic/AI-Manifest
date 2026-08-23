@@ -17,44 +17,102 @@ Usage::
 from __future__ import annotations
 
 import base64
-import importlib.util
+import importlib
+import os
 import shutil
 import sys
 import threading
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any, Callable, Protocol
 
-# ---------------------------------------------------------------------------
-# Workspace integration path bootstrap
-# ---------------------------------------------------------------------------
-_WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
+class ImageProviderAdapter(Protocol):
+    """AI-Manifest boundary for Workspace-owned image providers."""
+
+    def generate_dalle3(self, prompt: str, save_dir: Path) -> Path:
+        ...
+
+    def generate_huggingface(
+        self, prompt: str, save_dir: Path, negative_prompt: str | None = None
+    ) -> Path:
+        ...
+
+    def generate_hf_spaces(self, prompt: str, save_dir: Path) -> Path:
+        ...
+
+    def generate_pollinations(self, prompt: str, save_dir: Path) -> Path:
+        ...
 
 
-def _load_workspace_module(module_key: str, relative: str):
-    """Load a module from ⊕Workspace by file path, bypassing src namespace conflicts.
+def _workspace_src_path() -> Path:
+    """Find the Workspace source directory from configuration or the sibling checkout."""
+    configured_root = os.environ.get("WORKSPACE_ROOT", "").strip()
+    if configured_root:
+        return Path(configured_root) / "src"
 
-    Both ⊕Workspace and 👁AI-Manifest have a ``src/__init__.py``, making ``src``
-    a regular package. Python resolves ``src`` to whichever parent directory
-    appears first in ``sys.path``, which means workspace integrations are
-    unreachable via normal imports when running from within AI-Manifest.
+    for parent in Path(__file__).resolve().parents:
+        sibling_src = parent / "⊕Workspace" / "src"
+        if sibling_src.is_dir():
+            return sibling_src
+    raise ModuleNotFoundError("Workspace source directory is not configured or discoverable")
 
-    This function loads the module by absolute file path using importlib, caching
-    the result in ``sys.modules`` so subsequent imports are free.
-    """
-    if module_key in sys.modules:
-        return sys.modules[module_key]
-    file_path = _WORKSPACE_ROOT / relative
-    spec = importlib.util.spec_from_file_location(module_key, file_path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_key] = module
+
+def _workspace_client(module_name: str, class_name: str) -> Any:
+    """Resolve a Workspace client through Python's normal import system."""
     try:
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
-    except Exception:
-        del sys.modules[module_key]
-        return None
-    return module
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        workspace_src = _workspace_src_path()
+        if str(workspace_src) not in sys.path:
+            sys.path.insert(0, str(workspace_src))
+        module = importlib.import_module(module_name)
+    return getattr(module, class_name)()
+
+
+class WorkspaceImageProviderAdapter:
+    """Delegate portrait generation to clients owned by ⊕Workspace.
+
+    Factories are injectable so AI-Manifest tests and callers can provide
+    provider implementations without importing or contacting external APIs.
+    """
+
+    def __init__(
+        self,
+        dalle3_factory: Callable[[], Any] | None = None,
+        huggingface_factory: Callable[[], Any] | None = None,
+        hf_spaces_factory: Callable[[], Any] | None = None,
+        pollinations_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._factories = (
+            dalle3_factory
+            or (lambda: _workspace_client("integrations.dalle3.client", "DallE3Client")),
+            huggingface_factory
+            or (lambda: _workspace_client("integrations.huggingface.client", "HuggingFaceImageClient")),
+            hf_spaces_factory
+            or (lambda: _workspace_client("integrations.huggingface.spaces_client", "HFSpacesImageClient")),
+            pollinations_factory
+            or (lambda: _workspace_client("integrations.pollinations.client", "PollinationsClient")),
+        )
+
+    def _generate(self, index: int, prompt: str, save_dir: Path, **kwargs: Any) -> Path:
+        client = self._factories[index]()
+        return client.generate_image(prompt, output_dir=save_dir, **kwargs)
+
+    def generate_dalle3(self, prompt: str, save_dir: Path) -> Path:
+        return self._generate(0, prompt, save_dir, size="1024x1024")
+
+    def generate_huggingface(
+        self, prompt: str, save_dir: Path, negative_prompt: str | None = None
+    ) -> Path:
+        return self._generate(
+            1, prompt, save_dir, size="1024x1024", negative_prompt=negative_prompt
+        )
+
+    def generate_hf_spaces(self, prompt: str, save_dir: Path) -> Path:
+        return self._generate(2, prompt, save_dir, width=1024, height=1024)
+
+    def generate_pollinations(self, prompt: str, save_dir: Path) -> Path:
+        return self._generate(3, prompt, save_dir, width=1024, height=1024)
 
 
 # ---------------------------------------------------------------------------
@@ -148,18 +206,13 @@ def _build_prompt() -> tuple[str, str | None]:
     return _BASE_PROMPT.format(outfit=outfit), None
 
 
-def _try_dalle3(prompt: str, save_dir: Path) -> Path | None:
+def _try_dalle3(
+    prompt: str, save_dir: Path, provider_adapter: ImageProviderAdapter | None = None
+) -> Path | None:
     """Attempt to generate the portrait via DALL-E 3. Returns Path or None."""
     try:
-        mod = _load_workspace_module(
-            "_ws_dalle3_client",
-            "src/integrations/dalle3/client.py",
-        )
-        if mod is None:
-            return None
-        client = mod.DallE3Client()
-        path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
-        return path
+        adapter = provider_adapter or WorkspaceImageProviderAdapter()
+        return adapter.generate_dalle3(prompt, save_dir)
     except Exception:
         return None
 
@@ -168,60 +221,34 @@ def _try_huggingface(
     prompt: str,
     save_dir: Path,
     negative_prompt: str | None = None,
+    provider_adapter: ImageProviderAdapter | None = None,
 ) -> Path | None:
     """Attempt to generate the portrait via HuggingFace Inference. Returns Path or None."""
     try:
-        mod = _load_workspace_module(
-            "_ws_hf_image_client",
-            "src/integrations/huggingface/client.py",
-        )
-        if mod is None:
-            return None
-        client = mod.HuggingFaceImageClient()
-        # Pass negative_prompt if the client accepts it
-        try:
-            path = client.generate_image(
-                prompt,
-                output_dir=save_dir,
-                size="1024x1024",
-                negative_prompt=negative_prompt,
-            )
-        except TypeError:
-            # Older client signature without negative_prompt kwarg
-            path = client.generate_image(prompt, output_dir=save_dir, size="1024x1024")
-        return path
+        adapter = provider_adapter or WorkspaceImageProviderAdapter()
+        return adapter.generate_huggingface(prompt, save_dir, negative_prompt)
     except Exception:
         return None
 
 
-def _try_hf_spaces(prompt: str, save_dir: Path) -> Path | None:
+def _try_hf_spaces(
+    prompt: str, save_dir: Path, provider_adapter: ImageProviderAdapter | None = None
+) -> Path | None:
     """Attempt to generate via HF Spaces FLUX.1-schnell (ZeroGPU). Returns Path or None."""
     try:
-        mod = _load_workspace_module(
-            "_ws_hf_spaces_client",
-            "src/integrations/huggingface/spaces_client.py",
-        )
-        if mod is None:
-            return None
-        client = mod.HFSpacesImageClient()
-        path = client.generate_image(prompt, output_dir=save_dir, width=1024, height=1024)
-        return path
+        adapter = provider_adapter or WorkspaceImageProviderAdapter()
+        return adapter.generate_hf_spaces(prompt, save_dir)
     except Exception:
         return None
 
 
-def _try_pollinations(prompt: str, save_dir: Path) -> Path | None:
+def _try_pollinations(
+    prompt: str, save_dir: Path, provider_adapter: ImageProviderAdapter | None = None
+) -> Path | None:
     """Attempt to generate the portrait via Pollinations.AI (free, no API key). Returns Path or None."""
     try:
-        mod = _load_workspace_module(
-            "_ws_pollinations_client",
-            "src/integrations/pollinations/client.py",
-        )
-        if mod is None:
-            return None
-        client = mod.PollinationsClient()
-        path = client.generate_image(prompt, output_dir=save_dir, width=1024, height=1024)
-        return path
+        adapter = provider_adapter or WorkspaceImageProviderAdapter()
+        return adapter.generate_pollinations(prompt, save_dir)
     except Exception:
         return None
 
@@ -236,7 +263,7 @@ def _svg_fallback_path() -> Path:
     return svg_path
 
 
-def get_daily_portrait() -> Path:
+def get_daily_portrait(provider_adapter: ImageProviderAdapter | None = None) -> Path:
     """Return the path to today's Lily portrait.
 
     Generation cascade:
@@ -263,28 +290,49 @@ def get_daily_portrait() -> Path:
     save_dir = _IMAGE_CACHE_DIR
 
     # 2. DALL-E 3
-    result = _try_dalle3(positive_prompt, save_dir)
+    result = (
+        _try_dalle3(positive_prompt, save_dir, provider_adapter)
+        if provider_adapter is not None
+        else _try_dalle3(positive_prompt, save_dir)
+    )
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
     # 3. HuggingFace Inference API (requires HF_TOKEN with credits)
-    result = _try_huggingface(positive_prompt, save_dir, negative_prompt=negative_prompt)
+    result = (
+        _try_huggingface(
+            positive_prompt,
+            save_dir,
+            negative_prompt=negative_prompt,
+            provider_adapter=provider_adapter,
+        )
+        if provider_adapter is not None
+        else _try_huggingface(positive_prompt, save_dir, negative_prompt=negative_prompt)
+    )
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
     # 4. HuggingFace Spaces FLUX.1-schnell (free, ZeroGPU quota)
-    result = _try_hf_spaces(positive_prompt, save_dir)
+    result = (
+        _try_hf_spaces(positive_prompt, save_dir, provider_adapter)
+        if provider_adapter is not None
+        else _try_hf_spaces(positive_prompt, save_dir)
+    )
     if result and result.exists():
         result.rename(today_path)
         _prune_old_portraits()
         return today_path
 
     # 5. Pollinations.AI (free, photorealistic, no API key)
-    result = _try_pollinations(positive_prompt, save_dir)
+    result = (
+        _try_pollinations(positive_prompt, save_dir, provider_adapter)
+        if provider_adapter is not None
+        else _try_pollinations(positive_prompt, save_dir)
+    )
     if result and result.exists():
         try:
             result.rename(today_path)
