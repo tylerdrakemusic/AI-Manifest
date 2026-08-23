@@ -44,15 +44,25 @@ class ImageProviderAdapter(Protocol):
         ...
 
 
+def _workspace_src_path() -> Path:
+    """Find the Workspace source directory from configuration or the sibling checkout."""
+    configured_root = os.environ.get("WORKSPACE_ROOT", "").strip()
+    if configured_root:
+        return Path(configured_root) / "src"
+
+    for parent in Path(__file__).resolve().parents:
+        sibling_src = parent / "⊕Workspace" / "src"
+        if sibling_src.is_dir():
+            return sibling_src
+    raise ModuleNotFoundError("Workspace source directory is not configured or discoverable")
+
+
 def _workspace_client(module_name: str, class_name: str) -> Any:
     """Resolve a Workspace client through Python's normal import system."""
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError:
-        workspace_root = os.environ.get("WORKSPACE_ROOT", "").strip()
-        if not workspace_root:
-            raise
-        workspace_src = Path(workspace_root) / "src"
+        workspace_src = _workspace_src_path()
         if str(workspace_src) not in sys.path:
             sys.path.insert(0, str(workspace_src))
         module = importlib.import_module(module_name)

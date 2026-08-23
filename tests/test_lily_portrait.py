@@ -151,6 +151,12 @@ def test_adapter_provider_errors_are_skipped(tmp_path: Path) -> None:
     assert _lp._try_huggingface("prompt", tmp_path, provider_adapter=adapter) is None
 
 
+def test_workspace_src_uses_configured_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
+
+    assert _lp._workspace_src_path() == tmp_path / "src"
+
+
 # ---------------------------------------------------------------------------
 # get_daily_portrait — both fail → SVG fallback
 # ---------------------------------------------------------------------------
@@ -223,6 +229,8 @@ def test_img_tag_respects_max_width(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(_lp, "_try_dalle3", lambda p, d: None)
     monkeypatch.setattr(_lp, "_try_huggingface", lambda p, d, **kw: None)
+    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda p, d: None)
+    monkeypatch.setattr(_lp, "_try_pollinations", lambda p, d: None)
 
     tag = _lp.get_portrait_img_tag(max_width=80)
     assert "max-width:80px" in tag
