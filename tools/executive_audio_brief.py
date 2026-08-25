@@ -17,6 +17,7 @@ import argparse
 import html
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import textwrap
@@ -55,6 +56,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.integrations.elevenlabs import ElevenLabsClient
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID
 from src.utils.lily_portrait import get_portrait_img_tag
+from src.utils import todos_db
 from src.utils.roadmap_panel import (
     load_roadmap_data,
     render_roadmap_tab_html,
@@ -62,9 +64,11 @@ from src.utils.roadmap_panel import (
     ROADMAP_STYLES,
     TAB_NAV_SCRIPT,
 )
+todos_db.use_worktree_aware_db_path(PROJECT_ROOT)
+
 from src.utils.todos_db import (
     init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, get_todo_by_id,
-    add_todo, update_priority, get_open_todos_by_autonomy,
+    add_todo, update_priority, get_open_todos_by_autonomy, get_readiness,
 )
 from src.utils.priority_scorer import score_priority
 
@@ -194,6 +198,19 @@ def gather_project_status(project: dict) -> dict[str, Any]:
     )
     status["active_tasks"] = len(open_rows)
     status["completed_tasks"] = done_count
+
+    readiness = {}
+    for row in open_rows:
+        try:
+            readiness[row["id"]] = get_readiness(row["id"])["ready"]
+        except (KeyError, TypeError, ValueError, sqlite3.OperationalError):
+            readiness[row["id"]] = bool(row.get("ready", True))
+    card_rows = [
+        row for row in open_rows + get_done_todos(key)
+        if row.get("autonomy_level") in {"supervised", "human", None}
+        or row.get("parent_id") is not None
+    ]
+    status["todo_hierarchy"] = build_todo_hierarchy(card_rows, readiness)
 
     if root.exists():
         for profile_name in ["PROJECT_PROFILE.json", "ARTIST_PROFILE.json", "SUBJECT_PROFILE.json"]:
@@ -346,6 +363,108 @@ def _todo_signal_html(todo: dict[str, Any]) -> str:
     )
 
 
+def classify_todo(todo: dict[str, Any], readiness: dict[int, bool]) -> str:
+    """Classify a TODO using execution state, closure reason, and readiness."""
+    execution_state = str(todo.get("execution_state", todo.get("state", ""))).lower()
+    if execution_state in {"claimed", "running"}:
+        return execution_state
+    if todo.get("done") or todo.get("closure_reason"):
+        return str(todo.get("closure_reason") or execution_state or "terminal").lower()
+    if execution_state == "failed" and todo.get("retry_eligible"):
+        return "retry-eligible"
+    if not readiness.get(todo["id"], todo.get("ready", True)):
+        return "blocked"
+    return "runnable"
+
+
+def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool]) -> list[dict[str, Any]]:
+    """Build collapsed parent groups while retaining standalone TODO rows."""
+    by_id = {row["id"]: dict(row) for row in rows}
+    children_by_parent: dict[int, list[dict[str, Any]]] = {}
+    for row in by_id.values():
+        if row.get("parent_id") in by_id:
+            child = dict(row)
+            child["state"] = classify_todo(child, readiness)
+            children_by_parent.setdefault(row["parent_id"], []).append(child)
+
+    groups = []
+    grouped_ids: set[int] = set()
+    for parent_id, children in children_by_parent.items():
+        parent = dict(by_id[parent_id])
+        parent["state"] = classify_todo(parent, readiness)
+        children.sort(key=lambda child: (-child.get("priority", 5), child["id"]))
+        runnable = [child for child in children if child["state"] in {"runnable", "retry-eligible"}]
+        terminal = [child for child in children if child["state"] not in {"runnable", "retry-eligible"}]
+        groups.append({
+            "parent": parent,
+            "inline_children": runnable,
+            "collapsed_children": terminal,
+            "aggregate_state": "runnable" if runnable else (children[0]["state"] if children else parent["state"]),
+            "join_status": f"{len(children)} children · {len(runnable)} runnable",
+            "expanded_by_default": False,
+        })
+        grouped_ids.update([parent_id, *[child["id"] for child in children]])
+
+    for row in by_id.values():
+        if row["id"] not in grouped_ids and not row.get("done"):
+            standalone = dict(row)
+            standalone["state"] = classify_todo(standalone, readiness)
+            groups.append({
+                "parent": None,
+                "inline_children": [standalone],
+                "collapsed_children": [],
+                "aggregate_state": standalone["state"],
+                "join_status": "",
+                "expanded_by_default": True,
+            })
+    return groups
+
+
+def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str) -> str:
+    """Render compact parent disclosures and runnable child action rows."""
+    fragments: list[str] = []
+    for index, group in enumerate(hierarchy):
+        parent = group["parent"]
+        if parent is None:
+            children = group["inline_children"]
+            fragments.append("".join(_todo_row_html(child, sigil, name) for child in children))
+            continue
+        parent_text = html.escape(parent["text"])
+        panel_id = f"todo-collapsed-children-{parent['id']}-{index}"
+        inline = "".join(_todo_row_html(child, sigil, name) for child in group["inline_children"])
+        hidden = "".join(_todo_row_html(child, sigil, name) for child in group["collapsed_children"])
+        fragments.append(f"""
+        <li class="parent-todo-row" data-state="{html.escape(group['aggregate_state'])}">
+          <div class="parent-todo-primary">
+            <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
+              onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
+            <span class="todo-text" title="{parent_text}">{parent_text}</span>
+            <span class="todo-state">{html.escape(group['aggregate_state'])}</span>
+            <span class="todo-join-status">{html.escape(group['join_status'])}</span>
+          </div>
+          <div class="todo-meta"><span class="todo-id">TODO #{parent['id']}</span><span class="source-tag">{html.escape(parent.get('source', ''))}</span></div>
+          <ul class="todo-children">{inline}</ul>
+          <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{hidden}</ul></div>
+        </li>""")
+    return "".join(fragments)
+
+
+def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
+    """Render a child or standalone TODO row with its existing actions."""
+    text = html.escape(todo["text"])
+    run_action = (
+        f'<button class="run-next-btn" onclick="runNext({todo["id"]}, this)" '
+        f'title="Run next" aria-label="Run TODO #{todo["id"]} next">▶</button>'
+        if todo.get("state") in {"runnable", "retry-eligible"} else ""
+    )
+    return f"""<li data-state="{html.escape(todo.get('state', 'runnable'))}" title="{text}">
+            <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+                <span class="todo-actions">{run_action}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
+                <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span></div>
+            <div class="todo-meta"><span class="todo-project">{html.escape(sigil)}{html.escape(name)}</span>{_priority_badge(todo.get('priority', 5))}{_todo_signal_html(todo)}<span class="source-tag">{html.escape(todo.get('source', ''))}</span></div>
+        </li>"""
+
+
 def _status_card_html(proj: dict, rank: int) -> str:
     """Generate an HTML card for a project status."""
     sigil = html.escape(proj["sigil"])
@@ -357,8 +476,8 @@ def _status_card_html(proj: dict, rank: int) -> str:
     pct = round(100 * done / total) if total > 0 else 0
 
     full_count = len(proj.get("full_todos", []))
-    supervised_count = len(proj.get("supervised_todos", []))
-    human_count = len(proj.get("human_todos", []))
+    card_todos = proj.get("supervised_todos", []) + proj.get("human_todos", [])
+    hierarchy = proj.get("todo_hierarchy") or build_todo_hierarchy(card_todos, {})
 
     def _todo_rows(todos: list, limit: int = 5) -> str:
         return "".join(
@@ -384,18 +503,11 @@ def _status_card_html(proj: dict, rank: int) -> str:
     # omit them from per-project cards to avoid duplicate entries.
     full_html = ""
 
-    supervised_html = ""
-    if proj.get("supervised_todos"):
-        supervised_html = f"""<div class="todo-section">
-            <div class="todo-label supervised-label">👁 Supervised \u2014 AI Executes, You Verify ({supervised_count})</div>
-            <ul class="todo-list">{_todo_rows(proj["supervised_todos"])}</ul>
-        </div>"""
-
-    human_html = ""
-    if proj.get("human_todos"):
-        human_html = f"""<div class="todo-section">
-            <div class="todo-label human-label">👤 Human \u2014 Needs Tyler ({human_count})</div>
-            <ul class="todo-list">{_todo_rows(proj["human_todos"])}</ul>
+    hierarchy_html = ""
+    if hierarchy:
+        hierarchy_html = f"""<div class="todo-section parent-todo-section">
+            <div class="todo-label">Execution queue</div>
+            <ul class="todo-list">{_todo_hierarchy_html(hierarchy, sigil, name)}</ul>
         </div>"""
 
     add_todo_form_html = f"""<div class="add-todo-form">
@@ -429,8 +541,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
         </div>
         <p class="summary">{summary}</p>
         {full_html}
-        {supervised_html}
-        {human_html}
+        {hierarchy_html}
         {add_todo_form_html}
     </div>
     """
@@ -846,9 +957,68 @@ header .subtitle {{
     grid-area: primary;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "text text"
+        "state actions";
     align-items: start;
     column-gap: 0.6rem;
     min-width: 0;
+}}
+.todo-primary .todo-text {{ grid-area: text; }}
+.todo-primary .todo-state {{ grid-area: state; }}
+.todo-primary .todo-actions {{ grid-area: actions; }}
+.parent-todo-row {{
+    padding-left: 0 !important;
+    display: block !important;
+    min-width: 0;
+    max-width: 100%;
+}}
+.parent-todo-primary {{
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    max-width: 100%;
+}}
+.expand-todo-btn, .run-next-btn {{
+    flex: 0 0 1.7rem;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--accent);
+    cursor: pointer;
+}}
+.expand-todo-btn[aria-expanded="true"] {{ transform: rotate(90deg); }}
+.todo-state, .todo-join-status {{
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    white-space: nowrap;
+}}
+.todo-state {{
+    color: var(--accent-orange);
+    font-weight: 700;
+    text-transform: uppercase;
+}}
+.todo-children {{
+    list-style: none;
+    margin: 0.25rem 0 0 1.9rem;
+    padding: 0;
+    min-width: 0;
+    max-width: 100%;
+}}
+.todo-children[hidden] {{ display: none; }}
+.todo-children li {{ padding-left: 0 !important; }}
+.todo-children li::before {{ content: ""; }}
+.todo-text {{
+    display: block;
+    min-width: 0;
+    max-width: min(70ch, 100%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }}
 .todo-project {{
     color: var(--text-muted);
@@ -895,11 +1065,6 @@ header .subtitle {{
     position: absolute;
     top: 0.25rem;
     left: 0;
-}}
-.todo-text {{
-    min-width: 0;
-    max-width: 70ch;
-    overflow-wrap: anywhere;
 }}
 .done-btn {{
     flex-shrink: 0;
@@ -1441,6 +1606,25 @@ function _inlineMsg(li, text, color) {{
     span.textContent = text;
     span.style.cssText = 'color:' + color + ';font-size:0.75rem;margin-left:0.4rem;';
     li.appendChild(span);
+}}
+
+function toggleTodoChildren(button) {{
+    const panel = document.getElementById(button.getAttribute('aria-controls'));
+    if (!panel) return;
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    panel.hidden = expanded;
+}}
+
+function runNext(todoId, btnEl) {{
+    if (IS_STATIC) {{ _showServeHint(); return; }}
+    document.querySelectorAll('.run-next-btn[aria-pressed="true"]').forEach(button => {{
+        button.setAttribute('aria-pressed', 'false');
+    }});
+    btnEl.setAttribute('aria-pressed', 'true');
+    const row = btnEl.closest('li');
+    _inlineMsg(row, 'Selected as next runnable TODO', 'var(--accent-green)');
+    window.location.hash = 'todo-' + todoId;
 }}
 
 function _updateProgressBar(card) {{

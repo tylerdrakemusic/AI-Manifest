@@ -141,6 +141,56 @@ def test_gather_project_status_preserves_provenance_fields_for_each_view_model()
         assert "perfected_at" in todo
 
 
+def test_todo_classification_uses_execution_state_before_readiness() -> None:
+    from tools.executive_audio_brief import classify_todo
+
+    assert classify_todo({"id": 1, "done": 0, "execution_state": "claimed"}, {}) == "claimed"
+    assert classify_todo({"id": 2, "done": 0, "execution_state": "running"}, {}) == "running"
+    assert classify_todo({"id": 3, "done": 1, "closure_reason": "stale"}, {}) == "stale"
+    assert classify_todo({"id": 4, "done": 0, "execution_state": "failed", "retry_eligible": True}, {}) == "retry-eligible"
+    assert classify_todo({"id": 5, "done": 0}, {5: False}) == "blocked"
+    assert classify_todo({"id": 6, "done": 0}, {6: True}) == "runnable"
+
+
+def test_build_todo_hierarchy_keeps_runnable_children_inline_and_collapses_other_children() -> None:
+    from tools.executive_audio_brief import build_todo_hierarchy
+
+    rows = [
+        {"id": 10, "text": "Parent", "done": 0, "parent_id": None, "priority": 8},
+        {"id": 11, "text": "Runnable child", "done": 0, "parent_id": 10, "priority": 9},
+        {"id": 12, "text": "Blocked child", "done": 0, "parent_id": 10, "priority": 7},
+    ]
+
+    hierarchy = build_todo_hierarchy(rows, {11: True, 12: False})
+
+    assert len(hierarchy) == 1
+    assert hierarchy[0]["parent"]["id"] == 10
+    assert [child["id"] for child in hierarchy[0]["inline_children"]] == [11]
+    assert [child["id"] for child in hierarchy[0]["collapsed_children"]] == [12]
+    assert hierarchy[0]["expanded_by_default"] is False
+
+
+def test_parent_rows_render_aggregate_state_details_and_run_next_only_for_runnable_children() -> None:
+    from tools.executive_audio_brief import _todo_hierarchy_html
+
+    hierarchy = [{
+        "parent": {"id": 10, "text": "A very long parent title", "priority": 8, "source": "AI"},
+        "inline_children": [{"id": 11, "text": "Runnable child", "priority": 9, "source": "AI", "state": "runnable"}],
+        "collapsed_children": [{"id": 12, "text": "Blocked child", "priority": 7, "source": "AI", "state": "blocked"}],
+        "aggregate_state": "runnable",
+        "join_status": "2 children · 1 runnable",
+    }]
+
+    output = _todo_hierarchy_html(hierarchy, "⊕", "Workspace")
+
+    assert 'aria-expanded="false"' in output
+    assert "A very long parent title" in output
+    assert "2 children · 1 runnable" in output
+    assert 'title="A very long parent title"' in output
+    assert 'onclick="runNext(11, this)"' in output
+    assert 'runNext(12' not in output
+
+
 def test_status_card_renders_ids_and_independent_provenance_signals_without_changing_done_target() -> None:
     from tools.executive_audio_brief import _status_card_html
 
@@ -187,6 +237,10 @@ def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> 
     assert ".todo-list li {" in out
     assert "grid-template-columns:" in out
     assert ".todo-text {" in out
+    assert "display: block;" in out
+    assert "max-width: 100%;" in out
+    assert '"text text"' in out
+    assert '"state actions"' in out
     assert "min-width: 0;" in out
     assert "overflow-wrap: anywhere;" in out
     assert "line-height: 1.45;" in out
