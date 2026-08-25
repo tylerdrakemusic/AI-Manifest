@@ -421,7 +421,7 @@ def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool])
 
 
 def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str) -> str:
-    """Render compact parent disclosures and runnable child action rows."""
+    """Render compact parent disclosures and child action rows."""
     fragments: list[str] = []
     for index, group in enumerate(hierarchy):
         parent = group["parent"]
@@ -431,35 +431,41 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
             continue
         parent_text = html.escape(parent["text"])
         panel_id = f"todo-collapsed-children-{parent['id']}-{index}"
-        inline = "".join(_todo_row_html(child, sigil, name) for child in group["inline_children"])
-        hidden = "".join(_todo_row_html(child, sigil, name) for child in group["collapsed_children"])
+        children = group["inline_children"] + group["collapsed_children"]
+        child_rows = "".join(_todo_row_html(child, sigil, name) for child in children)
         fragments.append(f"""
         <li class="parent-todo-row" data-state="{html.escape(group['aggregate_state'])}">
           <div class="parent-todo-primary">
             <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
               onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
             <span class="todo-text" title="{parent_text}">{parent_text}</span>
-            <span class="todo-state">{html.escape(group['aggregate_state'])}</span>
+            {_copy_todo_button(parent['id'], parent['text'])}
+                        <span class="todo-actions"><button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
+                        <button class="cancel-btn" onclick="cancelTodo({parent['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{parent['id']}">×</button></span>
             <span class="todo-join-status">{html.escape(group['join_status'])}</span>
           </div>
           <div class="todo-meta"><span class="todo-id">TODO #{parent['id']}</span><span class="source-tag">{html.escape(parent.get('source', ''))}</span></div>
-          <ul class="todo-children">{inline}</ul>
-          <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{hidden}</ul></div>
+          <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{child_rows}</ul></div>
         </li>""")
     return "".join(fragments)
+
+
+def _copy_todo_button(todo_id: int, text: str) -> str:
+    """Render a button that copies the full TODO text."""
+    escaped_text = html.escape(text, quote=True)
+    return (
+        f'<button class="copy-todo-btn" type="button" onclick="copyTodoText(this)" '
+        f'data-copy-text="{escaped_text}" title="Copy full TODO text" '
+        f'aria-label="Copy full text for TODO #{todo_id}">⧉</button>'
+    )
 
 
 def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
     """Render a child or standalone TODO row with its existing actions."""
     text = html.escape(todo["text"])
-    run_action = (
-        f'<button class="run-next-btn" onclick="runNext({todo["id"]}, this)" '
-        f'title="Run next" aria-label="Run TODO #{todo["id"]} next">▶</button>'
-        if todo.get("state") in {"runnable", "retry-eligible"} else ""
-    )
     return f"""<li data-state="{html.escape(todo.get('state', 'runnable'))}" title="{text}">
             <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', ''))}</span>
-                <span class="todo-actions">{run_action}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
+                                <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                 <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span></div>
             <div class="todo-meta"><span class="todo-project">{html.escape(sigil)}{html.escape(name)}</span>{_priority_badge(todo.get('priority', 5))}{_todo_signal_html(todo)}<span class="source-tag">{html.escape(todo.get('source', ''))}</span></div>
         </li>"""
@@ -506,7 +512,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
     hierarchy_html = ""
     if hierarchy:
         hierarchy_html = f"""<div class="todo-section parent-todo-section">
-            <div class="todo-label">Execution queue</div>
             <ul class="todo-list">{_todo_hierarchy_html(hierarchy, sigil, name)}</ul>
         </div>"""
 
@@ -933,7 +938,7 @@ header .subtitle {{
 .todo-list li {{
     font-size: 0.85rem;
     position: relative;
-    padding: 0.25rem 0 0.25rem 1.2rem;
+    padding: 0.25rem 0;
     border-bottom: 1px solid var(--border);
     color: var(--text);
     display: grid;
@@ -975,13 +980,13 @@ header .subtitle {{
 }}
 .parent-todo-primary {{
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 0.45rem;
     min-width: 0;
     max-width: 100%;
 }}
-.expand-todo-btn, .run-next-btn {{
+.expand-todo-btn, .copy-todo-btn {{
     flex: 0 0 1.7rem;
     width: 1.7rem;
     height: 1.7rem;
@@ -990,6 +995,9 @@ header .subtitle {{
     background: var(--bg);
     color: var(--accent);
     cursor: pointer;
+}}
+.copy-todo-btn {{
+    color: var(--text-muted);
 }}
 .expand-todo-btn[aria-expanded="true"] {{ transform: rotate(90deg); }}
 .todo-state, .todo-join-status {{
@@ -1002,6 +1010,16 @@ header .subtitle {{
     font-weight: 700;
     text-transform: uppercase;
 }}
+[data-state="runnable"] {{ border-left: 3px solid var(--accent); }}
+[data-state="runnable"] .todo-state {{ color: var(--accent); }}
+[data-state="blocked"] {{ border-left: 3px solid var(--accent-red); }}
+[data-state="blocked"] .todo-state {{ color: var(--accent-red); }}
+[data-state="claimed"] {{ border-left: 3px solid #56d4dd; }}
+[data-state="claimed"] .todo-state {{ color: #56d4dd; }}
+[data-state="running"] {{ border-left: 3px solid var(--accent-green); }}
+[data-state="running"] .todo-state {{ color: var(--accent-green); }}
+[data-state="retry-eligible"] {{ border-left: 3px solid var(--accent-orange); }}
+[data-state="retry-eligible"] .todo-state {{ color: var(--accent-orange); }}
 .todo-children {{
     list-style: none;
     margin: 0.25rem 0 0 1.9rem;
@@ -1019,6 +1037,7 @@ header .subtitle {{
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    user-select: text;
 }}
 .todo-project {{
     color: var(--text-muted);
@@ -1058,13 +1077,6 @@ header .subtitle {{
 .signal-muted {{
     color: var(--text-muted);
     background: rgba(122, 138, 160, 0.12);
-}}
-.todo-list li::before {{
-    content: "☐ ";
-    color: var(--accent-orange);
-    position: absolute;
-    top: 0.25rem;
-    left: 0;
 }}
 .done-btn {{
     flex-shrink: 0;
@@ -1616,15 +1628,31 @@ function toggleTodoChildren(button) {{
     panel.hidden = expanded;
 }}
 
-function runNext(todoId, btnEl) {{
-    if (IS_STATIC) {{ _showServeHint(); return; }}
-    document.querySelectorAll('.run-next-btn[aria-pressed="true"]').forEach(button => {{
-        button.setAttribute('aria-pressed', 'false');
-    }});
-    btnEl.setAttribute('aria-pressed', 'true');
-    const row = btnEl.closest('li');
-    _inlineMsg(row, 'Selected as next runnable TODO', 'var(--accent-green)');
-    window.location.hash = 'todo-' + todoId;
+async function copyTodoText(button) {{
+    const text = button.dataset.copyText || '';
+    try {{
+        if (navigator.clipboard && window.isSecureContext) {{
+            await navigator.clipboard.writeText(text);
+        }} else {{
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            textarea.remove();
+        }}
+        const original = button.textContent;
+        button.textContent = '✓';
+        button.title = 'Copied full TODO text';
+        window.setTimeout(() => {{
+            button.textContent = original;
+            button.title = 'Copy full TODO text';
+        }}, 1200);
+    }} catch (error) {{
+        button.title = 'Copy failed';
+    }}
 }}
 
 function _updateProgressBar(card) {{
