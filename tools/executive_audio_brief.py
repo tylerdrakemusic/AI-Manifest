@@ -205,9 +205,22 @@ def gather_project_status(project: dict) -> dict[str, Any]:
             readiness[row["id"]] = get_readiness(row["id"])["ready"]
         except (KeyError, TypeError, ValueError, sqlite3.OperationalError):
             readiness[row["id"]] = bool(row.get("ready", True))
+    project_rows = open_rows + get_done_todos(key)
+    all_rows = get_open_todos() + get_done_todos()
+    rows_by_id = {row["id"]: row for row in all_rows}
+    parent_context = []
+    context_ids: set[int] = set()
+    for row in open_rows:
+        parent_id = row.get("parent_id")
+        while parent_id is not None and parent_id in rows_by_id and parent_id not in context_ids:
+            parent = rows_by_id[parent_id]
+            context_ids.add(parent_id)
+            parent_context.append(parent)
+            parent_id = parent.get("parent_id")
     card_rows = [
-        row for row in open_rows + get_done_todos(key)
-        if row.get("autonomy_level") in {"supervised", "human", None}
+        row for row in project_rows + parent_context
+        if row in parent_context
+        or row.get("autonomy_level") in {"supervised", "human", None}
         or row.get("parent_id") is not None
     ]
     status["todo_hierarchy"] = build_todo_hierarchy(card_rows, readiness)
@@ -378,21 +391,36 @@ def classify_todo(todo: dict[str, Any], readiness: dict[int, bool]) -> str:
 
 
 def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool]) -> list[dict[str, Any]]:
-    """Build collapsed parent groups while retaining standalone TODO rows."""
-    by_id = {row["id"]: dict(row) for row in rows}
+    """Build recursive collapsed parent groups while retaining standalone TODO rows."""
+    by_id = {row["id"]: dict(row) for row in rows if not row.get("done")}
     children_by_parent: dict[int, list[dict[str, Any]]] = {}
     for row in by_id.values():
         if row.get("parent_id") in by_id:
-            child = dict(row)
-            child["state"] = classify_todo(child, readiness)
-            children_by_parent.setdefault(row["parent_id"], []).append(child)
+            children_by_parent.setdefault(row["parent_id"], []).append(row)
+
+    def decorate(todo: dict[str, Any]) -> dict[str, Any]:
+        node = dict(todo)
+        node["state"] = classify_todo(node, readiness)
+        children = [decorate(child) for child in children_by_parent.get(todo["id"], [])]
+        children.sort(key=lambda child: (-child.get("priority", 5), child["id"]))
+        node["children"] = children
+        return node
 
     groups = []
-    grouped_ids: set[int] = set()
-    for parent_id, children in children_by_parent.items():
-        parent = dict(by_id[parent_id])
-        parent["state"] = classify_todo(parent, readiness)
-        children.sort(key=lambda child: (-child.get("priority", 5), child["id"]))
+    child_ids = {child["id"] for children in children_by_parent.values() for child in children}
+    for parent_id in (todo_id for todo_id in by_id if todo_id not in child_ids):
+        parent = decorate(by_id[parent_id])
+        children = parent["children"]
+        if not children:
+            groups.append({
+                "parent": None,
+                "inline_children": [parent],
+                "collapsed_children": [],
+                "aggregate_state": parent["state"],
+                "join_status": "",
+                "expanded_by_default": True,
+            })
+            continue
         runnable = [child for child in children if child["state"] in {"runnable", "retry-eligible"}]
         terminal = [child for child in children if child["state"] not in {"runnable", "retry-eligible"}]
         groups.append({
@@ -403,20 +431,6 @@ def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool])
             "join_status": f"{len(children)} children · {len(runnable)} runnable",
             "expanded_by_default": False,
         })
-        grouped_ids.update([parent_id, *[child["id"] for child in children]])
-
-    for row in by_id.values():
-        if row["id"] not in grouped_ids and not row.get("done"):
-            standalone = dict(row)
-            standalone["state"] = classify_todo(standalone, readiness)
-            groups.append({
-                "parent": None,
-                "inline_children": [standalone],
-                "collapsed_children": [],
-                "aggregate_state": standalone["state"],
-                "join_status": "",
-                "expanded_by_default": True,
-            })
     return groups
 
 
@@ -432,7 +446,7 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
         parent_text = html.escape(parent["text"])
         panel_id = f"todo-collapsed-children-{parent['id']}-{index}"
         children = group["inline_children"] + group["collapsed_children"]
-        child_rows = "".join(_todo_row_html(child, sigil, name) for child in children)
+        child_rows = "".join(_todo_node_html(child, sigil, name, f"{index}-{child['id']}") for child in children)
         fragments.append(f"""
         <li class="parent-todo-row" data-state="{html.escape(group['aggregate_state'])}">
           <div class="parent-todo-primary">
@@ -448,6 +462,29 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
           <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{child_rows}</ul></div>
         </li>""")
     return "".join(fragments)
+
+
+def _todo_node_html(todo: dict[str, Any], sigil: str, name: str, key: str) -> str:
+    """Render a leaf TODO or a nested TODO disclosure with descendants."""
+    children = todo.get("children", [])
+    if not children:
+        return _todo_row_html(todo, sigil, name)
+    panel_id = f"todo-nested-children-{todo['id']}-{key}"
+    text = html.escape(todo["text"])
+    child_rows = "".join(
+        _todo_node_html(child, sigil, name, f"{key}-{child['id']}") for child in children
+    )
+    return f"""<li class="nested-todo-group" data-state="{html.escape(todo.get('state', 'runnable'))}">
+            <div class="todo-primary">
+                <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
+                    onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
+                <span class="todo-text" title="{text}">{text}</span>
+                <span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+                <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
+                    <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span>
+            </div>
+            <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{child_rows}</ul></div>
+        </li>"""
 
 
 def _copy_todo_button(todo_id: int, text: str) -> str:
