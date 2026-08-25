@@ -141,6 +141,66 @@ def test_gather_project_status_preserves_provenance_fields_for_each_view_model()
         assert "perfected_at" in todo
 
 
+def test_todo_classification_uses_execution_state_before_readiness() -> None:
+    from tools.executive_audio_brief import classify_todo
+
+    assert classify_todo({"id": 1, "done": 0, "execution_state": "claimed"}, {}) == "claimed"
+    assert classify_todo({"id": 2, "done": 0, "execution_state": "running"}, {}) == "running"
+    assert classify_todo({"id": 3, "done": 1, "closure_reason": "stale"}, {}) == "stale"
+    assert classify_todo({"id": 4, "done": 0, "execution_state": "failed", "retry_eligible": True}, {}) == "retry-eligible"
+    assert classify_todo({"id": 5, "done": 0}, {5: False}) == "blocked"
+    assert classify_todo({"id": 6, "done": 0}, {6: True}) == "runnable"
+
+
+def test_build_todo_hierarchy_keeps_runnable_children_inline_and_collapses_other_children() -> None:
+    from tools.executive_audio_brief import build_todo_hierarchy
+
+    rows = [
+        {"id": 10, "text": "Parent", "done": 0, "parent_id": None, "priority": 8},
+        {"id": 11, "text": "Runnable child", "done": 0, "parent_id": 10, "priority": 9},
+        {"id": 12, "text": "Blocked child", "done": 0, "parent_id": 10, "priority": 7},
+    ]
+
+    hierarchy = build_todo_hierarchy(rows, {11: True, 12: False})
+
+    assert len(hierarchy) == 1
+    assert hierarchy[0]["parent"]["id"] == 10
+    assert [child["id"] for child in hierarchy[0]["inline_children"]] == [11]
+    assert [child["id"] for child in hierarchy[0]["collapsed_children"]] == [12]
+    assert hierarchy[0]["expanded_by_default"] is False
+
+
+def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
+    from tools.executive_audio_brief import _todo_hierarchy_html
+
+    hierarchy = [{
+        "parent": {"id": 10, "text": "A very long parent title", "priority": 8, "source": "AI"},
+        "inline_children": [{"id": 11, "text": "Runnable child", "priority": 9, "source": "AI", "state": "runnable"}],
+        "collapsed_children": [{"id": 12, "text": "Blocked child", "priority": 7, "source": "AI", "state": "blocked"}],
+        "aggregate_state": "runnable",
+        "join_status": "2 children · 1 runnable",
+    }]
+
+    output = _todo_hierarchy_html(hierarchy, "⊕", "Workspace")
+
+    assert 'aria-expanded="false"' in output
+    assert "A very long parent title" in output
+    assert "2 children · 1 runnable" in output
+    assert 'title="A very long parent title"' in output
+    assert 'class="todo-collapsed-children" hidden' in output
+    assert output.index("Runnable child") < output.index("Blocked child")
+    assert 'onclick="copyTodoText(this)"' in output
+    assert 'data-copy-text="A very long parent title"' in output
+    assert 'data-copy-text="Runnable child"' in output
+    assert 'data-copy-text="Blocked child"' in output
+    assert 'onclick="markDone(10, this)"' in output
+    assert 'onclick="cancelTodo(10, this)"' in output
+    parent_primary = output.split('<div class="todo-meta">', 1)[0]
+    assert '<span class="todo-state">' not in parent_primary
+    assert "runNext" not in output
+    assert "Execution queue" not in output
+
+
 def test_status_card_renders_ids_and_independent_provenance_signals_without_changing_done_target() -> None:
     from tools.executive_audio_brief import _status_card_html
 
@@ -187,11 +247,27 @@ def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> 
     assert ".todo-list li {" in out
     assert "grid-template-columns:" in out
     assert ".todo-text {" in out
+    assert "display: block;" in out
+    assert "max-width: 100%;" in out
+    assert '"text text"' in out
+    assert '"state actions"' in out
     assert "min-width: 0;" in out
     assert "overflow-wrap: anywhere;" in out
     assert "line-height: 1.45;" in out
     assert ".todo-signal {" in out
     assert "min-width: 7.5rem;" in out
+    assert 'content: "☐ ";' not in out
+
+
+def test_portal_styles_distinguish_execution_states() -> None:
+    """Execution states have dedicated visual treatments in the generated CSS."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    out = generate_portal_html([], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    for state in ("runnable", "blocked", "claimed", "running", "retry-eligible"):
+        assert f'[data-state="{state}"]' in out
+    assert '.todo-state::before' not in out
 
 
 def test_status_card_todo_rows_render_primary_text_before_metadata() -> None:
@@ -219,7 +295,7 @@ def test_status_card_todo_rows_render_primary_text_before_metadata() -> None:
     assert ".todo-primary {" in out
 
 
-def test_status_card_todo_checkbox_has_a_stable_non_overlapping_gutter() -> None:
+def test_status_card_todo_rows_have_stable_non_overlapping_spacing() -> None:
     """The open-row marker must be anchored in a dedicated text gutter."""
     from tools.executive_audio_brief import generate_portal_html
 
@@ -233,7 +309,7 @@ def test_status_card_todo_checkbox_has_a_stable_non_overlapping_gutter() -> None
             "full_todos": [],
             "supervised_todos": [{
                 "id": 231,
-                "text": "A readable task with a checkbox gutter",
+                "text": "A readable task without a checkbox gutter",
                 "priority": 8,
                 "source": "TYLER",
                 "perfected_at": None,
@@ -251,8 +327,8 @@ def test_status_card_todo_checkbox_has_a_stable_non_overlapping_gutter() -> None
     )
 
     assert "position: relative;" in out
-    assert "padding: 0.25rem 0 0.25rem 1.2rem;" in out
-    assert "left: 0;" in out
+    assert "padding: 0.25rem 0;" in out
+    assert 'content: "☐ ";' not in out
     assert "padding-left: 0;" in out
     assert 'grid-template-areas:\n        "primary"\n        "meta";' in out
     assert "min-width: 0;" in out
