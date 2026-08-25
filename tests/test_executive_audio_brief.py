@@ -170,6 +170,58 @@ def test_build_todo_hierarchy_keeps_runnable_children_inline_and_collapses_other
     assert hierarchy[0]["expanded_by_default"] is False
 
 
+def test_build_todo_hierarchy_supports_cross_domain_parents_and_nested_children() -> None:
+    from tools.executive_audio_brief import build_todo_hierarchy
+
+    rows = [
+        {"id": 300, "text": "Root", "done": 0, "parent_id": None, "priority": 9, "project": "workspace"},
+        {"id": 304, "text": "Nested parent", "done": 0, "parent_id": 300, "priority": 8, "project": "workspace"},
+        {"id": 324, "text": "Nested child", "done": 0, "parent_id": 304, "priority": 7, "project": "workspace"},
+        {"id": 349, "text": "Cross-domain child", "done": 0, "parent_id": 307, "priority": 6, "project": "quantum"},
+        {"id": 307, "text": "Cross-domain parent", "done": 0, "parent_id": None, "priority": 9, "project": "workspace"},
+        {"id": 350, "text": "Completed child", "done": 1, "parent_id": 307, "priority": 5, "project": "ai_manifest"},
+    ]
+
+    hierarchy = build_todo_hierarchy(rows, {324: True, 349: False, 350: True})
+
+    assert [group["parent"]["id"] for group in hierarchy] == [300, 307]
+    root = hierarchy[0]
+    nested_parent = root["inline_children"][0]
+    assert nested_parent["id"] == 304
+    assert [child["id"] for child in nested_parent["children"]] == [324]
+    cross_domain = hierarchy[1]
+    assert [child["id"] for child in cross_domain["inline_children"]] == []
+    assert [child["id"] for child in cross_domain["collapsed_children"]] == [349]
+    assert "Completed child" not in str(hierarchy)
+
+
+def test_gather_project_status_keeps_cross_domain_ancestor_context() -> None:
+    from tools.executive_audio_brief import gather_project_status
+
+    parent = {"id": 307, "text": "Cross-domain parent", "done": 0, "parent_id": None,
+              "priority": 9, "project": "workspace", "autonomy_level": "full", "source": "TYLER"}
+    child = {"id": 349, "text": "Cross-domain child", "done": 0, "parent_id": 307,
+             "priority": 6, "project": "quantum", "autonomy_level": "human", "source": "TYLER"}
+    project = {
+        "sigil": "⟨ψ⟩", "name": "Quantum", "key": "quantum", "root": Path("f:/⟨ψ⟩Quantum"),
+        "always_include": False, "priority_weight": 1,
+    }
+
+    def open_todos(project_key=None):
+        return [child] if project_key == "quantum" else [parent, child]
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", side_effect=open_todos),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[]),
+        patch("tools.executive_audio_brief.get_readiness", return_value={"ready": True}),
+    ):
+        status = gather_project_status(project)
+
+    rendered = str(status["todo_hierarchy"])
+    assert "Cross-domain parent" in rendered
+    assert "Cross-domain child" in rendered
+
+
 def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
     from tools.executive_audio_brief import _todo_hierarchy_html
 
