@@ -13,6 +13,19 @@ from src.utils.database_backup_inventory import (
 )
 
 
+def test_ci_exports_backup_contract_and_preserves_blocking_exclusion_reporting() -> None:
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "test.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "WORKSPACE_BACKUP_ENGINE_PATH=${GITHUB_WORKSPACE}/workspace/src/utils/database_backup.py" in workflow
+    assert "CI exclusion report: pytest will print skip reasons and summary counts" in workflow
+    assert "pytest --collect-only -q -o addopts= -m \"not playwright and not live\"" in workflow
+    assert "pytest -v --tb=short -rs -m \"not playwright and not live\" 2>&1 | tee pytest.log" in workflow
+    assert "set -o pipefail" in workflow
+    assert "continue-on-error" not in workflow
+
+
 def _inventory(databases: list[dict[str, object]]) -> dict[str, object]:
     return {
         "schema_version": 1,

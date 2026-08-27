@@ -37,6 +37,7 @@ def tmp_db(tmp_path):
             created_at TEXT NOT NULL,
             priority INTEGER NOT NULL DEFAULT 5,
             autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+            context_snapshot TEXT,
             fr_id TEXT
         )
     """)

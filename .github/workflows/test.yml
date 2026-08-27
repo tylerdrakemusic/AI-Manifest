@@ -28,6 +28,7 @@ jobs:
       - name: Export Workspace root for shared imports
         run: |
           echo "WORKSPACE_ROOT=${GITHUB_WORKSPACE}/workspace" >> $GITHUB_ENV
+          echo "WORKSPACE_BACKUP_ENGINE_PATH=${GITHUB_WORKSPACE}/workspace/src/utils/database_backup.py" >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -38,4 +39,8 @@ jobs:
       - name: Run pytest
         env:
           PLAYWRIGHT_ENABLED: "0"  # Set to "1" locally to run Playwright tests (FR-20260513-playwright-ui-gate)
-        run: pytest -v --tb=short
+        run: |
+          set -o pipefail
+          echo "CI exclusion report: pytest will print skip reasons and summary counts"
+          pytest --collect-only -q -o addopts= -m "not playwright and not live"
+          pytest -v --tb=short -rs -m "not playwright and not live" 2>&1 | tee pytest.log
