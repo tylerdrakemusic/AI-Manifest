@@ -2,14 +2,14 @@
 
 ## Contract Boundary
 
-The Workspace-owned contract is exchanged through the versioned, repository-local
-manifest at `src/contracts/todo_decision_metadata.v1.json`. AI-Manifest loads
-that manifest through `src/utils/todo_decision_contract.py`; it does not import
-Workspace code or derive a second set of field, category, scale, or evidence
-rules. This keeps the repositories runtime-isolated while making the boundary
-reviewable and portable. The ownership test in
-`tests/test_todo_decision_metadata.py` fails if the validator or public database
-path drifts from the manifest.
+The Workspace-owned contract is exchanged through identical, versioned,
+repository-local manifests at `src/contracts/todo_decision_metadata.v1.json`.
+AI-Manifest loads its local manifest through `src/utils/todo_decision_contract.py`
+and Workspace loads its own through the same-shaped local loader. Neither
+repository imports code or reads files from the other at runtime. The Workspace
+parity test compares the parsed JSON artifacts and fails if either snapshot
+drifts; the ownership test also fails if a validator stops deriving its rules
+from its local manifest.
 
 The manifest is a contract snapshot, not a second persistence schema. Each
 repository may store current and append-only history in its own database shape,
