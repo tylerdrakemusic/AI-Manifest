@@ -1,5 +1,20 @@
 # Todo Decision Metadata
 
+## Contract Boundary
+
+The Workspace-owned contract is exchanged through the versioned, repository-local
+manifest at `src/contracts/todo_decision_metadata.v1.json`. AI-Manifest loads
+that manifest through `src/utils/todo_decision_contract.py`; it does not import
+Workspace code or derive a second set of field, category, scale, or evidence
+rules. This keeps the repositories runtime-isolated while making the boundary
+reviewable and portable. The ownership test in
+`tests/test_todo_decision_metadata.py` fails if the validator or public database
+path drifts from the manifest.
+
+The manifest is a contract snapshot, not a second persistence schema. Each
+repository may store current and append-only history in its own database shape,
+provided its public API emits and accepts the manifest's normalized payload.
+
 AI-Manifest stores the current decision assessment in
 `todo_decision_metadata` and every submitted assessment in the append-only
 `todo_decision_assessments` history table.
@@ -33,10 +48,10 @@ return only the canonical assessment fields and `evidence` as a list.
 
 ## Enforcement
 
-Validation is progressive. Evidence is required for high-impact or oversized
-todos, represented by priority 8 through 10 or an `estimated_effort` value of
-`large`, `xl`, `x-large`, or `oversized`. Lower-impact assessments can be
-recorded without evidence while the decision is still being developed.
+Validation is progressive. Evidence is required when any score is 8 or higher,
+and two evidence items are required when any score is 9 or higher. Lower-impact
+assessments can be recorded without evidence while the decision is still being
+developed. TODO priority and estimated effort do not change metadata validation.
 
 ## Compatibility
 
@@ -49,5 +64,5 @@ immediate transaction, so each saved assessment is versioned in history.
 ## Priority
 
 `get_priority_guidance()` returns an advisory recommendation derived from the
-current `confidence`. It never changes `todos.priority`. Explicit priority
-updates remain bounded to 1 through 10 and append to `priority_history`.
+mean of the five canonical scores. It never changes `todos.priority`. Explicit
+priority updates remain bounded to 1 through 10 and append to `priority_history`.

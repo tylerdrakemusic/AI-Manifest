@@ -265,3 +265,60 @@ def test_canonical_score_fields_are_integer_1_to_10_and_expose_scale_anchors() -
     assert all(isinstance(normalized[field], int) for field in SCORE_FIELDS)
     assert all(1 <= normalized[field] <= 10 for field in SCORE_FIELDS)
     assert normalized["scale"] == SCALE_ANCHORS
+
+
+def test_public_persistence_path_uses_versioned_canonical_contract(tmp_db: Path) -> None:
+    from src.utils import todo_decision_contract, todo_decision_metadata, todos_db
+
+    todo_id = todos_db.add_todo("ai_manifest", "Use the governed contract")
+    metadata = {
+        "expected_value": 8,
+        "user_or_system_benefit": 7,
+        "strategic_alignment": 6,
+        "confidence": 7,
+        "cost_of_delay": 8,
+        "primary_benefit_category": "system",
+        "benefit_summary": "A shared contract prevents drift.",
+        "justification": "The public setter must enforce the governed boundary.",
+        "evidence": ["test: contract boundary"],
+    }
+
+    assert todo_decision_metadata.CONTRACT_VERSION == todo_decision_contract.VERSION
+    assert todo_decision_metadata.SCORE_FIELDS == todo_decision_contract.SCORE_FIELDS
+    assert todo_decision_metadata.BENEFIT_CATEGORIES == todo_decision_contract.BENEFIT_CATEGORIES
+    assert todo_decision_metadata.SCALE_ANCHORS == todo_decision_contract.SCALE_ANCHORS
+    assert todos_db.ALLOWED_BENEFIT_CATEGORIES == tuple(todo_decision_contract.BENEFIT_CATEGORIES)
+    assert not hasattr(todos_db, "_validate_decision_metadata")
+
+    todos_db.set_decision_metadata(todo_id, metadata, assessed_by="contract-test")
+    expected = todo_decision_metadata.validate_decision_metadata(metadata)
+    assert todos_db.get_decision_metadata(todo_id) == expected
+    assert todos_db.get_decision_assessments(todo_id)[0]["metadata"] == expected
+
+
+def test_priority_guidance_uses_all_scores_and_remains_advisory(tmp_db: Path) -> None:
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("ai_manifest", "Calculate advisory guidance", priority=3)
+    metadata = {
+        "expected_value": 1,
+        "user_or_system_benefit": 10,
+        "strategic_alignment": 1,
+        "confidence": 10,
+        "cost_of_delay": 1,
+        "primary_benefit_category": "learning",
+        "benefit_summary": "Mixed signals need an aggregate recommendation.",
+        "justification": "Advisory guidance must use the full score set.",
+        "evidence": ["test: aggregate guidance", "test: second evidence"],
+    }
+
+    todos_db.set_decision_metadata(todo_id, metadata, assessed_by="contract-test")
+
+    guidance = todos_db.get_priority_guidance(todo_id)
+    assert guidance == {
+        "todo_id": todo_id,
+        "current_priority": 3,
+        "recommended_priority": 5,
+        "advisory": True,
+    }
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 3

@@ -22,16 +22,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .todo_decision_metadata import SCORE_FIELDS, validate_decision_metadata
+from .todo_decision_contract import BENEFIT_CATEGORIES
+from .todo_decision_metadata import SCORE_FIELDS, priority_guidance, validate_decision_metadata
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
 ALLOWED_DECISIONS = ("proceed", "defer", "reject")
-ALLOWED_BENEFIT_CATEGORIES = (
-    "user", "system", "strategic", "revenue", "risk_reduction", "learning",
-    "maintenance", "compliance",
-)
+ALLOWED_BENEFIT_CATEGORIES = BENEFIT_CATEGORIES
 ALLOWED_IMPACTS = ("low", "medium", "high")
 FR_ID_PATTERN = re.compile(r"^FR-\d{8}-[a-z0-9][a-z0-9-]*$")
 TERMINAL_STATES = frozenset({"completed", "cancelled", "stale"})
@@ -464,34 +462,6 @@ def update_priority(todo_id: int, priority: int) -> bool:
     return cur.rowcount == 1
 
 
-def _validate_decision_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    required = {
-        "expected_value", "user_or_system_benefit", "strategic_alignment", "confidence",
-        "cost_of_delay", "primary_benefit_category", "benefit_summary", "justification",
-        "evidence",
-    }
-    missing = required.difference(metadata)
-    if missing:
-        raise ValueError(f"decision metadata is missing required fields: {sorted(missing)!r}")
-    allowed = required | {"secondary_benefit_category"}
-    unexpected = set(metadata).difference(allowed)
-    if unexpected:
-        raise ValueError(f"decision metadata has unexpected fields: {sorted(unexpected)!r}")
-    if metadata["primary_benefit_category"] not in ALLOWED_BENEFIT_CATEGORIES:
-        raise ValueError(f"primary_benefit_category must be one of {ALLOWED_BENEFIT_CATEGORIES!r}")
-    secondary = metadata.get("secondary_benefit_category")
-    if secondary is not None and secondary not in ALLOWED_BENEFIT_CATEGORIES:
-        raise ValueError(f"secondary_benefit_category must be one of {ALLOWED_BENEFIT_CATEGORIES!r}")
-    if not isinstance(metadata["confidence"], int) or isinstance(metadata["confidence"], bool) or metadata["confidence"] not in range(1, 11):
-        raise ValueError("confidence must be an integer from 1-10")
-    for field in required - {"confidence", "evidence"}:
-        if not isinstance(metadata[field], str) or not metadata[field].strip():
-            raise ValueError(f"{field} must be a non-empty string")
-    if not isinstance(metadata["evidence"], list) or not all(isinstance(item, str) and item.strip() for item in metadata["evidence"]):
-        raise ValueError("evidence must be a non-empty list of strings")
-    return metadata
-
-
 def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by: str) -> None:
     """Validate and transactionally replace current metadata and append an assessment."""
     metadata = validate_decision_metadata(metadata)
@@ -505,10 +475,6 @@ def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by
             todo = conn.execute("SELECT priority, estimated_effort FROM todos WHERE id=?", (todo_id,)).fetchone()
             if todo is None:
                 raise ValueError("todo not found")
-            effort = str(todo["estimated_effort"] or "").strip().lower()
-            oversized = effort in {"large", "xl", "x-large", "oversized"}
-            if (int(todo["priority"]) >= 8 or oversized) and not metadata["evidence"]:
-                raise ValueError("high-impact or oversized decision metadata requires evidence")
             values = tuple(metadata[field] for field in (
                 "expected_value", "user_or_system_benefit", "strategic_alignment", "confidence",
                 "cost_of_delay", "primary_benefit_category",
@@ -591,11 +557,14 @@ def get_priority_guidance(todo_id: int) -> dict[str, Any]:
     if todo is None:
         raise ValueError("todo not found")
     metadata = get_decision_metadata(todo_id)
+    guidance = priority_guidance(metadata, todo["priority"]) if metadata else {
+        "current_priority": todo["priority"],
+        "recommended_priority": None,
+        "advisory": True,
+    }
     return {
         "todo_id": todo_id,
-        "current_priority": todo["priority"],
-        "recommended_priority": metadata["confidence"] if metadata else None,
-        "advisory": True,
+        **guidance,
     }
 
 

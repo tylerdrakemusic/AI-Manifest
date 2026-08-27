@@ -1,0 +1,50 @@
+{
+  "version": "1",
+  "score_fields": [
+    "expected_value",
+    "user_or_system_benefit",
+    "strategic_alignment",
+    "confidence",
+    "cost_of_delay"
+  ],
+  "required_fields": [
+    "expected_value",
+    "user_or_system_benefit",
+    "strategic_alignment",
+    "confidence",
+    "cost_of_delay",
+    "primary_benefit_category",
+    "benefit_summary",
+    "justification",
+    "evidence"
+  ],
+  "optional_fields": ["secondary_benefit_category"],
+  "benefit_categories": [
+    "user",
+    "system",
+    "strategic",
+    "revenue",
+    "risk_reduction",
+    "learning",
+    "maintenance",
+    "compliance"
+  ],
+  "scale": {
+    "min": 1,
+    "max": 10,
+    "anchors": {
+      "1": "minimal",
+      "3": "low",
+      "5": "moderate",
+      "7": "strong",
+      "8": "high",
+      "9": "very high",
+      "10": "exceptional"
+    }
+  },
+  "evidence_policy": {
+    "high_impact_min_score": 8,
+    "very_high_impact_min_score": 9,
+    "very_high_impact_min_evidence": 2
+  }
+}

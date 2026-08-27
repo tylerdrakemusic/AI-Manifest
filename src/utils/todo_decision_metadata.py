@@ -7,33 +7,14 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from . import todo_decision_contract
 
-BENEFIT_CATEGORIES = frozenset({
-    "user", "system", "strategic", "revenue", "risk_reduction",
-    "learning", "maintenance", "compliance",
-})
-SCORE_FIELDS = (
-    "expected_value", "user_or_system_benefit", "strategic_alignment",
-    "confidence", "cost_of_delay",
-)
-REQUIRED_FIELDS = frozenset({
-    *SCORE_FIELDS, "primary_benefit_category", "benefit_summary",
-    "justification", "evidence",
-})
-OPTIONAL_FIELDS = frozenset({"secondary_benefit_category"})
-SCALE_ANCHORS = {
-    "min": 1,
-    "max": 10,
-    "anchors": {
-        1: "minimal",
-        3: "low",
-        5: "moderate",
-        7: "strong",
-        8: "high",
-        9: "very high",
-        10: "exceptional",
-    },
-}
+CONTRACT_VERSION = todo_decision_contract.VERSION
+BENEFIT_CATEGORIES = todo_decision_contract.BENEFIT_CATEGORIES
+SCORE_FIELDS = todo_decision_contract.SCORE_FIELDS
+REQUIRED_FIELDS = todo_decision_contract.REQUIRED_FIELDS
+OPTIONAL_FIELDS = todo_decision_contract.OPTIONAL_FIELDS
+SCALE_ANCHORS = todo_decision_contract.SCALE_ANCHORS
 
 
 class DecisionMetadataError(ValueError):
@@ -81,9 +62,12 @@ def validate_decision_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if not all(isinstance(item, str) and item.strip() for item in evidence):
         raise DecisionMetadataError("evidence items must be non-empty strings")
     impact = max(scores.values())
-    if impact >= 8 and not evidence:
+    if impact >= todo_decision_contract.EVIDENCE_POLICY["high_impact_min_score"] and not evidence:
         raise DecisionMetadataError("high-impact metadata requires evidence")
-    if impact >= 9 and len(evidence) < 2:
+    if (
+        impact >= todo_decision_contract.EVIDENCE_POLICY["very_high_impact_min_score"]
+        and len(evidence) < todo_decision_contract.EVIDENCE_POLICY["very_high_impact_min_evidence"]
+    ):
         raise DecisionMetadataError("very high-impact metadata requires two evidence items")
 
     normalized["scale"] = {
