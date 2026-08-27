@@ -6,12 +6,13 @@ AI-Manifest stores the current decision assessment in
 
 ## Contract
 
-Each assessment requires these canonical fields:
+Each assessment requires these canonical fields. Every field in `SCORE_FIELDS`
+is an integer from 1 through 10:
 
 - `expected_value`
 - `user_or_system_benefit`
 - `strategic_alignment`
-- `confidence`, an integer from 1 through 10
+- `confidence`
 - `cost_of_delay`
 - `primary_benefit_category`
 - `benefit_summary`
@@ -21,6 +22,10 @@ Each assessment requires these canonical fields:
 `secondary_benefit_category` is optional. Primary and secondary categories,
 when present, must be one of `user`, `system`, `strategic`, `revenue`,
 `risk_reduction`, `learning`, `maintenance`, or `compliance`.
+
+The canonical scale is exposed as `SCALE_ANCHORS` and on normalized metadata:
+`1` minimal, `3` low, `5` moderate, `7` strong, `8` high, `9` very high, and
+`10` exceptional.
 
 Legacy names such as `benefit_category`, `impact_score`,
 `confidence_score`, and `rationale` are rejected. The public helper APIs

@@ -19,15 +19,15 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_decision_metadata_round_trip_and_assessment_history(tmp_db: Path) -> None:
-    from src.utils import todos_db
+    from src.utils import todo_decision_metadata, todos_db
 
     todo_id = todos_db.add_todo("ai_manifest", "Persist a decision", priority=4)
     metadata = {
-        "expected_value": "Improves operational clarity.",
-        "user_or_system_benefit": "Faster, more consistent triage.",
-        "strategic_alignment": "Supports the shared todo contract.",
+        "expected_value": 8,
+        "user_or_system_benefit": 7,
+        "strategic_alignment": 8,
         "confidence": 8,
-        "cost_of_delay": "Repeated manual rework.",
+        "cost_of_delay": 7,
         "primary_benefit_category": "system",
         "secondary_benefit_category": "maintenance",
         "benefit_summary": "Standardized decisions reduce ambiguity.",
@@ -36,6 +36,7 @@ def test_decision_metadata_round_trip_and_assessment_history(tmp_db: Path) -> No
     }
 
     todos_db.set_decision_metadata(todo_id, metadata, assessed_by="agent")
+    metadata = todo_decision_metadata.validate_decision_metadata(metadata)
 
     current = todos_db.get_decision_metadata(todo_id)
     history = todos_db.get_decision_assessments(todo_id)
@@ -47,6 +48,30 @@ def test_decision_metadata_round_trip_and_assessment_history(tmp_db: Path) -> No
     assert guidance["recommended_priority"] == 8
     assert guidance["current_priority"] == 4
     assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
+
+
+def test_public_setter_persists_canonical_integer_metadata_and_normalized_history(tmp_db: Path) -> None:
+    from src.utils import todo_decision_metadata, todos_db
+
+    todo_id = todos_db.add_todo("ai_manifest", "Persist canonical metadata", priority=4)
+    metadata = {
+        "expected_value": 8,
+        "user_or_system_benefit": 7,
+        "strategic_alignment": 6,
+        "confidence": 7,
+        "cost_of_delay": 8,
+        "primary_benefit_category": "risk_reduction",
+        "benefit_summary": "Reduces repeated operational failures.",
+        "justification": "The canonical contract is shared across project boundaries.",
+        "evidence": ["test: public persistence path"],
+        "scale": todo_decision_metadata.SCALE_ANCHORS,
+    }
+
+    expected = todo_decision_metadata.validate_decision_metadata(metadata)
+    todos_db.set_decision_metadata(todo_id, metadata, assessed_by="agent")
+
+    assert todos_db.get_decision_metadata(todo_id) == expected
+    assert todos_db.get_decision_assessments(todo_id)[0]["metadata"] == expected
 
 
 def test_invalid_scores_and_categories_are_rejected_without_writing(tmp_db: Path) -> None:
@@ -75,11 +100,11 @@ def test_high_impact_metadata_requires_evidence(tmp_db: Path) -> None:
 
     todo_id = todos_db.add_todo("ai_manifest", "Require evidence", priority=9)
     metadata = {
-        "expected_value": "High impact change.",
-        "user_or_system_benefit": "Safer operation.",
-        "strategic_alignment": "Reduces operational risk.",
+        "expected_value": 8,
+        "user_or_system_benefit": 8,
+        "strategic_alignment": 8,
         "confidence": 7,
-        "cost_of_delay": "Continued risk.",
+        "cost_of_delay": 8,
         "primary_benefit_category": "risk_reduction",
         "benefit_summary": "High impact change.",
         "justification": "High impact change.",
@@ -95,11 +120,11 @@ def test_canonical_metadata_rejects_legacy_field_names_and_unknown_categories(tm
 
     todo_id = todos_db.add_todo("ai_manifest", "Reject drift")
     metadata = {
-        "expected_value": "Useful.",
-        "user_or_system_benefit": "Useful.",
-        "strategic_alignment": "Useful.",
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
         "confidence": 8,
-        "cost_of_delay": "Useful.",
+        "cost_of_delay": 5,
         "primary_benefit_category": "user",
         "benefit_summary": "Useful.",
         "justification": "Useful.",
@@ -107,20 +132,20 @@ def test_canonical_metadata_rejects_legacy_field_names_and_unknown_categories(tm
         "rationale": "legacy alias",
     }
 
-    with pytest.raises(ValueError, match="unexpected"):
+    with pytest.raises(ValueError, match="unsupported"):
         todos_db.set_decision_metadata(todo_id, metadata, assessed_by="agent")
 
 
 def test_canonical_metadata_supports_optional_secondary_category(tmp_db: Path) -> None:
-    from src.utils import todos_db
+    from src.utils import todo_decision_metadata, todos_db
 
     todo_id = todos_db.add_todo("ai_manifest", "Use canonical categories")
     metadata = {
-        "expected_value": "Useful.",
-        "user_or_system_benefit": "Useful.",
-        "strategic_alignment": "Useful.",
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
         "confidence": 6,
-        "cost_of_delay": "Useful.",
+        "cost_of_delay": 5,
         "primary_benefit_category": "user",
         "benefit_summary": "Useful.",
         "justification": "Useful.",
@@ -129,7 +154,7 @@ def test_canonical_metadata_supports_optional_secondary_category(tmp_db: Path) -
 
     todos_db.set_decision_metadata(todo_id, metadata, assessed_by="agent")
 
-    assert todos_db.get_decision_metadata(todo_id) == metadata
+    assert todos_db.get_decision_metadata(todo_id) == todo_decision_metadata.validate_decision_metadata(metadata)
 
 
 def test_legacy_todo_has_no_fabricated_decision_metadata(tmp_db: Path) -> None:
@@ -142,17 +167,25 @@ def test_legacy_todo_has_no_fabricated_decision_metadata(tmp_db: Path) -> None:
 
 
 def test_reassessment_updates_current_but_preserves_history(tmp_db: Path) -> None:
-    from src.utils import todos_db
+    from src.utils import todo_decision_metadata, todos_db
 
     todo_id = todos_db.add_todo("ai_manifest", "Retain assessments")
     first = {
-        "expected_value": "Need more data.", "user_or_system_benefit": "Better evidence.",
-        "strategic_alignment": "Improve decision quality.", "confidence": 4,
-        "cost_of_delay": "Uncertainty persists.", "primary_benefit_category": "learning",
+        "expected_value": 4, "user_or_system_benefit": 4,
+        "strategic_alignment": 4, "confidence": 4,
+        "cost_of_delay": 4, "primary_benefit_category": "learning",
         "benefit_summary": "Need more data.", "justification": "Need more data.",
         "evidence": ["unknown"],
     }
-    second = {**first, "confidence": 9, "justification": "Evidence arrived."}
+    second = {
+        **first,
+        "confidence": 9,
+        "justification": "Evidence arrived.",
+        "evidence": ["unknown", "test: evidence arrived"],
+    }
+
+    first = todo_decision_metadata.validate_decision_metadata(first)
+    second = todo_decision_metadata.validate_decision_metadata(second)
 
     todos_db.set_decision_metadata(todo_id, first, assessed_by="agent-a")
     todos_db.set_decision_metadata(todo_id, second, assessed_by="agent-b")
@@ -210,3 +243,25 @@ def test_explicit_priority_update_is_bounded_and_historized(tmp_db: Path) -> Non
         ).fetchall()
     assert [row[0] for row in rows] == [9]
     assert todos_db.get_todo_by_id(todo_id)["priority"] == 9
+
+
+def test_canonical_score_fields_are_integer_1_to_10_and_expose_scale_anchors() -> None:
+    from src.utils.todo_decision_metadata import SCORE_FIELDS, SCALE_ANCHORS, validate_decision_metadata
+
+    metadata = {
+        "expected_value": 8,
+        "user_or_system_benefit": 7,
+        "strategic_alignment": 6,
+        "confidence": 7,
+        "cost_of_delay": 8,
+        "primary_benefit_category": "risk_reduction",
+        "benefit_summary": "Reduces repeated operational failures.",
+        "justification": "The change addresses a measured failure mode.",
+        "evidence": ["test: measured failure mode"],
+    }
+
+    normalized = validate_decision_metadata(metadata)
+
+    assert all(isinstance(normalized[field], int) for field in SCORE_FIELDS)
+    assert all(1 <= normalized[field] <= 10 for field in SCORE_FIELDS)
+    assert normalized["scale"] == SCALE_ANCHORS

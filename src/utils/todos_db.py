@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .todo_decision_metadata import SCORE_FIELDS, validate_decision_metadata
+
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
@@ -492,7 +494,7 @@ def _validate_decision_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by: str) -> None:
     """Validate and transactionally replace current metadata and append an assessment."""
-    metadata = _validate_decision_metadata(metadata)
+    metadata = validate_decision_metadata(metadata)
     if not isinstance(assessed_by, str) or not assessed_by.strip():
         raise ValueError("assessed_by must be a non-empty string")
     now = datetime.now(timezone.utc).isoformat()
@@ -551,9 +553,11 @@ def _decision_metadata(row: sqlite3.Row) -> dict[str, Any]:
     result.pop("assessed_at", None)
     result.pop("assessed_by", None)
     result["evidence"] = json.loads(result["evidence"])
+    for field in SCORE_FIELDS:
+        result[field] = int(result[field])
     if result.get("secondary_benefit_category") is None:
         result.pop("secondary_benefit_category", None)
-    return result
+    return validate_decision_metadata(result)
 
 
 def get_decision_metadata(todo_id: int) -> dict[str, Any] | None:
