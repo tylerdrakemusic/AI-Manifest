@@ -1,0 +1,6 @@
+{
+  "parallel_ci": false,
+  "parallel_supported": true,
+  "excluded_markers": ["playwright", "live"],
+  "serial_reason": "Live API, browser, and service integration tests remain excluded by existing CI policy and serial locally."
+}
