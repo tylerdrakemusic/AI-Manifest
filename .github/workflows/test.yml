@@ -43,4 +43,11 @@ jobs:
           set -o pipefail
           echo "CI exclusion report: pytest will print skip reasons and summary counts"
           pytest --collect-only -q -o addopts= -m "not playwright and not live"
-          pytest -v --tb=short -rs -m "not playwright and not live" 2>&1 | tee pytest.log
+          pytest -v --tb=short -rs -m "not playwright and not live" --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: tmp/pytest-junit.xml
