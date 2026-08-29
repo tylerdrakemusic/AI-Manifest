@@ -22,9 +22,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .todo_decision_contract import BENEFIT_CATEGORIES
+from .todo_decision_metadata import SCORE_FIELDS, priority_guidance, validate_decision_metadata
+
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 ALLOWED_SOURCES = ("AI", "TYLER", "SCAN")
 ALLOWED_AUTONOMY_LEVELS = ("full", "supervised", "human")
+ALLOWED_DECISIONS = ("proceed", "defer", "reject")
+ALLOWED_BENEFIT_CATEGORIES = BENEFIT_CATEGORIES
+ALLOWED_IMPACTS = ("low", "medium", "high")
 FR_ID_PATTERN = re.compile(r"^FR-\d{8}-[a-z0-9][a-z0-9-]*$")
 TERMINAL_STATES = frozenset({"completed", "cancelled", "stale"})
 DEFAULT_TERMINAL_STATES = TERMINAL_STATES
@@ -100,6 +106,7 @@ def _table_allows_scan_source(conn: sqlite3.Connection) -> bool:
 
 def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
     # Rebuild the table because SQLite cannot ALTER an existing CHECK constraint.
+    closed_at_expression = "closed_at" if _has_column(conn, "todos", "closed_at") else "NULL"
     closure_reason_expression = "closure_reason" if _has_column(conn, "todos", "closure_reason") else "NULL"
     parent_expression = "parent_id" if _has_column(conn, "todos", "parent_id") else "NULL"
     dependencies_expression = "dependencies" if _has_column(conn, "todos", "dependencies") else "NULL"
@@ -124,9 +131,10 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
         """)
         conn.execute("""
             INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at, parent_id, dependencies)
-            SELECT id, project, source, text, done, created_at, closed_at, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}
+            SELECT id, project, source, text, done, created_at, {closed_at_expression}, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}
             FROM todos
         """.format(
+            closed_at_expression=closed_at_expression,
             closure_reason_expression=closure_reason_expression,
             parent_expression=parent_expression,
             dependencies_expression=dependencies_expression,
@@ -162,6 +170,66 @@ def _create_graph_schema(conn: sqlite3.Connection) -> None:
             confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0, 1)),
             created_at TEXT NOT NULL,
             PRIMARY KEY (todo_id, fr_id)
+        )
+    """)
+
+
+def _ensure_decision_metadata_schema(conn: sqlite3.Connection) -> None:
+    """Create the canonical assessment tables while preserving legacy tables."""
+    current_columns = {
+        "todo_id", "expected_value", "user_or_system_benefit", "strategic_alignment",
+        "confidence", "cost_of_delay", "primary_benefit_category",
+        "secondary_benefit_category", "benefit_summary", "justification", "evidence",
+        "assessed_by", "updated_at",
+    }
+    history_columns = current_columns - {"updated_at"} | {"assessed_at", "id"}
+    for table, required_columns, suffix in (
+        ("todo_decision_metadata", current_columns, "legacy"),
+        ("todo_decision_assessments", history_columns, "legacy"),
+    ):
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if existing and not required_columns.issubset(existing):
+            legacy_table = f"{table}_{suffix}"
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (legacy_table,)
+            ).fetchone():
+                conn.execute(f"ALTER TABLE {table} RENAME TO {legacy_table}")  # nosec B608 — table names are internal constants
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS todo_decision_metadata (
+            todo_id INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+            expected_value TEXT NOT NULL,
+            user_or_system_benefit TEXT NOT NULL,
+            strategic_alignment TEXT NOT NULL,
+            confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 10),
+            cost_of_delay TEXT NOT NULL,
+            primary_benefit_category TEXT NOT NULL,
+            secondary_benefit_category TEXT,
+            benefit_summary TEXT NOT NULL,
+            justification TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            assessed_by TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS todo_decision_assessments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+            expected_value TEXT NOT NULL,
+            user_or_system_benefit TEXT NOT NULL,
+            strategic_alignment TEXT NOT NULL,
+            confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 10),
+            cost_of_delay TEXT NOT NULL,
+            primary_benefit_category TEXT NOT NULL,
+            secondary_benefit_category TEXT,
+            benefit_summary TEXT NOT NULL,
+            justification TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            assessed_by TEXT NOT NULL,
+            assessed_at TEXT NOT NULL
         )
     """)
 
@@ -262,6 +330,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE todos ADD COLUMN parent_id INTEGER")
 
         _create_graph_schema(conn)
+
+        _ensure_decision_metadata_schema(conn)
 
         conn.commit()
 
@@ -390,6 +460,112 @@ def update_priority(todo_id: int, priority: int) -> bool:
             )
         conn.commit()
     return cur.rowcount == 1
+
+
+def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by: str) -> None:
+    """Validate and transactionally replace current metadata and append an assessment."""
+    metadata = validate_decision_metadata(metadata)
+    if not isinstance(assessed_by, str) or not assessed_by.strip():
+        raise ValueError("assessed_by must be a non-empty string")
+    now = datetime.now(timezone.utc).isoformat()
+    evidence = json.dumps(metadata["evidence"], ensure_ascii=False)
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            todo = conn.execute("SELECT priority, estimated_effort FROM todos WHERE id=?", (todo_id,)).fetchone()
+            if todo is None:
+                raise ValueError("todo not found")
+            values = tuple(metadata[field] for field in (
+                "expected_value", "user_or_system_benefit", "strategic_alignment", "confidence",
+                "cost_of_delay", "primary_benefit_category",
+            )) + (
+                metadata.get("secondary_benefit_category"), metadata["benefit_summary"],
+                metadata["justification"], evidence, assessed_by, now,
+            )
+            conn.execute("""
+                INSERT INTO todo_decision_metadata
+                    (todo_id, expected_value, user_or_system_benefit, strategic_alignment,
+                     confidence, cost_of_delay, primary_benefit_category,
+                     secondary_benefit_category, benefit_summary, justification,
+                     evidence, assessed_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(todo_id) DO UPDATE SET
+                    expected_value=excluded.expected_value, user_or_system_benefit=excluded.user_or_system_benefit,
+                    strategic_alignment=excluded.strategic_alignment, confidence=excluded.confidence,
+                    cost_of_delay=excluded.cost_of_delay, primary_benefit_category=excluded.primary_benefit_category,
+                    secondary_benefit_category=excluded.secondary_benefit_category, benefit_summary=excluded.benefit_summary,
+                    justification=excluded.justification, evidence=excluded.evidence, assessed_by=excluded.assessed_by,
+                    updated_at=excluded.updated_at
+            """, (todo_id, *values))
+            conn.execute("""
+                INSERT INTO todo_decision_assessments
+                    (todo_id, expected_value, user_or_system_benefit, strategic_alignment,
+                     confidence, cost_of_delay, primary_benefit_category,
+                     secondary_benefit_category, benefit_summary, justification,
+                     evidence, assessed_by, assessed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (todo_id, *values))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def _decision_metadata(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    result.pop("id", None)
+    result.pop("todo_id", None)
+    result.pop("updated_at", None)
+    result.pop("assessed_at", None)
+    result.pop("assessed_by", None)
+    result["evidence"] = json.loads(result["evidence"])
+    for field in SCORE_FIELDS:
+        result[field] = int(result[field])
+    if result.get("secondary_benefit_category") is None:
+        result.pop("secondary_benefit_category", None)
+    return validate_decision_metadata(result)
+
+
+def get_decision_metadata(todo_id: int) -> dict[str, Any] | None:
+    """Return normalized current decision metadata without legacy fabrication."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM todo_decision_metadata WHERE todo_id=?", (todo_id,)).fetchone()
+    return _decision_metadata(row) if row else None
+
+
+def get_decision_assessments(todo_id: int) -> list[dict[str, Any]]:
+    """Return append-only decision assessments from oldest to newest."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM todo_decision_assessments WHERE todo_id=? ORDER BY id",
+            (todo_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "metadata": _decision_metadata(row),
+            "assessed_by": row["assessed_by"],
+            "assessed_at": row["assessed_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_priority_guidance(todo_id: int) -> dict[str, Any]:
+    """Return advisory priority guidance without changing the todo priority."""
+    todo = get_todo_by_id(todo_id)
+    if todo is None:
+        raise ValueError("todo not found")
+    metadata = get_decision_metadata(todo_id)
+    guidance = priority_guidance(metadata, todo["priority"]) if metadata else {
+        "current_priority": todo["priority"],
+        "recommended_priority": None,
+        "advisory": True,
+    }
+    return {
+        "todo_id": todo_id,
+        **guidance,
+    }
 
 
 def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
