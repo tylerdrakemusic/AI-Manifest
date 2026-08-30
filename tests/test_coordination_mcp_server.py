@@ -314,6 +314,66 @@ def test_metadata_operations_validate_append_history_and_leave_todo_fields_uncha
     assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
 
 
+def test_nested_metadata_payload_uses_one_canonical_supported_field_set(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todo_decision_contract, todos_db
+
+    assert "primary_benefit_category" in todo_decision_contract.SUPPORTED_FIELDS
+
+    todo_id = todos_db.add_todo("workspace", "Nested metadata target")
+    metadata = {
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
+        "confidence": 5,
+        "cost_of_delay": 5,
+        "primary_benefit_category": "system",
+        "benefit_summary": "Makes the decision explicit",
+        "justification": "The nested MCP object is the canonical payload",
+        "evidence": ["FR acceptance criteria"],
+    }
+
+    mcp_server.invoke_todo_operation(
+        "todo.set_decision_metadata",
+        {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": True},
+    )
+
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_metadata", {"todo_id": todo_id}
+    )["primary_benefit_category"] == "system"
+
+
+def test_invalid_nested_metadata_does_not_write_or_append_assessment(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Invalid nested metadata")
+    metadata = {
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
+        "confidence": 5,
+        "cost_of_delay": 5,
+        "primary_benefit_category": "unsupported",
+        "benefit_summary": "Should not persist",
+        "justification": "The category is invalid",
+        "evidence": ["test"],
+    }
+
+    with pytest.raises(ValueError, match="primary_benefit_category"):
+        mcp_server.invoke_todo_operation(
+            "todo.set_decision_metadata",
+            {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": True},
+        )
+
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_metadata", {"todo_id": todo_id}
+    ) is None
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_assessments", {"todo_id": todo_id}
+    ) == []
+
+
 def test_priority_guidance_is_advisory_and_priority_change_requires_confirmation(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db

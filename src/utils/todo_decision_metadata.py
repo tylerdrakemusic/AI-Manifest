@@ -14,6 +14,7 @@ BENEFIT_CATEGORIES = todo_decision_contract.BENEFIT_CATEGORIES
 SCORE_FIELDS = todo_decision_contract.SCORE_FIELDS
 REQUIRED_FIELDS = todo_decision_contract.REQUIRED_FIELDS
 OPTIONAL_FIELDS = todo_decision_contract.OPTIONAL_FIELDS
+SUPPORTED_FIELDS = todo_decision_contract.SUPPORTED_FIELDS
 SCALE_ANCHORS = todo_decision_contract.SCALE_ANCHORS
 
 
@@ -35,8 +36,7 @@ def validate_decision_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     missing = REQUIRED_FIELDS.difference(metadata)
     if missing:
         raise DecisionMetadataError(f"missing required fields: {sorted(missing)!r}")
-    supported_fields = REQUIRED_FIELDS | OPTIONAL_FIELDS | {"scale"}
-    unsupported = set(metadata).difference(supported_fields)
+    unsupported = set(metadata).difference(SUPPORTED_FIELDS)
     if unsupported:
         raise DecisionMetadataError(f"unsupported fields: {sorted(unsupported)!r}")
     if "scale" in metadata and metadata["scale"] != SCALE_ANCHORS:
