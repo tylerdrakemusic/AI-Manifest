@@ -172,3 +172,89 @@ def test_mcp_graph_mutations_require_confirmation(tmp_db):
             "todo.link_prerequisite",
             {"todo_id": dependent, "prerequisite_id": prerequisite},
         )
+
+
+def test_todo_create_defaults_priority_and_rejects_unconfirmed_explicit_priority(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = mcp_server.invoke_todo_operation(
+        "todo.create",
+        {"project": "workspace", "text": "Default priority"},
+    )
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 5
+
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.invoke_todo_operation(
+            "todo.create",
+            {"project": "workspace", "text": "Explicit priority", "priority": 8},
+        )
+
+
+def test_todo_read_and_draft_scope_are_allowlisted(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Read me")
+    assert mcp_server.invoke_todo_operation("todo.read", {"todo_id": todo_id})["id"] == todo_id
+    assert mcp_server.invoke_todo_operation(
+        "todo.draft_scope", {"todo_id": todo_id, "scope": "tests only"}
+    ) == {"todo_id": todo_id, "scope": "tests only", "draft": True}
+
+
+def test_metadata_operations_validate_append_history_and_leave_todo_fields_unchanged(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Metadata target", priority=4)
+    metadata = {
+        "expected_value": 8,
+        "user_or_system_benefit": 7,
+        "strategic_alignment": 8,
+        "confidence": 7,
+        "cost_of_delay": 7,
+        "primary_benefit_category": "system",
+        "benefit_summary": "Makes the decision explicit",
+        "justification": "The coordination path needs an audit trail",
+        "evidence": ["FR acceptance criteria"],
+    }
+
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.invoke_todo_operation(
+            "todo.set_decision_metadata",
+            {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": 1},
+        )
+
+    mcp_server.invoke_todo_operation(
+        "todo.set_decision_metadata",
+        {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": True},
+    )
+    assert mcp_server.invoke_todo_operation("todo.get_decision_metadata", {"todo_id": todo_id})["confidence"] == 7
+    assert len(mcp_server.invoke_todo_operation("todo.get_decision_assessments", {"todo_id": todo_id})) == 1
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
+
+
+def test_priority_guidance_is_advisory_and_priority_change_requires_confirmation(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Priority target", priority=4)
+    guidance = mcp_server.invoke_todo_operation("todo.priority_guidance", {"todo_id": todo_id})
+    assert guidance["advisory"] is True
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
+
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.invoke_todo_operation(
+            "todo.set_priority", {"todo_id": todo_id, "priority": 9}
+        )
+    assert mcp_server.invoke_todo_operation(
+        "todo.set_priority", {"todo_id": todo_id, "priority": 9, "confirmed": True}
+    ) is True
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 9
+
+
+def test_new_todo_operations_reject_arbitrary_database_and_sql_inputs(tmp_db):
+    from src.integrations.coordination.mcp_server import invoke_todo_operation
+
+    with pytest.raises(ValueError, match="database and SQL arguments are not supported"):
+        invoke_todo_operation("todo.read", {"todo_id": 1, "sql": "DROP TABLE todos"})

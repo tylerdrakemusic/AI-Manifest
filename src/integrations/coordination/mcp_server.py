@@ -18,6 +18,10 @@ _ALLOWED_OPERATIONS = frozenset({
     "todo.list_open", "todo.link_fr", "todo.link_prerequisite",
     "todo.required", "todo.required_by", "todo.readiness",
     "todo.related", "todo.fr_links", "todo.decompose",
+    "todo.create", "todo.read", "todo.draft_scope",
+    "todo.set_decision_metadata", "todo.get_decision_metadata",
+    "todo.get_decision_assessments", "todo.priority_guidance",
+    "todo.set_priority",
 })
 _FORBIDDEN_ARGUMENTS = frozenset({"db", "sql"})
 
@@ -47,11 +51,55 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.related": {"todo_id"},
         "todo.fr_links": {"todo_id"},
         "todo.decompose": {"parent_id", "children", "confirmed"},
+        "todo.create": {
+            "project", "text", "priority", "source", "autonomy_level",
+            "rationale", "implementation_hints", "context_snapshot",
+            "estimated_effort", "dependencies", "parent_id", "confirmed",
+        },
+        "todo.read": {"todo_id"},
+        "todo.draft_scope": {"todo_id", "scope"},
+        "todo.set_decision_metadata": {"todo_id", "metadata", "assessed_by", "confirmed"},
+        "todo.get_decision_metadata": {"todo_id"},
+        "todo.get_decision_assessments": {"todo_id"},
+        "todo.priority_guidance": {"todo_id"},
+        "todo.set_priority": {"todo_id", "priority", "confirmed"},
     }[operation]
     if set(payload) - allowed_fields:
         raise ValueError("unexpected arguments for todo operation")
     if operation == "todo.list_open":
         return todos_db.get_open_todos(payload.get("project"))
+    if operation == "todo.create":
+        if "priority" in payload and payload.get("confirmed") is not True:
+            raise PermissionError("confirmation is required before assigning a priority")
+        values = {key: payload[key] for key in allowed_fields if key in payload}
+        values.pop("confirmed", None)
+        return todos_db.add_todo(**values)
+    if operation == "todo.read":
+        result = todos_db.get_todo_by_id(payload["todo_id"])
+        if result is None:
+            raise ValueError("todo not found")
+        return result
+    if operation == "todo.draft_scope":
+        if todos_db.get_todo_by_id(payload["todo_id"]) is None:
+            raise ValueError("todo not found")
+        return {"todo_id": payload["todo_id"], "scope": payload["scope"], "draft": True}
+    if operation == "todo.set_decision_metadata":
+        if payload.get("confirmed") is not True:
+            raise PermissionError("confirmation is required before writing decision metadata")
+        todos_db.set_decision_metadata(
+            payload["todo_id"], payload["metadata"], assessed_by=payload["assessed_by"]
+        )
+        return True
+    if operation == "todo.get_decision_metadata":
+        return todos_db.get_decision_metadata(payload["todo_id"])
+    if operation == "todo.get_decision_assessments":
+        return todos_db.get_decision_assessments(payload["todo_id"])
+    if operation == "todo.priority_guidance":
+        return todos_db.get_priority_guidance(payload["todo_id"])
+    if operation == "todo.set_priority":
+        if payload.get("confirmed") is not True:
+            raise PermissionError("confirmation is required before changing priority")
+        return todos_db.update_priority(payload["todo_id"], payload["priority"])
     if operation == "todo.link_fr":
         return link_todo_to_fr(payload["todo_id"], payload["fr_id"], payload.get("confirmed", False))
     if operation == "todo.link_prerequisite":
@@ -119,6 +167,84 @@ def link_confirmed_prerequisite(
 def todo_readiness(todo_id: int) -> dict[str, Any]:
     """Explain whether a manifest todo is ready for completion."""
     return invoke_todo_operation("todo.readiness", {"todo_id": todo_id})
+
+
+@mcp.tool()
+def create_todo(
+    project: str,
+    text: str,
+    priority: int | None = None,
+    source: str = "TYLER",
+    autonomy_level: str = "supervised",
+    confirmed: bool = False,
+) -> int:
+    """Create a manifest todo, requiring confirmation for explicit priority."""
+    payload: dict[str, Any] = {
+        "project": project,
+        "text": text,
+        "source": source,
+        "autonomy_level": autonomy_level,
+        "confirmed": confirmed,
+    }
+    if priority is not None:
+        payload["priority"] = priority
+    return invoke_todo_operation("todo.create", payload)
+
+
+@mcp.tool()
+def read_todo(todo_id: int) -> dict[str, Any]:
+    """Read one manifest todo by id."""
+    return invoke_todo_operation("todo.read", {"todo_id": todo_id})
+
+
+@mcp.tool()
+def draft_todo_scope(todo_id: int, scope: str) -> dict[str, Any]:
+    """Return a non-persisting scope draft for a manifest todo."""
+    return invoke_todo_operation("todo.draft_scope", {"todo_id": todo_id, "scope": scope})
+
+
+@mcp.tool()
+def set_todo_decision_metadata(
+    todo_id: int,
+    metadata: dict[str, Any],
+    assessed_by: str,
+    confirmed: bool = False,
+) -> bool:
+    """Persist canonical decision metadata after explicit confirmation."""
+    return invoke_todo_operation("todo.set_decision_metadata", {
+        "todo_id": todo_id,
+        "metadata": metadata,
+        "assessed_by": assessed_by,
+        "confirmed": confirmed,
+    })
+
+
+@mcp.tool()
+def get_todo_decision_metadata(todo_id: int) -> dict[str, Any] | None:
+    """Read current canonical decision metadata for a manifest todo."""
+    return invoke_todo_operation("todo.get_decision_metadata", {"todo_id": todo_id})
+
+
+@mcp.tool()
+def get_todo_decision_assessments(todo_id: int) -> list[dict[str, Any]]:
+    """Read append-only decision assessments for a manifest todo."""
+    return invoke_todo_operation("todo.get_decision_assessments", {"todo_id": todo_id})
+
+
+@mcp.tool()
+def todo_priority_guidance(todo_id: int) -> dict[str, Any]:
+    """Return advisory priority guidance without mutating a todo."""
+    return invoke_todo_operation("todo.priority_guidance", {"todo_id": todo_id})
+
+
+@mcp.tool()
+def set_todo_priority(todo_id: int, priority: int, confirmed: bool = False) -> bool:
+    """Change a todo priority after explicit confirmation."""
+    return invoke_todo_operation("todo.set_priority", {
+        "todo_id": todo_id,
+        "priority": priority,
+        "confirmed": confirmed,
+    })
 
 
 if __name__ == "__main__":
