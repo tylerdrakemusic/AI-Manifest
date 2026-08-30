@@ -20,6 +20,7 @@ VERSION = CONTRACT["version"]
 SCORE_FIELDS = tuple(CONTRACT["score_fields"])
 REQUIRED_FIELDS = frozenset(CONTRACT["required_fields"])
 OPTIONAL_FIELDS = frozenset(CONTRACT["optional_fields"])
+SUPPORTED_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS | {"scale"}
 BENEFIT_CATEGORIES = tuple(CONTRACT["benefit_categories"])
 SCALE_ANCHORS = {
     "min": CONTRACT["scale"]["min"],

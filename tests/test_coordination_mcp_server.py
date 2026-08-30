@@ -191,6 +191,86 @@ def test_todo_create_defaults_priority_and_rejects_unconfirmed_explicit_priority
         )
 
 
+def test_public_create_todo_forwards_optional_context_fields(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Create with context",
+        rationale="Clarify why this work matters",
+        implementation_hints="Start with the coordination wrapper",
+        context_snapshot="The DB helper already accepts rich fields",
+        estimated_effort="S",
+        dependencies="FR-20260829-parent",
+    )
+
+    todo = todos_db.get_todo_by_id(todo_id)
+    assert todo["rationale"] == "Clarify why this work matters"
+    assert todo["implementation_hints"] == "Start with the coordination wrapper"
+    assert todo["context_snapshot"] == "The DB helper already accepts rich fields"
+    assert todo["estimated_effort"] == "S"
+    assert todo["dependencies"] == "FR-20260829-parent"
+
+
+def test_public_create_todo_rich_fields_round_trip_through_public_read(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    values = {
+        "rationale": "Clarify why this work matters",
+        "implementation_hints": "Start with the coordination wrapper",
+        "context_snapshot": "The DB helper already accepts rich fields",
+        "estimated_effort": "S",
+        "dependencies": "FR-20260829-parent",
+    }
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Read context through the public wrapper",
+        **values,
+    )
+
+    todo = mcp_server.read_todo(todo_id)
+    assert {field: todo[field] for field in values} == values
+
+
+def test_public_create_todo_omitted_rich_fields_read_as_none(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Create without optional context",
+    )
+
+    todo = mcp_server.read_todo(todo_id)
+    assert all(
+        todo[field] is None
+        for field in (
+            "rationale",
+            "implementation_hints",
+            "context_snapshot",
+            "estimated_effort",
+            "dependencies",
+        )
+    )
+
+
+def test_public_create_todo_rejects_integer_confirmation_with_rich_fields(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.create_todo(
+            project="workspace",
+            text="Reject non-literal confirmation",
+            rationale="Should not be written",
+            implementation_hints="Should not be written",
+            context_snapshot="Should not be written",
+            estimated_effort="S",
+            dependencies="FR-20260829-parent",
+            confirmed=1,
+        )
+
+
 def test_todo_read_and_draft_scope_are_allowlisted(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db
@@ -232,6 +312,66 @@ def test_metadata_operations_validate_append_history_and_leave_todo_fields_uncha
     assert mcp_server.invoke_todo_operation("todo.get_decision_metadata", {"todo_id": todo_id})["confidence"] == 7
     assert len(mcp_server.invoke_todo_operation("todo.get_decision_assessments", {"todo_id": todo_id})) == 1
     assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
+
+
+def test_nested_metadata_payload_uses_one_canonical_supported_field_set(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todo_decision_contract, todos_db
+
+    assert "primary_benefit_category" in todo_decision_contract.SUPPORTED_FIELDS
+
+    todo_id = todos_db.add_todo("workspace", "Nested metadata target")
+    metadata = {
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
+        "confidence": 5,
+        "cost_of_delay": 5,
+        "primary_benefit_category": "system",
+        "benefit_summary": "Makes the decision explicit",
+        "justification": "The nested MCP object is the canonical payload",
+        "evidence": ["FR acceptance criteria"],
+    }
+
+    mcp_server.invoke_todo_operation(
+        "todo.set_decision_metadata",
+        {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": True},
+    )
+
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_metadata", {"todo_id": todo_id}
+    )["primary_benefit_category"] == "system"
+
+
+def test_invalid_nested_metadata_does_not_write_or_append_assessment(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Invalid nested metadata")
+    metadata = {
+        "expected_value": 5,
+        "user_or_system_benefit": 5,
+        "strategic_alignment": 5,
+        "confidence": 5,
+        "cost_of_delay": 5,
+        "primary_benefit_category": "unsupported",
+        "benefit_summary": "Should not persist",
+        "justification": "The category is invalid",
+        "evidence": ["test"],
+    }
+
+    with pytest.raises(ValueError, match="primary_benefit_category"):
+        mcp_server.invoke_todo_operation(
+            "todo.set_decision_metadata",
+            {"todo_id": todo_id, "metadata": metadata, "assessed_by": "test", "confirmed": True},
+        )
+
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_metadata", {"todo_id": todo_id}
+    ) is None
+    assert mcp_server.invoke_todo_operation(
+        "todo.get_decision_assessments", {"todo_id": todo_id}
+    ) == []
 
 
 def test_priority_guidance_is_advisory_and_priority_change_requires_confirmation(tmp_db):
