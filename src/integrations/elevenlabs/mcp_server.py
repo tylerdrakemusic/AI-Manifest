@@ -17,6 +17,8 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from src.utils.audio_output_policy import atomic_write_bytes, resolve_audio_output_path
+
 # ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
 # No hardcoded path fallback — use Windows System Environment Variables.
 
@@ -117,14 +119,13 @@ def text_to_speech(
     if not text or not text.strip():
         return "Error: text cannot be empty."
 
-    # Sanitize filename
-    safe_name = "".join(c for c in output_filename if c.isalnum() or c in "._- ")
-    if not safe_name:
-        safe_name = "output.mp3"
-    if not safe_name.endswith(".mp3"):
-        safe_name += ".mp3"
+    output_path = resolve_audio_output_path(
+        OUTPUT_DIR,
+        output_filename,
+        allowed_extensions=(".mp3",),
+    )
 
-    log.info("TTS: %d chars, voice=%s, file=%s", len(text), voice_id, safe_name)
+    log.info("TTS: %d chars, voice=%s, file=%s", len(text), voice_id, output_path.name)
 
     payload = {
         "text": text,
@@ -140,13 +141,11 @@ def text_to_speech(
     )
     resp.raise_for_status()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUTPUT_DIR / safe_name
-    out_path.write_bytes(resp.content)
+    atomic_write_bytes(output_path, resp.content)
 
     return json.dumps({
         "status": "ok",
-        "path": str(out_path),
+        "path": str(output_path),
         "size_bytes": len(resp.content),
         "voice_id": voice_id,
         "model_id": model_id,

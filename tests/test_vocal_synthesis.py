@@ -59,7 +59,7 @@ def test_fallback_render_without_api_key(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
 
     request = _request(tmp_path)
-    result = render_vocal_exercise(request)
+    result = render_vocal_exercise(request, output_root=tmp_path)
     audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "local"
@@ -76,8 +76,8 @@ def test_fallback_render_without_api_key(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_fallback_is_deterministic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
 
-    first = render_vocal_exercise(_request(tmp_path, stem="take_a"))
-    second = render_vocal_exercise(_request(tmp_path, stem="take_b"))
+    first = render_vocal_exercise(_request(tmp_path, stem="take_a"), output_root=tmp_path)
+    second = render_vocal_exercise(_request(tmp_path, stem="take_b"), output_root=tmp_path)
 
     assert first.content_sha256 == second.content_sha256
     assert first.output_path.read_bytes() == second.output_path.read_bytes()
@@ -101,7 +101,7 @@ def test_fallback_preserves_contract_when_remote_render_fails(
     )
 
     request = _request(tmp_path, stem="failed_remote_take")
-    result = render_vocal_exercise(request)
+    result = render_vocal_exercise(request, output_root=tmp_path)
     audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "local"
@@ -134,7 +134,7 @@ def test_elevenlabs_path_when_key_available(
     monkeypatch.setattr("src.integrations.vocal_synthesis.ElevenLabsClient", _FakeClient)
 
     request = _request(tmp_path)
-    result = render_vocal_exercise(request)
+    result = render_vocal_exercise(request, output_root=tmp_path)
     audio_bytes = _assert_vocal_render_result_contract(result, request)
 
     assert result.engine == "elevenlabs"
@@ -163,3 +163,41 @@ def test_elevenlabs_path_when_key_available(
     for note in request.notes:
         assert f"MIDI {note.midi_note}" in prompt_text
         assert note.lyric in prompt_text
+
+
+@pytest.mark.parametrize(
+    "stem",
+    ["../escape", "nested/name", r"nested\name", "", "bad\nname", "bad\x00name"],
+)
+def test_rejects_unsafe_output_stems(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stem: str
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    with pytest.raises(ValueError):
+        render_vocal_exercise(_request(tmp_path, stem=stem), output_root=tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_rejects_output_directory_outside_policy_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    outside_dir = tmp_path / "outside"
+    with pytest.raises(ValueError, match="output directory"):
+        render_vocal_exercise(
+            _request(outside_dir), output_root=tmp_path / "allowed"
+        )
+
+
+def test_rejects_disallowed_output_extension_in_stem(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="extension"):
+        render_vocal_exercise(
+            _request(tmp_path, stem="exercise.exe"), output_root=tmp_path
+        )
