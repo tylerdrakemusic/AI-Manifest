@@ -18,6 +18,11 @@ import wave
 
 from src.config.elevenlabs_settings import DEFAULT_MODEL_ID, DEFAULT_OUTPUT_FORMAT
 from src.integrations.elevenlabs.client import ElevenLabsClient
+from src.utils.audio_output_policy import (
+    atomic_write_bytes,
+    resolve_audio_output_directory,
+    resolve_audio_output_path,
+)
 
 _AUDIO_SAMPLE_RATE_HZ = 22050
 _PCM_PEAK = 32767
@@ -77,12 +82,23 @@ def render_vocal_exercise(
     request: VocalRenderRequest,
     *,
     api_key: str | None = None,
+    output_root: Path | str | None = None,
 ) -> VocalRenderResult:
     """Render an exercise as playable audio with a stable metadata result."""
     _validate_request(request)
 
-    output_dir = Path(request.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    policy_root = (
+        Path(output_root)
+        if output_root is not None
+        else Path(__file__).resolve().parents[2] / "output"
+    )
+    resolved_output_dir = resolve_audio_output_directory(policy_root, request.output_dir)
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    resolve_audio_output_path(
+        resolved_output_dir,
+        f"{request.output_stem}.mp3",
+        allowed_extensions=(".mp3",),
+    )
 
     resolved_key = (api_key or os.environ.get("ELEVENLABS_API_KEY", "")).strip()
     should_try_remote = (
@@ -93,8 +109,12 @@ def render_vocal_exercise(
     if should_try_remote:
         try:
             audio = _render_with_elevenlabs(request=request, api_key=resolved_key)
-            output_path = output_dir / f"{request.output_stem}.mp3"
-            output_path.write_bytes(audio)
+            output_path = resolve_audio_output_path(
+                resolved_output_dir,
+                f"{request.output_stem}.mp3",
+                allowed_extensions=(".mp3",),
+            )
+            atomic_write_bytes(output_path, audio)
             duration_seconds = _duration_seconds(request.notes, request.exercise.tempo_bpm)
             sha = hashlib.sha256(audio).hexdigest()
             return VocalRenderResult(
@@ -117,8 +137,12 @@ def render_vocal_exercise(
             fallback_reason = str(exc)
 
     audio, duration_seconds = _render_deterministic_wave(request)
-    output_path = output_dir / f"{request.output_stem}.wav"
-    output_path.write_bytes(audio)
+    output_path = resolve_audio_output_path(
+        resolved_output_dir,
+        f"{request.output_stem}.wav",
+        allowed_extensions=(".wav",),
+    )
+    atomic_write_bytes(output_path, audio)
     sha = hashlib.sha256(audio).hexdigest()
     metadata = {
         "exercise_id": request.exercise.exercise_id,
@@ -219,6 +243,10 @@ def _validate_request(request: VocalRenderRequest) -> None:
         raise ValueError("tempo_bpm must be greater than zero")
     if not request.output_stem.strip():
         raise ValueError("output_stem must be a non-empty string")
+    if any(separator in request.output_stem for separator in ("/", "\\")):
+        raise ValueError("output_stem cannot contain path separators")
+    if Path(request.output_stem).suffix:
+        raise ValueError("output_stem cannot contain an extension")
 
     for note in request.notes:
         if note.duration_beats <= 0:
