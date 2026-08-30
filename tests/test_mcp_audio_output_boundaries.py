@@ -40,7 +40,10 @@ def test_mcp_rejects_absolute_output_filename(tmp_path: Path) -> None:
     post.assert_not_called()
 
 
-def test_mcp_writes_valid_mp3_inside_output_root(tmp_path: Path) -> None:
+def test_mcp_writes_valid_mp3_inside_output_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "fake-key")
     response = MagicMock(content=b"ID3fake-audio")
     response.raise_for_status.return_value = None
 
