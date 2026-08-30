@@ -191,6 +191,86 @@ def test_todo_create_defaults_priority_and_rejects_unconfirmed_explicit_priority
         )
 
 
+def test_public_create_todo_forwards_optional_context_fields(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Create with context",
+        rationale="Clarify why this work matters",
+        implementation_hints="Start with the coordination wrapper",
+        context_snapshot="The DB helper already accepts rich fields",
+        estimated_effort="S",
+        dependencies="FR-20260829-parent",
+    )
+
+    todo = todos_db.get_todo_by_id(todo_id)
+    assert todo["rationale"] == "Clarify why this work matters"
+    assert todo["implementation_hints"] == "Start with the coordination wrapper"
+    assert todo["context_snapshot"] == "The DB helper already accepts rich fields"
+    assert todo["estimated_effort"] == "S"
+    assert todo["dependencies"] == "FR-20260829-parent"
+
+
+def test_public_create_todo_rich_fields_round_trip_through_public_read(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    values = {
+        "rationale": "Clarify why this work matters",
+        "implementation_hints": "Start with the coordination wrapper",
+        "context_snapshot": "The DB helper already accepts rich fields",
+        "estimated_effort": "S",
+        "dependencies": "FR-20260829-parent",
+    }
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Read context through the public wrapper",
+        **values,
+    )
+
+    todo = mcp_server.read_todo(todo_id)
+    assert {field: todo[field] for field in values} == values
+
+
+def test_public_create_todo_omitted_rich_fields_read_as_none(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    todo_id = mcp_server.create_todo(
+        project="workspace",
+        text="Create without optional context",
+    )
+
+    todo = mcp_server.read_todo(todo_id)
+    assert all(
+        todo[field] is None
+        for field in (
+            "rationale",
+            "implementation_hints",
+            "context_snapshot",
+            "estimated_effort",
+            "dependencies",
+        )
+    )
+
+
+def test_public_create_todo_rejects_integer_confirmation_with_rich_fields(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    with pytest.raises(PermissionError, match="confirmation is required"):
+        mcp_server.create_todo(
+            project="workspace",
+            text="Reject non-literal confirmation",
+            rationale="Should not be written",
+            implementation_hints="Should not be written",
+            context_snapshot="Should not be written",
+            estimated_effort="S",
+            dependencies="FR-20260829-parent",
+            confirmed=1,
+        )
+
+
 def test_todo_read_and_draft_scope_are_allowlisted(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db

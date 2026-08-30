@@ -177,8 +177,15 @@ def create_todo(
     source: str = "TYLER",
     autonomy_level: str = "supervised",
     confirmed: bool = False,
+    rationale: str | None = None,
+    implementation_hints: str | None = None,
+    context_snapshot: str | None = None,
+    estimated_effort: str | None = None,
+    dependencies: str | None = None,
 ) -> int:
     """Create a manifest todo, requiring confirmation for explicit priority."""
+    if confirmed is not False and confirmed is not True:
+        raise PermissionError("confirmation is required and must be literal True or False")
     payload: dict[str, Any] = {
         "project": project,
         "text": text,
@@ -188,6 +195,15 @@ def create_todo(
     }
     if priority is not None:
         payload["priority"] = priority
+    for key, value in {
+        "rationale": rationale,
+        "implementation_hints": implementation_hints,
+        "context_snapshot": context_snapshot,
+        "estimated_effort": estimated_effort,
+        "dependencies": dependencies,
+    }.items():
+        if value is not None:
+            payload[key] = value
     return invoke_todo_operation("todo.create", payload)
 
 
