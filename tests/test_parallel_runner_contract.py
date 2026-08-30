@@ -21,6 +21,19 @@ def test_parallel_runner_contract_is_declared():
     assert runner.is_file()
 
 
+def test_ci_workflow_uses_parallel_runner_and_preserves_ci_contract():
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    policy = json.loads((root / "tools" / "parallel_test_policy.json").read_text(encoding="utf-8"))
+
+    assert "python tools/run_tests.py --parallel --junitxml=tmp/pytest-junit.xml" in workflow
+    assert 'PLAYWRIGHT_ENABLED: "0"' in workflow
+    assert policy["parallel_ci"] is True
+    assert set(policy["excluded_markers"]) == {"playwright", "live"}
+    assert "if: always()" in workflow
+    assert "pytest -v --tb=short" not in workflow
+
+
 def test_build_command_composes_policy_exclusions_with_repository_marker_defaults():
     root = Path(__file__).parents[1]
     command = load_runner().build_command(parallel=False, junitxml=None)

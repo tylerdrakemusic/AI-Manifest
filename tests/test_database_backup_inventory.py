@@ -21,7 +21,7 @@ def test_ci_exports_backup_contract_and_preserves_blocking_exclusion_reporting()
     assert "WORKSPACE_BACKUP_ENGINE_PATH=${GITHUB_WORKSPACE}/workspace/src/utils/database_backup.py" in workflow
     assert "CI exclusion report: pytest will print skip reasons and summary counts" in workflow
     assert "pytest --collect-only -q -o addopts= -m \"not playwright and not live\"" in workflow
-    assert "pytest -v --tb=short -rs -m \"not playwright and not live\" --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log" in workflow
+    assert "python tools/run_tests.py --parallel --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log" in workflow
     assert "set -o pipefail" in workflow
     assert "continue-on-error" not in workflow
 

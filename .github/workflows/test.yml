@@ -36,14 +36,14 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
-      - name: Run pytest
+      - name: Run tests in parallel
         env:
           PLAYWRIGHT_ENABLED: "0"  # Set to "1" locally to run Playwright tests (FR-20260513-playwright-ui-gate)
         run: |
           set -o pipefail
           echo "CI exclusion report: pytest will print skip reasons and summary counts"
           pytest --collect-only -q -o addopts= -m "not playwright and not live"
-          pytest -v --tb=short -rs -m "not playwright and not live" --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log
+          python tools/run_tests.py --parallel --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log
 
       - name: Upload JUnit report
         if: always()
