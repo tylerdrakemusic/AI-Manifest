@@ -62,7 +62,7 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.get_decision_metadata": {"todo_id"},
         "todo.get_decision_assessments": {"todo_id"},
         "todo.priority_guidance": {"todo_id"},
-        "todo.set_priority": {"todo_id", "priority", "confirmed"},
+        "todo.set_priority": {"todo_id", "priority", "confirmed", "expected_version"},
         "todo.update": {
             "todo_id", "expected_version", "authenticated", "text", "priority",
             "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
@@ -82,10 +82,7 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         values.pop("confirmed", None)
         return todos_db.add_todo(**values)
     if operation == "todo.read":
-        result = todos_db.get_todo_by_id(payload["todo_id"])
-        if result is None:
-            raise ValueError("todo not found")
-        return result
+        return todos_db.get_todo_response(payload["todo_id"])
     if operation == "todo.draft_scope":
         if todos_db.get_todo_by_id(payload["todo_id"]) is None:
             raise ValueError("todo not found")
@@ -106,7 +103,12 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
     if operation == "todo.set_priority":
         if payload.get("confirmed") is not True:
             raise PermissionError("confirmation is required before changing priority")
-        return todos_db.update_priority(payload["todo_id"], payload["priority"])
+        result = todos_db.update_priority(
+            payload["todo_id"], payload["priority"], payload.get("expected_version")
+        )
+        if payload.get("expected_version") is not None:
+            return todos_db.get_todo_response(payload["todo_id"])
+        return result
     if operation == "todo.update":
         if payload.get("authenticated") is not True:
             raise PermissionError("authentication is required before updating a todo")
@@ -119,7 +121,8 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         fields = {key: value for key, value in payload.items() if key not in {
             "todo_id", "expected_version", "authenticated"
         }}
-        return todos_db.update_todo(payload["todo_id"], payload["expected_version"], fields)
+        todos_db.update_todo(payload["todo_id"], payload["expected_version"], fields)
+        return todos_db.get_todo_response(payload["todo_id"])
     if operation == "todo.graph":
         return todos_db.get_todo_graph(payload["todo_id"])
     if operation == "todo.create_children_batch":
@@ -212,6 +215,7 @@ def create_todo(
     context_snapshot: str | None = None,
     estimated_effort: str | None = None,
     dependencies: str | None = None,
+    parent_id: int | None = None,
 ) -> int:
     """Create a manifest todo, requiring confirmation for explicit priority."""
     if confirmed is not False and confirmed is not True:
@@ -223,6 +227,8 @@ def create_todo(
         "autonomy_level": autonomy_level,
         "confirmed": confirmed,
     }
+    if parent_id is not None:
+        payload["parent_id"] = parent_id
     if priority is not None:
         payload["priority"] = priority
     for key, value in {
@@ -284,12 +290,18 @@ def todo_priority_guidance(todo_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-def set_todo_priority(todo_id: int, priority: int, confirmed: bool = False) -> bool:
+def set_todo_priority(
+    todo_id: int,
+    priority: int,
+    confirmed: bool = False,
+    expected_version: str | None = None,
+) -> bool | dict[str, Any]:
     """Change a todo priority after explicit confirmation."""
     return invoke_todo_operation("todo.set_priority", {
         "todo_id": todo_id,
         "priority": priority,
         "confirmed": confirmed,
+        **({"expected_version": expected_version} if expected_version is not None else {}),
     })
 
 
