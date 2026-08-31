@@ -444,6 +444,10 @@ def add_todo(
         raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}, got {autonomy_level!r}")
     created_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
+        if parent_id is not None and conn.execute(
+            "SELECT 1 FROM todos WHERE id=?", (parent_id,)
+        ).fetchone() is None:
+            raise ValueError("parent todo not found")
         cur = conn.execute(
             "INSERT INTO todos"
             " (project, source, text, done, created_at, updated_at, priority, autonomy_level,"
@@ -459,22 +463,37 @@ def add_todo(
         return cur.lastrowid  # type: ignore[return-value]
 
 
-def update_priority(todo_id: int, priority: int) -> bool:
+def update_priority(
+    todo_id: int,
+    priority: int,
+    expected_version: str | None = None,
+) -> bool | dict[str, Any]:
     """Update priority for a single todo and record the change in priority_history. Returns True on success."""
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
     scored_at = datetime.now(timezone.utc).isoformat()
+    updated_at = scored_at
     with get_connection() as conn:
-        cur = conn.execute(
-            "UPDATE todos SET priority=? WHERE id=?",
-            (priority, todo_id),
-        )
+        if expected_version is None:
+            cur = conn.execute("UPDATE todos SET priority=?, updated_at=? WHERE id=?", (priority, updated_at, todo_id))
+        else:
+            cur = conn.execute(
+                "UPDATE todos SET priority=?, updated_at=? WHERE id=? AND updated_at=?",
+                (priority, updated_at, todo_id, expected_version),
+            )
+            if cur.rowcount != 1:
+                if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
+                    raise ValueError("todo not found")
+                raise ValueError("precondition failed: todo version is stale")
         if cur.rowcount == 1:
             conn.execute(
                 "INSERT INTO priority_history (todo_id, priority, scored_at) VALUES (?, ?, ?)",
                 (todo_id, priority, scored_at),
             )
         conn.commit()
+        if cur.rowcount == 1 and expected_version is not None:
+            row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+            return dict(row)
     return cur.rowcount == 1
 
 
@@ -623,6 +642,27 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_todo_response(todo_id: int) -> dict[str, Any]:
+    """Return the todo row and all coordination read models in one response."""
+    graph = get_todo_graph(todo_id)
+    todo = graph["todo"]
+    refinement = {
+        field: todo[field]
+        for field in (
+            "rationale", "implementation_hints", "context_snapshot",
+            "estimated_effort", "dependencies",
+        )
+    }
+    return {
+        **todo,
+        "todo": todo,
+        "graph": graph,
+        "metadata": graph["metadata"],
+        "assessments": graph["assessments"],
+        "refinement": refinement,
+    }
+
+
 def _terminal_policy(states: Iterable[str] | None) -> list[str]:
     policy = DEFAULT_TERMINAL_STATES if states is None else frozenset(states)
     if not policy or not policy.issubset(TERMINAL_STATES):
@@ -754,6 +794,13 @@ def get_todo_graph(todo_id: int) -> dict[str, Any]:
             "SELECT * FROM priority_history WHERE todo_id=? ORDER BY id", (todo_id,)
         )]
         conn.commit()
+    refinement = {
+        field: todo_row[field]
+        for field in (
+            "rationale", "implementation_hints", "context_snapshot",
+            "estimated_effort", "dependencies",
+        )
+    }
     return {
         "todo": dict(todo_row),
         "parent": dict(parent_row) if parent_row else None,
@@ -761,6 +808,7 @@ def get_todo_graph(todo_id: int) -> dict[str, Any]:
         "edges": edges,
         "metadata": get_decision_metadata(todo_id),
         "assessments": get_decision_assessments(todo_id),
+        "refinement": refinement,
         "priorities": priorities,
         "completion": {
             "done": bool(todo_row["done"]),
@@ -869,6 +917,42 @@ def create_children_batch(
     specs = list(children)
     if not specs:
         raise ValueError("at least one child is required")
+    for spec in specs:
+        if not isinstance(spec, dict) or not str(spec.get("text", "")).strip():
+            raise ValueError("child text is required")
+        if spec.get("source", "AI") not in ALLOWED_SOURCES:
+            raise ValueError(f"source must be one of {ALLOWED_SOURCES!r}")
+        if spec.get("autonomy_level", "supervised") not in ALLOWED_AUTONOMY_LEVELS:
+            raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}")
+        if spec.get("priority", 5) not in range(1, 11):
+            raise ValueError("priority must be 1-10")
+    for index, spec in enumerate(specs):
+        indices = spec.get("prerequisite_indices", [])
+        if not isinstance(indices, list) or any(
+            not isinstance(prerequisite_index, int)
+            or prerequisite_index < 0
+            or prerequisite_index >= len(specs)
+            for prerequisite_index in indices
+        ):
+            raise ValueError("prerequisite index is out of range")
+        if index in indices:
+            raise ValueError("prerequisite cycle rejected")
+    visiting: set[int] = set()
+    visited: set[int] = set()
+
+    def visit(index: int) -> None:
+        if index in visiting:
+            raise ValueError("prerequisite cycle rejected")
+        if index in visited:
+            return
+        visiting.add(index)
+        for prerequisite_index in specs[index].get("prerequisite_indices", []):
+            visit(prerequisite_index)
+        visiting.remove(index)
+        visited.add(index)
+
+    for index in range(len(specs)):
+        visit(index)
     try:
         request_payload = json.dumps(
             {"parent_id": parent_id, "children": specs},
@@ -897,6 +981,7 @@ def create_children_batch(
             parent = conn.execute("SELECT * FROM todos WHERE id=?", (parent_id,)).fetchone()
             if parent is None:
                 raise ValueError("parent todo not found")
+            inherited_fr_id = parent["fr_id"]
             child_ids: list[int] = []
             created_at = datetime.now(timezone.utc).isoformat()
             for spec in specs:
@@ -904,16 +989,17 @@ def create_children_batch(
                 if priority != parent["priority"] and spec.get("priority_confirmed") is not True:
                     raise PermissionError("priority override requires explicit confirmation")
                 cur = conn.execute(
-                    "INSERT INTO todos (project, source, text, done, created_at, updated_at, priority, autonomy_level, rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (spec.get("project", parent["project"]), spec.get("source", parent["source"]), str(spec["text"]).strip(), 0, created_at, created_at, priority, spec.get("autonomy_level", parent["autonomy_level"]), spec.get("rationale"), spec.get("implementation_hints"), spec.get("context_snapshot"), spec.get("estimated_effort"), spec.get("dependencies"), parent_id),
+                    "INSERT INTO todos (project, source, text, done, created_at, updated_at, priority, autonomy_level, rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id, fr_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (spec.get("project", parent["project"]), spec.get("source", parent["source"]), str(spec["text"]).strip(), 0, created_at, created_at, priority, spec.get("autonomy_level", parent["autonomy_level"]), spec.get("rationale"), spec.get("implementation_hints"), spec.get("context_snapshot"), spec.get("estimated_effort"), spec.get("dependencies"), parent_id, inherited_fr_id),
                 )
                 child_ids.append(int(cur.lastrowid))
+                if inherited_fr_id:
+                    conn.execute(
+                        "INSERT INTO todo_fr_links (todo_id, fr_id, confirmed, created_at) VALUES (?, ?, 1, ?)",
+                        (child_ids[-1], inherited_fr_id, created_at),
+                    )
             for index, spec in enumerate(specs):
                 for prerequisite_index in spec.get("prerequisite_indices", []):
-                    if prerequisite_index < 0 or prerequisite_index >= len(child_ids):
-                        raise ValueError("prerequisite index is out of range")
-                    if index == prerequisite_index:
-                        raise ValueError("prerequisite cycle rejected")
                     conn.execute(
                         "INSERT INTO todo_prerequisites (todo_id, prerequisite_id, allowed_terminal_states, created_at) VALUES (?, ?, ?, ?)",
                         (child_ids[index], child_ids[prerequisite_index], json.dumps(sorted(DEFAULT_TERMINAL_STATES)), created_at),

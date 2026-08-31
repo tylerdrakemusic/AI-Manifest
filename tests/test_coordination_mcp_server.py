@@ -576,3 +576,67 @@ def test_confirmed_decompose_allows_priority_override(tmp_db):
     )
 
     assert todos_db.get_todo_by_id(child_ids[0])["priority"] == 9
+
+
+def test_public_create_is_parent_aware_and_rejects_missing_parent(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    parent_id = todos_db.add_todo("workspace", "Parent")
+    child_id = mcp_server.create_todo(
+        project="workspace",
+        text="Child",
+        parent_id=parent_id,
+    )
+
+    assert todos_db.get_todo_by_id(child_id)["parent_id"] == parent_id
+    with pytest.raises(ValueError, match="parent todo not found"):
+        mcp_server.create_todo(project="workspace", text="Orphan", parent_id=9999)
+
+
+def test_priority_change_uses_optimistic_version(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Versioned priority", priority=4)
+    version = todos_db.get_todo_by_id(todo_id)["updated_at"]
+
+    updated = mcp_server.set_todo_priority(
+        todo_id, 8, confirmed=True, expected_version=version
+    )
+    assert updated["priority"] == 8
+    with pytest.raises(ValueError, match="precondition"):
+        mcp_server.set_todo_priority(
+            todo_id, 9, confirmed=True, expected_version=version
+        )
+
+
+def test_child_batch_rejects_transitive_cycles_and_rolls_back(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    parent_id = todos_db.add_todo("workspace", "Cycle parent")
+    with pytest.raises(ValueError, match="cycle"):
+        mcp_server.create_children_batch(
+            parent_id,
+            [
+                {"text": "First", "prerequisite_indices": [2]},
+                {"text": "Second", "prerequisite_indices": [0]},
+                {"text": "Third", "prerequisite_indices": [1]},
+            ],
+            confirmed=True,
+            idempotency_key="cycle-batch",
+        )
+
+    assert todos_db.get_todo_graph(parent_id)["children"] == []
+
+
+def test_public_read_unifies_graph_metadata_assessments_and_refinement(tmp_db):
+    from src.integrations.coordination import mcp_server
+
+    todo_id = mcp_server.create_todo(project="workspace", text="Unified response")
+    result = mcp_server.read_todo(todo_id)
+
+    assert {"todo", "graph", "metadata", "assessments", "refinement"} <= result.keys()
+    assert result["todo"]["id"] == todo_id
+    assert result["graph"]["todo"]["id"] == todo_id
