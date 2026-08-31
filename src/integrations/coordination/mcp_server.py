@@ -293,5 +293,62 @@ def set_todo_priority(todo_id: int, priority: int, confirmed: bool = False) -> b
     })
 
 
+@mcp.tool(name="todo.update")
+def update_todo(
+    todo_id: int,
+    expected_version: str,
+    authenticated: bool,
+    text: str | None = None,
+    autonomy_level: str | None = None,
+    rationale: str | None = None,
+    implementation_hints: str | None = None,
+    context_snapshot: str | None = None,
+    estimated_effort: str | None = None,
+    dependencies: str | None = None,
+    perfected_at: str | None = None,
+) -> dict[str, Any]:
+    """Update mutable todo fields through the authenticated public contract."""
+    payload: dict[str, Any] = {
+        "todo_id": todo_id,
+        "expected_version": expected_version,
+        "authenticated": authenticated,
+    }
+    for key, value in {
+        "text": text,
+        "autonomy_level": autonomy_level,
+        "rationale": rationale,
+        "implementation_hints": implementation_hints,
+        "context_snapshot": context_snapshot,
+        "estimated_effort": estimated_effort,
+        "dependencies": dependencies,
+        "perfected_at": perfected_at,
+    }.items():
+        if value is not None:
+            payload[key] = value
+    return invoke_todo_operation("todo.update", payload)
+
+
+@mcp.tool(name="todo.graph")
+def todo_graph(todo_id: int) -> dict[str, Any]:
+    """Read a complete todo graph snapshot through the public contract."""
+    return invoke_todo_operation("todo.graph", {"todo_id": todo_id})
+
+
+@mcp.tool(name="todo.create_children_batch")
+def create_children_batch(
+    parent_id: int,
+    children: list[dict[str, Any]],
+    confirmed: bool,
+    idempotency_key: str,
+) -> list[int]:
+    """Create a governed atomic child batch through the public contract."""
+    return invoke_todo_operation("todo.create_children_batch", {
+        "parent_id": parent_id,
+        "children": children,
+        "confirmed": confirmed,
+        "idempotency_key": idempotency_key,
+    })
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

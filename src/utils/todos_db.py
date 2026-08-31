@@ -340,9 +340,12 @@ def init_db() -> None:
                 idempotency_key TEXT PRIMARY KEY,
                 parent_id INTEGER NOT NULL REFERENCES todos(id),
                 child_ids TEXT NOT NULL,
+                request_payload TEXT,
                 created_at TEXT NOT NULL
             )
         """)
+        if not _has_column(conn, "todo_batch_operations", "request_payload"):
+            conn.execute("ALTER TABLE todo_batch_operations ADD COLUMN request_payload TEXT")
 
         _ensure_decision_metadata_schema(conn)
 
@@ -866,14 +869,31 @@ def create_children_batch(
     specs = list(children)
     if not specs:
         raise ValueError("at least one child is required")
+    try:
+        request_payload = json.dumps(
+            {"parent_id": parent_id, "children": specs},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("children must be JSON-serializable") from exc
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
             existing = conn.execute(
-                "SELECT child_ids FROM todo_batch_operations WHERE idempotency_key=?", (idempotency_key,)
+                "SELECT parent_id, request_payload, child_ids FROM todo_batch_operations"
+                " WHERE idempotency_key=?", (idempotency_key,)
             ).fetchone()
             if existing:
-                return [int(value) for value in json.loads(existing[0])]
+                if (
+                    existing["parent_id"] != parent_id
+                    or existing["request_payload"] != request_payload
+                ):
+                    raise ValueError(
+                        "idempotency key was already used with a different parent or payload"
+                    )
+                return [int(value) for value in json.loads(existing["child_ids"])]
             parent = conn.execute("SELECT * FROM todos WHERE id=?", (parent_id,)).fetchone()
             if parent is None:
                 raise ValueError("parent todo not found")
@@ -899,8 +919,10 @@ def create_children_batch(
                         (child_ids[index], child_ids[prerequisite_index], json.dumps(sorted(DEFAULT_TERMINAL_STATES)), created_at),
                     )
             conn.execute(
-                "INSERT INTO todo_batch_operations (idempotency_key, parent_id, child_ids, created_at) VALUES (?, ?, ?, ?)",
-                (idempotency_key, parent_id, json.dumps(child_ids), created_at),
+                "INSERT INTO todo_batch_operations"
+                " (idempotency_key, parent_id, child_ids, request_payload, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (idempotency_key, parent_id, json.dumps(child_ids), request_payload, created_at),
             )
             conn.commit()
             return child_ids

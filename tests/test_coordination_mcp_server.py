@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 import subprocess
 import sys
@@ -487,6 +488,77 @@ def test_child_batch_is_idempotent_and_graph_read_is_complete(tmp_db):
     graph = mcp_server.invoke_todo_operation("todo.graph", {"todo_id": parent_id})
     assert [child["id"] for child in graph["children"]] == child_ids
     assert graph["children"][1]["parent_id"] == parent_id
+
+
+def test_new_todo_operations_are_discoverable_and_callable_through_fastmcp(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    parent_id = todos_db.add_todo("workspace", "Public tool parent")
+    tool_names = {tool.name for tool in asyncio.run(mcp_server.mcp.list_tools())}
+
+    assert {"todo.update", "todo.graph", "todo.create_children_batch"} <= tool_names
+    todo = todos_db.get_todo_by_id(parent_id)
+    update_result = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "todo.update",
+            {
+                "todo_id": parent_id,
+                "expected_version": todo["updated_at"],
+                "authenticated": True,
+                "text": "Updated through public tool",
+            },
+        )
+    )
+    assert update_result[1]["text"] == "Updated through public tool"
+    graph_result = asyncio.run(
+        mcp_server.mcp.call_tool("todo.graph", {"todo_id": parent_id})
+    )
+    assert graph_result[1]["todo"]["id"] == parent_id
+    batch_result = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "todo.create_children_batch",
+            {
+                "parent_id": parent_id,
+                "children": [{"text": "Created through public tool"}],
+                "confirmed": True,
+                "idempotency_key": "public-tool-batch",
+            },
+        )
+    )
+    assert len(batch_result[1]) == 1
+
+
+def test_batch_idempotency_key_rejects_conflicting_parent_and_children(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    first_parent_id = todos_db.add_todo("workspace", "First batch parent")
+    second_parent_id = todos_db.add_todo("workspace", "Second batch parent")
+    first_payload = {
+        "parent_id": first_parent_id,
+        "children": [{"text": "First child"}],
+        "confirmed": True,
+        "idempotency_key": "reused-key",
+    }
+    second_payload = {
+        "parent_id": second_parent_id,
+        "children": [{"text": "Conflicting child"}],
+        "confirmed": True,
+        "idempotency_key": "reused-key",
+    }
+
+    first_ids = mcp_server.invoke_todo_operation(
+        "todo.create_children_batch", first_payload
+    )
+    assert mcp_server.invoke_todo_operation(
+        "todo.create_children_batch", first_payload
+    ) == first_ids
+
+    with pytest.raises(ValueError, match="idempotency key.*payload"):
+        mcp_server.invoke_todo_operation(
+            "todo.create_children_batch", second_payload
+        )
 
 
 def test_confirmed_decompose_allows_priority_override(tmp_db):
