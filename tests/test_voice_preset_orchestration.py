@@ -54,14 +54,43 @@ def test_registering_a_revision_preserves_the_previous_immutable_version() -> No
         first.settings["stability"] = 0.9
 
 
-def test_register_rejects_secret_like_settings() -> None:
+@pytest.mark.parametrize(
+    "setting_name",
+    ["password", "client_secret", "secret", "credential", "credentials"],
+)
+def test_register_rejects_secret_like_settings_without_mutating_registry(
+    setting_name: str,
+) -> None:
+    registry = VoicePresetRegistry()
+
     with pytest.raises(ValueError, match="secrets"):
-        VoicePresetRegistry().register(
+        registry.register(
             name="unsafe",
             voice_id="voice-1",
             intended_use="brief",
-            settings={"api_key": "never-store-this"},
+            settings={setting_name: "never-store-this"},
         )
+
+    with pytest.raises(KeyError, match="unknown voice preset"):
+        registry.require_approved("unsafe", intended_use="brief")
+
+
+def test_register_preserves_legitimate_voice_settings() -> None:
+    settings = {
+        "stability": 0.5,
+        "similarity_boost": 0.8,
+        "style": 0.2,
+        "use_speaker_boost": True,
+    }
+
+    preset = VoicePresetRegistry().register(
+        name="safe",
+        voice_id="voice-1",
+        intended_use="brief",
+        settings=settings,
+    )
+
+    assert dict(preset.settings) == settings
 
 
 @pytest.mark.parametrize(

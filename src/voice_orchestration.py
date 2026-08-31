@@ -52,7 +52,8 @@ class VoicePresetRegistry:
     ) -> VoicePreset:
         if not name.strip() or not voice_id.strip() or not intended_use.strip():
             raise ValueError("preset name, voice_id, and intended_use are required")
-        if any("key" in key.lower() or "token" in key.lower() for key in settings):
+        secret_markers = ("key", "token", "password", "secret", "credential")
+        if any(any(marker in key.lower() for marker in secret_markers) for key in settings):
             raise ValueError("preset settings cannot contain secrets")
         versions = self._presets.setdefault(name, [])
         preset = VoicePreset(
