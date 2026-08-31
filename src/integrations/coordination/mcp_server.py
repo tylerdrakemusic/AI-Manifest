@@ -21,7 +21,7 @@ _ALLOWED_OPERATIONS = frozenset({
     "todo.create", "todo.read", "todo.draft_scope",
     "todo.set_decision_metadata", "todo.get_decision_metadata",
     "todo.get_decision_assessments", "todo.priority_guidance",
-    "todo.set_priority",
+    "todo.set_priority", "todo.update", "todo.graph", "todo.create_children_batch",
 })
 _FORBIDDEN_ARGUMENTS = frozenset({"db", "sql"})
 
@@ -63,6 +63,13 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.get_decision_assessments": {"todo_id"},
         "todo.priority_guidance": {"todo_id"},
         "todo.set_priority": {"todo_id", "priority", "confirmed"},
+        "todo.update": {
+            "todo_id", "expected_version", "authenticated", "text", "priority",
+            "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
+            "estimated_effort", "dependencies", "perfected_at",
+        },
+        "todo.graph": {"todo_id"},
+        "todo.create_children_batch": {"parent_id", "children", "confirmed", "idempotency_key"},
     }[operation]
     if set(payload) - allowed_fields:
         raise ValueError("unexpected arguments for todo operation")
@@ -100,6 +107,27 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         if payload.get("confirmed") is not True:
             raise PermissionError("confirmation is required before changing priority")
         return todos_db.update_priority(payload["todo_id"], payload["priority"])
+    if operation == "todo.update":
+        if payload.get("authenticated") is not True:
+            raise PermissionError("authentication is required before updating a todo")
+        if not isinstance(payload.get("expected_version"), str):
+            raise ValueError("expected_version is required")
+        if "priority" in payload:
+            raise ValueError(
+                "priority is a protected field for todo.update; use todo.set_priority"
+            )
+        fields = {key: value for key, value in payload.items() if key not in {
+            "todo_id", "expected_version", "authenticated"
+        }}
+        return todos_db.update_todo(payload["todo_id"], payload["expected_version"], fields)
+    if operation == "todo.graph":
+        return todos_db.get_todo_graph(payload["todo_id"])
+    if operation == "todo.create_children_batch":
+        return todos_db.create_children_batch(
+            payload["parent_id"], payload["children"],
+            confirmed=payload.get("confirmed") is True,
+            idempotency_key=payload["idempotency_key"],
+        )
     if operation == "todo.link_fr":
         return link_todo_to_fr(payload["todo_id"], payload["fr_id"], payload.get("confirmed", False))
     if operation == "todo.link_prerequisite":
@@ -120,7 +148,9 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         return todos_db.get_todo_fr_links(payload["todo_id"])
     if payload.get("confirmed") is not True:
         raise PermissionError("confirmation is required before decomposing a todo")
-    return todos_db.decompose_todo(payload["parent_id"], payload["children"])
+    return todos_db.decompose_todo(
+        payload["parent_id"], payload["children"], allow_priority_override=True
+    )
 
 
 mcp = FastMCP(
@@ -260,6 +290,63 @@ def set_todo_priority(todo_id: int, priority: int, confirmed: bool = False) -> b
         "todo_id": todo_id,
         "priority": priority,
         "confirmed": confirmed,
+    })
+
+
+@mcp.tool(name="todo.update")
+def update_todo(
+    todo_id: int,
+    expected_version: str,
+    authenticated: bool,
+    text: str | None = None,
+    autonomy_level: str | None = None,
+    rationale: str | None = None,
+    implementation_hints: str | None = None,
+    context_snapshot: str | None = None,
+    estimated_effort: str | None = None,
+    dependencies: str | None = None,
+    perfected_at: str | None = None,
+) -> dict[str, Any]:
+    """Update mutable todo fields through the authenticated public contract."""
+    payload: dict[str, Any] = {
+        "todo_id": todo_id,
+        "expected_version": expected_version,
+        "authenticated": authenticated,
+    }
+    for key, value in {
+        "text": text,
+        "autonomy_level": autonomy_level,
+        "rationale": rationale,
+        "implementation_hints": implementation_hints,
+        "context_snapshot": context_snapshot,
+        "estimated_effort": estimated_effort,
+        "dependencies": dependencies,
+        "perfected_at": perfected_at,
+    }.items():
+        if value is not None:
+            payload[key] = value
+    return invoke_todo_operation("todo.update", payload)
+
+
+@mcp.tool(name="todo.graph")
+def todo_graph(todo_id: int) -> dict[str, Any]:
+    """Read a complete todo graph snapshot through the public contract."""
+    return invoke_todo_operation("todo.graph", {"todo_id": todo_id})
+
+
+@mcp.tool(name="todo.create_children_batch")
+def create_children_batch(
+    parent_id: int,
+    children: list[dict[str, Any]],
+    confirmed: bool,
+    idempotency_key: str,
+) -> list[int]:
+    """Create a governed atomic child batch through the public contract."""
+    return invoke_todo_operation("todo.create_children_batch", {
+        "parent_id": parent_id,
+        "children": children,
+        "confirmed": confirmed,
+        "idempotency_key": idempotency_key,
     })
 
 

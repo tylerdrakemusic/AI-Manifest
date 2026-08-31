@@ -20,7 +20,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .todo_decision_contract import BENEFIT_CATEGORIES
 from .todo_decision_metadata import SCORE_FIELDS, priority_guidance, validate_decision_metadata
@@ -329,7 +329,23 @@ def init_db() -> None:
         if not _has_column(conn, "todos", "parent_id"):
             conn.execute("ALTER TABLE todos ADD COLUMN parent_id INTEGER")
 
+        if not _has_column(conn, "todos", "updated_at"):
+            conn.execute("ALTER TABLE todos ADD COLUMN updated_at TEXT")
+        conn.execute("UPDATE todos SET updated_at = COALESCE(updated_at, created_at)")
+
         _create_graph_schema(conn)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS todo_batch_operations (
+                idempotency_key TEXT PRIMARY KEY,
+                parent_id INTEGER NOT NULL REFERENCES todos(id),
+                child_ids TEXT NOT NULL,
+                request_payload TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        if not _has_column(conn, "todo_batch_operations", "request_payload"):
+            conn.execute("ALTER TABLE todo_batch_operations ADD COLUMN request_payload TEXT")
 
         _ensure_decision_metadata_schema(conn)
 
@@ -430,11 +446,11 @@ def add_todo(
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO todos"
-            " (project, source, text, done, created_at, priority, autonomy_level,"
+            " (project, source, text, done, created_at, updated_at, priority, autonomy_level,"
             "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                project, source, text, created_at, priority, autonomy_level,
+                project, source, text, created_at, created_at, priority, autonomy_level,
                 rationale, implementation_hints, context_snapshot,
                 estimated_effort, dependencies, parent_id,
             ),
@@ -460,6 +476,36 @@ def update_priority(todo_id: int, priority: int) -> bool:
             )
         conn.commit()
     return cur.rowcount == 1
+
+
+def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Update mutable todo fields only when the stored version still matches."""
+    mutable = {
+        "text", "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
+        "estimated_effort", "dependencies", "perfected_at",
+    }
+    unknown = set(fields) - mutable
+    if unknown:
+        raise ValueError(f"immutable or unsupported todo fields: {sorted(unknown)!r}")
+    if not fields:
+        raise ValueError("at least one mutable field is required")
+    if "autonomy_level" in fields and fields["autonomy_level"] not in ALLOWED_AUTONOMY_LEVELS:
+        raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}")
+    updated_at = datetime.now(timezone.utc).isoformat()
+    assignments = ", ".join(f"{field}=?" for field in fields) + ", updated_at=?"
+    values = [fields[field] for field in fields] + [updated_at, todo_id, expected_version]
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"UPDATE todos SET {assignments} WHERE id=? AND updated_at=?",  # nosec B608: fields are allowlisted above
+            values,
+        )
+        if cur.rowcount != 1:
+            if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
+                raise ValueError("todo not found")
+            raise ValueError("precondition failed: todo version is stale")
+        conn.commit()
+        row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+    return dict(row)
 
 
 def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by: str) -> None:
@@ -689,6 +735,47 @@ def get_related_todos(todo_id: int) -> list[dict[str, Any]]:
     return related
 
 
+def get_todo_graph(todo_id: int) -> dict[str, Any]:
+    """Return one atomic, read-back-verifiable todo graph snapshot."""
+    with get_connection() as conn:
+        conn.execute("BEGIN")
+        todo_row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+        if todo_row is None:
+            raise ValueError("todo not found")
+        parent_row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_row["parent_id"],)).fetchone() if todo_row["parent_id"] else None
+        children = [dict(row) for row in conn.execute("SELECT * FROM todos WHERE parent_id=? ORDER BY id", (todo_id,))]
+        edges = [dict(row) for row in conn.execute(
+            "SELECT todo_id, prerequisite_id, allowed_terminal_states, created_at FROM todo_prerequisites WHERE todo_id=? OR prerequisite_id=? ORDER BY todo_id, prerequisite_id",
+            (todo_id, todo_id),
+        )]
+        for edge in edges:
+            edge["allowed_terminal_states"] = json.loads(edge["allowed_terminal_states"])
+        priorities = [dict(row) for row in conn.execute(
+            "SELECT * FROM priority_history WHERE todo_id=? ORDER BY id", (todo_id,)
+        )]
+        conn.commit()
+    return {
+        "todo": dict(todo_row),
+        "parent": dict(parent_row) if parent_row else None,
+        "children": children,
+        "edges": edges,
+        "metadata": get_decision_metadata(todo_id),
+        "assessments": get_decision_assessments(todo_id),
+        "priorities": priorities,
+        "completion": {
+            "done": bool(todo_row["done"]),
+            "closure_reason": todo_row["closure_reason"],
+            "closed_at": todo_row["closed_at"],
+        },
+        "fr_links": get_todo_fr_links(todo_id),
+        "timestamps": {
+            "created_at": todo_row["created_at"],
+            "updated_at": todo_row["updated_at"],
+            "closed_at": todo_row["closed_at"],
+        },
+    }
+
+
 def get_readiness(todo_id: int) -> dict[str, Any]:
     """Explain whether every prerequisite satisfies its edge policy."""
     todo = get_todo_by_id(todo_id)
@@ -719,6 +806,7 @@ def decompose_todo(
     parent_id: int,
     children: Iterable[str | dict[str, Any]],
     inherit_confirmed_fr_link: bool = True,
+    allow_priority_override: bool = False,
 ) -> list[int]:
     """Atomically create implementation-ready children while preserving parent."""
     child_specs = list(children)
@@ -738,6 +826,8 @@ def decompose_todo(
                 text = str(values.get("text", "")).strip()
                 if not text:
                     raise ValueError("child text is required")
+                if "priority" in values and values["priority"] != parent["priority"] and not allow_priority_override:
+                    raise PermissionError("priority override requires explicit confirmation")
                 cur = conn.execute(
                     """
                     INSERT INTO todos
@@ -757,6 +847,83 @@ def decompose_todo(
                         "INSERT INTO todo_fr_links (todo_id, fr_id, confirmed, created_at) VALUES (?, ?, 1, ?)",
                         (child_id, fr_id, created_at),
                     )
+            conn.commit()
+            return child_ids
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def create_children_batch(
+    parent_id: int,
+    children: Iterable[dict[str, Any]],
+    *,
+    confirmed: bool,
+    idempotency_key: str,
+) -> list[int]:
+    """Create children and prerequisite edges atomically, with replay protection."""
+    if confirmed is not True:
+        raise PermissionError("confirmation is required before creating child batch")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        raise ValueError("idempotency_key is required")
+    specs = list(children)
+    if not specs:
+        raise ValueError("at least one child is required")
+    try:
+        request_payload = json.dumps(
+            {"parent_id": parent_id, "children": specs},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("children must be JSON-serializable") from exc
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = conn.execute(
+                "SELECT parent_id, request_payload, child_ids FROM todo_batch_operations"
+                " WHERE idempotency_key=?", (idempotency_key,)
+            ).fetchone()
+            if existing:
+                if (
+                    existing["parent_id"] != parent_id
+                    or existing["request_payload"] != request_payload
+                ):
+                    raise ValueError(
+                        "idempotency key was already used with a different parent or payload"
+                    )
+                return [int(value) for value in json.loads(existing["child_ids"])]
+            parent = conn.execute("SELECT * FROM todos WHERE id=?", (parent_id,)).fetchone()
+            if parent is None:
+                raise ValueError("parent todo not found")
+            child_ids: list[int] = []
+            created_at = datetime.now(timezone.utc).isoformat()
+            for spec in specs:
+                priority = spec.get("priority", parent["priority"])
+                if priority != parent["priority"] and spec.get("priority_confirmed") is not True:
+                    raise PermissionError("priority override requires explicit confirmation")
+                cur = conn.execute(
+                    "INSERT INTO todos (project, source, text, done, created_at, updated_at, priority, autonomy_level, rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (spec.get("project", parent["project"]), spec.get("source", parent["source"]), str(spec["text"]).strip(), 0, created_at, created_at, priority, spec.get("autonomy_level", parent["autonomy_level"]), spec.get("rationale"), spec.get("implementation_hints"), spec.get("context_snapshot"), spec.get("estimated_effort"), spec.get("dependencies"), parent_id),
+                )
+                child_ids.append(int(cur.lastrowid))
+            for index, spec in enumerate(specs):
+                for prerequisite_index in spec.get("prerequisite_indices", []):
+                    if prerequisite_index < 0 or prerequisite_index >= len(child_ids):
+                        raise ValueError("prerequisite index is out of range")
+                    if index == prerequisite_index:
+                        raise ValueError("prerequisite cycle rejected")
+                    conn.execute(
+                        "INSERT INTO todo_prerequisites (todo_id, prerequisite_id, allowed_terminal_states, created_at) VALUES (?, ?, ?, ?)",
+                        (child_ids[index], child_ids[prerequisite_index], json.dumps(sorted(DEFAULT_TERMINAL_STATES)), created_at),
+                    )
+            conn.execute(
+                "INSERT INTO todo_batch_operations"
+                " (idempotency_key, parent_id, child_ids, request_payload, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (idempotency_key, parent_id, json.dumps(child_ids), request_payload, created_at),
+            )
             conn.commit()
             return child_ids
         except Exception:
