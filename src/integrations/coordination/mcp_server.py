@@ -66,7 +66,7 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.update": {
             "todo_id", "expected_version", "authenticated", "text", "priority",
             "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
-            "estimated_effort", "dependencies",
+            "estimated_effort", "dependencies", "perfected_at",
         },
         "todo.graph": {"todo_id"},
         "todo.create_children_batch": {"parent_id", "children", "confirmed", "idempotency_key"},
@@ -112,6 +112,10 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
             raise PermissionError("authentication is required before updating a todo")
         if not isinstance(payload.get("expected_version"), str):
             raise ValueError("expected_version is required")
+        if "priority" in payload:
+            raise ValueError(
+                "priority is a protected field for todo.update; use todo.set_priority"
+            )
         fields = {key: value for key, value in payload.items() if key not in {
             "todo_id", "expected_version", "authenticated"
         }}

@@ -419,6 +419,7 @@ def test_authenticated_rich_update_requires_version_and_preserves_protected_fiel
             "todo_id": todo_id,
             "text": "Updated",
             "rationale": "More context",
+            "perfected_at": "2026-08-30T12:00:00+00:00",
             "expected_version": original["updated_at"],
             "authenticated": True,
         },
@@ -426,6 +427,7 @@ def test_authenticated_rich_update_requires_version_and_preserves_protected_fiel
 
     assert updated["text"] == "Updated"
     assert updated["rationale"] == "More context"
+    assert updated["perfected_at"] == "2026-08-30T12:00:00+00:00"
     assert updated["id"] == todo_id
     assert updated["project"] == original["project"]
     assert updated["created_at"] == original["created_at"]
@@ -441,6 +443,27 @@ def test_authenticated_rich_update_requires_version_and_preserves_protected_fiel
                 "authenticated": True,
             },
         )
+
+
+def test_authenticated_rich_update_rejects_priority_as_protected_field(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Protected priority", priority=4)
+    original = todos_db.get_todo_by_id(todo_id)
+
+    with pytest.raises(ValueError, match="priority.*protected"):
+        mcp_server.invoke_todo_operation(
+            "todo.update",
+            {
+                "todo_id": todo_id,
+                "priority": 9,
+                "expected_version": original["updated_at"],
+                "authenticated": True,
+            },
+        )
+
+    assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
 
 
 def test_child_batch_is_idempotent_and_graph_read_is_complete(tmp_db):

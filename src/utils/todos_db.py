@@ -478,16 +478,14 @@ def update_priority(todo_id: int, priority: int) -> bool:
 def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> dict[str, Any]:
     """Update mutable todo fields only when the stored version still matches."""
     mutable = {
-        "text", "priority", "autonomy_level", "rationale", "implementation_hints",
-        "context_snapshot", "estimated_effort", "dependencies",
+        "text", "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
+        "estimated_effort", "dependencies", "perfected_at",
     }
     unknown = set(fields) - mutable
     if unknown:
         raise ValueError(f"immutable or unsupported todo fields: {sorted(unknown)!r}")
     if not fields:
         raise ValueError("at least one mutable field is required")
-    if "priority" in fields and fields["priority"] not in range(1, 11):
-        raise ValueError("priority must be 1-10")
     if "autonomy_level" in fields and fields["autonomy_level"] not in ALLOWED_AUTONOMY_LEVELS:
         raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}")
     updated_at = datetime.now(timezone.utc).isoformat()
