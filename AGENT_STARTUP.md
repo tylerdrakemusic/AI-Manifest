@@ -22,19 +22,19 @@
 | **Workspace Root** | `f:\` |
 | **Parent Repo** | `f:\executedcode\` (private git repo — source controlled) |
 | **Python Executable** | `C:\G\python.exe` |
-| **Agent Definitions** | `f:\.github\agents\👁ai-manifest-*.agent.md` |
-| **Instructions** | `f:\.github\instructions\👁ai-manifest-*.instructions.md` |
+| **Agent Definitions** | `.github/agents/👁ai-manifest-*.agent.md` |
+| **Instructions** | `.github/instructions/👁ai-manifest-*.instructions.md` |
 | **System Specs** | `f:\SYSTEM_SPECS.md` |
 
-### 👁AI-Manifest Agents (`f:\.github\agents\`)
+### 👁AI-Manifest Agents (`.github/agents/`)
 
-All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `f:\.github\agents\👁ai-manifest-*.agent.md`. **Scan that glob to discover available agents.**
+All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `.github/agents/👁ai-manifest-*.agent.md`. **Scan that glob to discover available agents.**
 
 | Agent | Purpose |
 |-------|---------|
 | **👁ai-manifest-orchestrator** | Top-level coordinator. Decomposes requests, delegates, synthesizes. Default entry point. |
 
-> **Adding agents:** Create `f:\.github\agents\👁ai-manifest-<name>.agent.md` with a keyword-rich `description` in frontmatter.
+> **Adding agents:** Create `.github/agents/👁ai-manifest-<name>.agent.md` with a keyword-rich `description` in frontmatter.
 
 ## 3. Project Summary
 
