@@ -1,0 +1,123 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
+erDiagram
+    BRIEFS ||--o{ BRIEF_AUDIO : has
+    BRIEFS {
+        text brief_id PK
+        text title
+        text source_topic
+        text content_md
+        text generated_at
+    }
+    BRIEF_AUDIO {
+        integer id PK
+        text brief_id FK
+        text voice_id
+        text mp3_path
+        real duration_sec
+    }
+    VOICES {
+        text voice_id PK
+        text label
+        text provider
+    }
+    TODOS ||--o{ PRIORITY_HISTORY : has
+    TODOS ||--|| TODO_DECISION_METADATA : current
+    TODOS ||--o{ TODO_DECISION_ASSESSMENTS : history
+    TODOS ||--o{ TODOS : parent_of
+    TODOS ||--o{ TODO_PREREQUISITES : dependent
+    TODOS ||--o{ TODO_PREREQUISITES : prerequisite
+    TODOS ||--o{ TODO_FR_LINKS : links
+    TODOS ||--o{ TODO_BATCH_OPERATIONS : records
+    FR_LEDGER ||--o{ TODO_FR_LINKS : "confirmed logical link"
+    TODOS {
+        integer id PK
+        text project
+        text source "AI|TYLER|SCAN"
+        text text
+        integer done
+        text created_at
+        text closed_at
+        text closure_reason "nullable — completed|cancelled|stale; legacy rows remain NULL after migration"
+        integer priority "default 5"
+        text autonomy_level "full|supervised|human"
+        text fr_id "nullable — links to active FR"
+        text perfected_at "nullable — UTC timestamp proving successful approved perfect-scoped-td refinement; independent of fr_id"
+        text rationale "nullable — LLM-generated rationale"
+        text implementation_hints "nullable — LLM-generated hints"
+        text context_snapshot "nullable — project context at discovery"
+        text estimated_effort "nullable — XS|S|M|L|XL"
+        text dependencies "nullable — todo IDs / FR IDs (comma-sep)"
+        integer parent_id "nullable — logical parent todo self-reference; no DB FK"
+        text updated_at "UTC optimistic-concurrency version"
+    }
+    TODO_PREREQUISITES {
+        integer todo_id PK, FK
+        integer prerequisite_id PK, FK
+        text allowed_terminal_states "default completed|cancelled|stale; prerequisite must reach one"
+        text created_at
+        text constraint "todo_id <> prerequisite_id; cycles rejected"
+    }
+    TODO_FR_LINKS {
+        integer todo_id PK, FK
+        text fr_id PK "canonical FR ID; confirmation required"
+        integer confirmed "default 0; CHECK 0|1"
+        text created_at
+    }
+    FR_LEDGER {
+        text fr_id PK "canonical feature-request registry; logical reference"
+    }
+    PRIORITY_HISTORY {
+        integer id PK
+        integer todo_id FK
+        integer priority
+        text scored_at
+    }
+    TODO_DECISION_METADATA {
+        integer todo_id PK, FK
+        text expected_value
+        text user_or_system_benefit
+        text strategic_alignment
+        integer confidence "1-10"
+        text cost_of_delay
+        text primary_benefit_category
+        text secondary_benefit_category
+        text benefit_summary
+        text justification
+        text evidence "JSON list"
+        text assessed_by
+        text updated_at
+    }
+    TODO_DECISION_ASSESSMENTS {
+        integer id PK
+        integer todo_id FK
+        text expected_value
+        text user_or_system_benefit
+        text strategic_alignment
+        integer confidence "1-10"
+        text cost_of_delay
+        text primary_benefit_category
+        text secondary_benefit_category
+        text benefit_summary
+        text justification
+        text evidence "JSON list"
+        text assessed_by
+        text assessed_at
+    }
+    TODO_BATCH_OPERATIONS {
+        text idempotency_key PK
+        integer parent_id FK
+        text child_ids "JSON replay payload"
+        text request_payload "nullable JSON input payload for idempotency validation"
+        text created_at
+    }
+
+classDef life     fill:#1a2e3a,stroke:#6ab4d4,color:#d0ecf8
+classDef music    fill:#3a1a24,stroke:#d47a8f,color:#f8d0dc
+classDef quantum  fill:#251a3a,stroke:#a07adf,color:#e8d0f8
+classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
+classDef ws       fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
+classDef tyler    fill:#2a1a3a,stroke:#9e4aff,color:#fff
+classDef orch     fill:#1a3a52,stroke:#4a9eff,color:#fff
+classDef ext      fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
+classDef db       fill:#3a3010,stroke:#d4c050,color:#f8f0c0
+classDef state    fill:#1a1a1a,stroke:#888888,color:#cccccc
