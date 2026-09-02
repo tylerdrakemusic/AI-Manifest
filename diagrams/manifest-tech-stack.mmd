@@ -1,0 +1,60 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
+graph LR
+    Python[Python 3.11] --> Requests[requests · httpx]
+    Python --> Pytest[pytest]
+    Python --> TestRunner[/tools/run_tests.py<br/>canonical parallel runner · serial deterministic debugging fallback/]
+    TestRunner --> Pytest
+    TestRunner -.-> TestPolicy[tools/parallel_test_policy.json<br/>parallel_ci=true<br/>exclude playwright + live]
+    Pytest -.-> Xdist[pytest-xdist<br/>controlled workers via merged policy]
+    TestRunner -.-> ParallelEvidence[Controlled CI parallelism<br/>playwright/live excluded · serial deterministic debugging fallback]
+    Python --> Flask[flask>=3.0]
+    Python --> Pydantic[pydantic>=2.0]
+    Python --> Sounddevice[sounddevice>=0.4]
+    Python --> Soundfile[soundfile>=0.12]
+    Python --> SQLite[SQLite 3]
+    SQLite --> TodosDB[manifest_todos.db]
+    Python --> CoordinatorMCP[coordination MCP server<br/>todo.update · todo.graph · todo.create_children_batch]
+    CoordinatorMCP --> Contract[authenticated and confirmed mutation contract<br/>optimistic preconditions · idempotent replay · atomic child creation · graph read-back]
+    Contract --> SQLite
+    CoordinatorMCP -.-> LocalFallback[governed local todos_db fallback]
+    LocalFallback --> SQLite
+    class SQLite lib
+    class TodosDB db
+    class CoordinatorMCP,Contract,LocalFallback util
+    OpenAI[OpenAI API] --> GPT[GPT models]
+    ElevenLabs[ElevenLabs API] --> TTS[Voice synthesis]
+    HF[Hugging Face] --> Models[hosted models]
+    class Python lang
+    class OpenAI,ElevenLabs,HF api
+    class Requests,Pytest,TestRunner,TestPolicy,Xdist,Flask,Pydantic,Sounddevice,Soundfile,GPT,TTS,Models lib
+    class ParallelEvidence state
+
+    %% FR-20260816-ai-manifest-database-backup-restore
+    BackupFacade[database_backup.py<br/>Workspace contract facade] --> BackupEngine[⊕ Workspace<br/>provider-neutral backup engine]
+    BackupInventory[database_backup_inventory.py<br/>explicit approved source mapping] --> BackupFacade
+    BackupInventory --> ManifestTodoDB[manifest_todos.db<br/>SQLCipher canonical coordination DB]
+    BackupLauncher[PowerShell 5.1 launcher<br/>User-scope env hydration] --> BackupRunner[run_database_backup.py<br/>path-only arguments]
+    BackupTask[Task Scheduler<br/>daily 02:00] --> BackupLauncher
+    BackupRunner --> BackupInventory
+    BackupSecrets{Environment-only secrets<br/>volume identity · HMAC key · DB key} --> BackupRunner
+    BackupEngine --> BackupStorage[Trusted local volume<br/>marker + authenticated encrypted generations]
+    BackupStorage --> BackupIntegrity[SHA-256 identity<br/>atomic publication · 30-generation retention]
+    RestoreTool[restore_database_backup.py<br/>operator-approved isolated restore] --> RestoreCheck[SQLCipher reopen<br/>schema validation]
+    BackupIntegrity --> RestoreTool
+    BackupEngine --> Audit[Redacted audit metadata<br/>no plaintext records or keys]
+    BackupEngine -.-> NoCloud[No cloud-provider integration]
+    BackupExclusions[Legacy · generated · worktree<br/>virtualenv · cache · output · transient copies] -.-> BackupInventory
+    class BackupFacade,BackupInventory,BackupLauncher,BackupRunner,BackupTask,RestoreTool util
+    class BackupEngine,BackupStorage,BackupIntegrity,Audit state
+    class ManifestTodoDB db
+    class BackupSecrets,NoCloud,BackupExclusions,RestoreCheck state
+
+classDef life     fill:#1a2e3a,stroke:#6ab4d4,color:#d0ecf8
+classDef music    fill:#3a1a24,stroke:#d47a8f,color:#f8d0dc
+classDef quantum  fill:#251a3a,stroke:#a07adf,color:#e8d0f8
+classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
+classDef ws       fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
+classDef tyler    fill:#2a1a3a,stroke:#9e4aff,color:#fff
+classDef ext      fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
+classDef db       fill:#3a3010,stroke:#d4c050,color:#f8f0c0
+classDef state    fill:#1a1a1a,stroke:#888888,color:#cccccc

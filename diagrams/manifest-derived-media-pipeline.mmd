@@ -1,0 +1,52 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
+%% is_derived_view=true
+%% Traceability.parent: diagrams/manifest-architecture.mmd
+graph TB
+    Tools[executive_audio_brief.py] --> Briefs[brief generators]
+    Tools --> MCP[TTS MCP server]
+    Tools --> Vocal[Vocal synthesis]
+    Tools --> VoiceOrchestration[voice_orchestration.py]
+    VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
+    VoiceRegistry --> PresetApproval[intended-use approval]
+    VoiceRegistry --> AvailabilityGate{provider available?}
+    AvailabilityGate -->|approved and available| OrderedVoices[ordered multi-voice orchestration]
+    OrderedVoices --> ElevenLabsClient[existing ElevenLabsClient]
+    Briefs --> OpenAI[OpenAI]
+    Briefs --> ElevenLabs[ElevenLabs]
+    Tools --> Lily[src/utils/lily_portrait.py]
+    Lily --> DallE3[DallE3Client]
+    Lily --> HFImage[HuggingFaceImageClient]
+    Lily --> HFSpaces[HF Spaces FLUX]
+    Lily --> Pollinations[Pollinations.AI]
+    Lily --> Fallback[SVG silhouette fallback]
+    DallE3 -.-> WS[⊕ Workspace integrations]
+    HFImage -.-> WS
+    HFSpaces -.-> WS
+    Pollinations -.-> WS
+    DallE3 --> Images[output/images]
+    HFImage --> Images
+    Fallback --> Images
+    Images --> Portal[executive brief portal]
+    MCP --> ElevenLabs
+    Vocal --> ElevenLabs
+    ElevenLabsClient --> ElevenLabs
+    VoiceOrchestration --> AudioPolicy
+    MCP --> AudioPolicy[audio_output_policy.py]
+    Vocal --> AudioPolicy
+    AudioPolicy --> Reject[reject unsafe names/paths]
+    Reject --> RootContainment[resolved-root containment]
+    RootContainment --> AtomicPublish[atomic publication]
+    AtomicPublish --> AudioOut[validated audio artifacts: output/tts/*.mp3]
+    AudioOut --> Portal
+    Briefs --> Portal
+classDef orch fill:#1a3a52,stroke:#4a9eff,color:#fff
+classDef ws fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
+classDef ext fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
+classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
+classDef state fill:#1a1a1a,stroke:#888888,color:#cccccc
+    class Tools,Briefs,MCP,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Portal,AudioOut orch
+    class AvailabilityGate state
+    class AudioPolicy,Reject,RootContainment,AtomicPublish manifest
+    class Fallback state
+    class WS ws
+    class OpenAI,ElevenLabs ext
