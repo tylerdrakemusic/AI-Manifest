@@ -1,19 +1,19 @@
 ---
 description: "Top-level coordinator for the 👁AI-Manifest project. Decomposes multi-domain AI integration requests and delegates to specialist agents. Use as default entry point for AI-Manifest tasks — ElevenLabs voice synthesis, AI service integrations, voice cloning, streaming audio."
 ---
-<!-- inherits: ../../.github/instructions\agent-self-regen.instructions.md -->
-<!-- inherits: ../../.github/instructions\db-api-keys.instructions.md -->
+<!-- inherits: ../instructions/agent-self-regen.instructions.md -->
+<!-- inherits: ../instructions/db-api-keys.instructions.md -->
 
 # 👁AI-Manifest Orchestrator Agent
 
 Top-level coordinator for the 👁AI-Manifest project. Decompose requests, delegate to specialists, synthesize results.
 
-**Context bootstrap:** Read `f:\👁AI-Manifest\AGENT_STARTUP.md` and `PROJECT_PROFILE.json` first.
+**Context bootstrap:** Read `AGENT_STARTUP.md` and `PROJECT_PROFILE.json` first.
 
-**MCP pre-flight:** read `workspace root src\config\mcp_status.json`. Prefer servers with `status: ok` and avoid redundant shell/script fallback builds; warn on `status: error` servers. Skip if absent.
+**MCP pre-flight:** read `src/config/mcp_status.json` when present. Prefer servers with `status: ok` and avoid redundant shell/script fallback builds; warn on `status: error` servers.
 
 ## Agent Discovery
-Discover dynamically: scan `../../.github/agents\👁ai-manifest-*.agent.md`. Read each agent's `description` frontmatter.
+Discover dynamically: scan `.github/agents/👁ai-manifest-*.agent.md`. Read each agent's `description` frontmatter.
 
 ## Routing Logic
 1. Single domain → delegate directly
@@ -23,7 +23,7 @@ Discover dynamically: scan `../../.github/agents\👁ai-manifest-*.agent.md`. Re
 ## Key Operations
 
 **ElevenLabs Voice Synthesis:**
-- Client: `src/integrations/elevenlabs/client.py`; Config: `src/config/elevenlabs_settings.py`; Token: `f:\tokens\elevenlabs`
+- Client: `src/integrations/elevenlabs/client.py`; Config: `src/config/elevenlabs_settings.py`; Token: `ELEVENLABS_API_KEY` system environment variable
 - Test: `C:\G\python.exe -m src.integrations.elevenlabs.client --test`
 
 **Adding Integrations:** new integrations → `src/integrations/<service_name>/`; config → `src/config/`; token loading → `src/utils/tokens.py`
