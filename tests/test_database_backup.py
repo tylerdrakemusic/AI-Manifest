@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import sys
 
 import pytest
 
@@ -95,6 +96,48 @@ def test_shared_engine_fails_closed_when_configured_contract_is_missing(
         match="configured Workspace database backup contract is unavailable",
     ):
         database_backup_module._shared_engine_path()
+
+
+def test_shared_engine_loads_all_workspace_utility_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    utilities = workspace_root / "src" / "utils"
+    utilities.mkdir(parents=True)
+    (utilities / "database_backup.py").write_text(
+        "from src.utils.database_backup_scope import CLASSIFICATIONS\n"
+        "from src.utils.database_backup_observability import enforce_retention\n"
+        "CONTRACT_MARKER = (CLASSIFICATIONS, enforce_retention)\n",
+        encoding="utf-8",
+    )
+    (utilities / "database_backup_scope.py").write_text(
+        "CLASSIFICATIONS = frozenset({'coordination'})\n",
+        encoding="utf-8",
+    )
+    (utilities / "database_backup_observability.py").write_text(
+        "def enforce_retention(*args, **kwargs):\n    return []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.delenv("WORKSPACE_BACKUP_ENGINE_PATH", raising=False)
+    staged_module_names = (
+        "src.utils.database_backup_scope",
+        "src.utils.database_backup_observability",
+    )
+    original_modules = {
+        name: sys.modules.get(name) for name in staged_module_names
+    }
+
+    try:
+        loaded_engine = database_backup_module._load_shared_engine()
+    finally:
+        for name, original_module in original_modules.items():
+            if original_module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original_module
+
+    assert loaded_engine.CONTRACT_MARKER[0] == frozenset({"coordination"})
 
 
 def _approved_entry() -> dict[str, object]:

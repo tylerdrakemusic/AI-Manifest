@@ -46,15 +46,18 @@ def _load_shared_engine() -> ModuleType:
     engine_root = candidate.parents[2]
     if str(engine_root) not in sys.path:
         sys.path.insert(0, str(engine_root))
-    scope_path = candidate.with_name("database_backup_scope.py")
-    scope_specification = importlib.util.spec_from_file_location(
-        "src.utils.database_backup_scope", scope_path
-    )
-    if scope_specification is None or scope_specification.loader is None:
-        raise ImportError(f"Workspace database backup scope is unavailable: {scope_path}")
-    scope_module = importlib.util.module_from_spec(scope_specification)
-    sys.modules["src.utils.database_backup_scope"] = scope_module
-    scope_specification.loader.exec_module(scope_module)
+    for utility_name in ("database_backup_scope", "database_backup_observability"):
+        utility_path = candidate.with_name(f"{utility_name}.py")
+        utility_specification = importlib.util.spec_from_file_location(
+            f"src.utils.{utility_name}", utility_path
+        )
+        if utility_specification is None or utility_specification.loader is None:
+            raise ImportError(
+                f"Workspace database backup utility is unavailable: {utility_path}"
+            )
+        utility_module = importlib.util.module_from_spec(utility_specification)
+        sys.modules[f"src.utils.{utility_name}"] = utility_module
+        utility_specification.loader.exec_module(utility_module)
     module = importlib.util.module_from_spec(specification)
     sys.modules["workspace_database_backup_contract"] = module
     specification.loader.exec_module(module)
