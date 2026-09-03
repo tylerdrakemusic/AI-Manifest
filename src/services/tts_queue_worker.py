@@ -15,6 +15,7 @@ Usage (module-level convenience)::
 from __future__ import annotations
 
 import hashlib
+import ctypes
 import json
 import logging
 import os
@@ -47,10 +48,34 @@ _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
 
 def windows_playback(path: Path) -> None:
-    """Open an audio file with the local Windows-associated player asynchronously."""
+    """Play an MP3 through Windows multimedia APIs without launching an app."""
     if os.name != "nt":
         raise OSError("Windows playback is only available on Windows")
-    os.startfile(str(path))  # type: ignore[attr-defined]
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    alias = f"repository_voice_{hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:12]}"
+    winmm = ctypes.windll.winmm
+    command_buffer = ctypes.create_unicode_buffer(256)
+    open_command = f'open "{path}" type mpegvideo alias {alias}'
+    error = winmm.mciSendStringW(open_command, command_buffer, len(command_buffer), 0)
+    if error:
+        raise OSError(f"Windows multimedia open failed: {error}")
+
+    error = winmm.mciSendStringW(f"play {alias}", command_buffer, len(command_buffer), 0)
+    if error:
+        winmm.mciSendStringW(f"close {alias}", command_buffer, len(command_buffer), 0)
+        raise OSError(f"Windows multimedia play failed: {error}")
+
+    # MCI playback is asynchronous. Close the native handle later so this call
+    # remains bounded without stopping the audio immediately.
+    cleanup = threading.Timer(
+        120.0,
+        winmm.mciSendStringW,
+        args=(f"close {alias}", command_buffer, len(command_buffer), 0),
+    )
+    cleanup.daemon = True
+    cleanup.start()
 
 
 def classify_http_error(error: httpx.HTTPStatusError) -> str:
@@ -93,7 +118,7 @@ class TtsQueueWorker:
         self._backoff_base_seconds = backoff_base_seconds
         self._backoff_max_seconds = backoff_max_seconds
         self._output_dir = Path(output_dir) if output_dir is not None else _DEFAULT_OUTPUT_DIR
-        self._playback = playback
+        self._playback = playback if playback is not None else windows_playback
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -260,21 +285,15 @@ class TtsQueueWorker:
         finally:
             conn.close()
 
-        if self._playback is not None:
+        if job.get("decision_id") and self._playback is not None:
             try:
                 self._playback(output_path)
             except Exception as exc:
                 logger.exception("Playback failed for queue job %s", job_id)
-                failure_conn = get_connection()
-                try:
-                    mark_failed(failure_conn, job_id, f"playback failed: {exc}")
-                finally:
-                    failure_conn.close()
                 self._log_lifecycle(
-                    "FAILED", job_id=job_id, retry_count=job["retry_count"],
+                    "PLAYBACK_FAILED", job_id=job_id, retry_count=job["retry_count"],
                     characters=len(job["text"]), provider_error=f"playback failed: {exc}",
                 )
-                return
 
         self._log_lifecycle(
             "DONE", job_id=job_id, retry_count=job["retry_count"],
