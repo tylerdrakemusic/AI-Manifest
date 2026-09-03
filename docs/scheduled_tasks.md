@@ -20,7 +20,7 @@ Automated background tasks registered in Windows Task Scheduler for this project
 
 ```powershell
 schtasks /Create /TN "AI_Manifest_Priority_Rescore" `
-  /TR "C:\G\python.exe f:\???AI-Manifest\tools\weekly_priority_rescore.py" `
+  /TR "C:\G\python.exe f:\👁AI-Manifest\tools\weekly_priority_rescore.py" `
   /SC WEEKLY /D SUN /ST 02:00 `
   /RU "$env:USERDOMAIN\$env:USERNAME" /F
 ```
