@@ -15,9 +15,10 @@ Usage (module-level convenience)::
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import queue
-import random
 import sqlite3
 import threading
 import time
@@ -34,12 +35,32 @@ from src.utils.tts_queue_db import (
     increment_retry,
     mark_done,
     mark_failed,
+    recover_stale_jobs,
 )
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def classify_http_error(error: httpx.HTTPStatusError) -> str:
+    """Classify an HTTP provider failure as transient or permanent."""
+    status = error.response.status_code
+    return "transient" if status in _TRANSIENT_HTTP_STATUS_CODES or status >= 500 else "permanent"
+
+
+def compute_backoff_delay(
+    retry_count: int,
+    *,
+    retry_after: float | None,
+    base_delay: float = 2.0,
+    max_delay: float = 60.0,
+) -> float:
+    """Return a bounded exponential delay, preferring provider Retry-After."""
+    delay = retry_after if retry_after is not None else base_delay * (2 ** retry_count)
+    return min(max(0.0, delay), max_delay)
 
 
 class TtsQueueWorker:
@@ -51,11 +72,17 @@ class TtsQueueWorker:
         workers: int = 2,
         poll_interval: float = 5.0,
         max_retries: int = 3,
+        lease_timeout_seconds: float = 300.0,
+        backoff_base_seconds: float = 2.0,
+        backoff_max_seconds: float = 60.0,
         output_dir: Path | str | None = None,
     ) -> None:
         self._workers = workers
         self._poll_interval = poll_interval
         self._max_retries = max_retries
+        self._lease_timeout_seconds = lease_timeout_seconds
+        self._backoff_base_seconds = backoff_base_seconds
+        self._backoff_max_seconds = backoff_max_seconds
         self._output_dir = Path(output_dir) if output_dir is not None else _DEFAULT_OUTPUT_DIR
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
@@ -118,9 +145,15 @@ class TtsQueueWorker:
             try:
                 conn = get_connection()
                 try:
+                    recovered = recover_stale_jobs(
+                        conn, lease_timeout_seconds=self._lease_timeout_seconds
+                    )
                     jobs = dequeue_pending(conn, limit=self._workers)
                 finally:
                     conn.close()
+
+                for job_id in recovered:
+                    self._log_lifecycle("RECOVERED", job_id=job_id, retry_count=None)
 
                 for job in jobs:
                     try:
@@ -164,7 +197,10 @@ class TtsQueueWorker:
     def _process_job(self, job: dict[str, Any]) -> None:
         """Synthesize audio for *job* and persist the result."""
         job_id: int = job["id"]
-        logger.info("Processing TTS job %s (voice=%s)", job_id, job["voice_id"])
+        started = time.perf_counter()
+        self._log_lifecycle(
+            "STARTED", job_id=job_id, retry_count=job["retry_count"], characters=len(job["text"])
+        )
 
         try:
             client = ElevenLabsClient()
@@ -175,18 +211,27 @@ class TtsQueueWorker:
                 output_format=job["output_format"],
             )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
-                self._handle_rate_limit(job, exc)
+            if classify_http_error(exc) == "transient":
+                self._handle_transient_error(job, exc)
                 return
-            logger.error("HTTP error for job %s: %s", job_id, exc)
+            self._log_lifecycle(
+                "FAILED", job_id=job_id, retry_count=job["retry_count"],
+                characters=len(job["text"]), provider_error=str(exc),
+            )
             conn = get_connection()
             try:
                 mark_failed(conn, job_id, str(exc))
             finally:
                 conn.close()
             return
+        except httpx.RequestError as exc:
+            self._handle_transient_error(job, exc)
+            return
         except Exception as exc:
-            logger.error("Unexpected error for job %s: %s", job_id, exc)
+            self._log_lifecycle(
+                "FAILED", job_id=job_id, retry_count=job["retry_count"],
+                characters=len(job["text"]), provider_error=str(exc),
+            )
             conn = get_connection()
             try:
                 mark_failed(conn, job_id, str(exc))
@@ -199,7 +244,7 @@ class TtsQueueWorker:
         output_path = self._output_dir / f"{job_id}.mp3"
         tmp_path = output_path.with_suffix(".tmp")
         tmp_path.write_bytes(audio_bytes)
-        tmp_path.rename(output_path)
+        os.replace(tmp_path, output_path)
 
         conn = get_connection()
         try:
@@ -207,12 +252,23 @@ class TtsQueueWorker:
         finally:
             conn.close()
 
-        logger.info("Job %s → DONE (%s, %d bytes)", job_id, output_path.name, len(audio_bytes))
+        self._log_lifecycle(
+            "DONE", job_id=job_id, retry_count=job["retry_count"],
+            characters=len(job["text"]), latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            output_size=len(audio_bytes), output_path=str(output_path),
+        )
 
-    def _handle_rate_limit(self, job: dict[str, Any], exc: httpx.HTTPStatusError) -> None:
-        """Back off and requeue a rate-limited job."""
+    def _handle_transient_error(self, job: dict[str, Any], exc: Exception) -> None:
+        """Retry a transient provider failure with bounded backoff."""
         job_id: int = job["id"]
-        retry_after_header = exc.response.headers.get("Retry-After")
+        retry_after: float | None = None
+        if isinstance(exc, httpx.HTTPStatusError):
+            retry_after_header = exc.response.headers.get("Retry-After")
+            if retry_after_header is not None:
+                try:
+                    retry_after = float(retry_after_header)
+                except ValueError:
+                    retry_after = None
 
         conn = get_connection()
         try:
@@ -220,20 +276,15 @@ class TtsQueueWorker:
         finally:
             conn.close()
 
-        if retry_after_header is not None:
-            try:
-                delay = float(retry_after_header)
-            except ValueError:
-                delay = 2 ** new_count * 30 + random.uniform(-10, 10)  # nosec B311
-        else:
-            delay = 2 ** new_count * 30 + random.uniform(-10, 10)  # nosec B311
-
-        delay = max(0.0, delay)
-        logger.warning(
-            "Job %s rate-limited (retry %d); sleeping %.1fs before requeueing.",
-            job_id,
+        delay = compute_backoff_delay(
             new_count,
-            delay,
+            retry_after=retry_after,
+            base_delay=self._backoff_base_seconds,
+            max_delay=self._backoff_max_seconds,
+        )
+        self._log_lifecycle(
+            "RETRYING", job_id=job_id, retry_count=new_count,
+            provider_error=str(exc), backoff_seconds=delay,
         )
         time.sleep(delay)
 
@@ -249,6 +300,12 @@ class TtsQueueWorker:
                 self._job_queue.put(refreshed, timeout=5)
             except queue.Full:
                 pass  # Will be picked up by the next poll cycle
+
+    @staticmethod
+    def _log_lifecycle(event: str, **fields: Any) -> None:
+        """Emit a credential-free JSON lifecycle record."""
+        payload = {"event": event, **fields}
+        logger.info("tts_queue %s", json.dumps(payload, sort_keys=True, default=str))
 
 
 # ---------------------------------------------------------------------------

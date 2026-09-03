@@ -9,6 +9,9 @@ graph TB
     AudioPolicy --> RootContainment[resolved-root containment]
     RootContainment --> AtomicPublish[atomic publication]
     Tools --> VoiceOrchestration[voice_orchestration.py]
+    Tools --> TtsQueueWorker[tts_queue_worker.py<br/>lease recovery · bounded retry]
+    TtsQueueWorker --> TtsQueue[(tts_queue<br/>SQLite)]
+    TtsQueueWorker --> ElevenLabsClient
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
     VoiceRegistry --> PresetApproval[intended-use approval]
     VoiceRegistry --> AvailabilityGate[provider availability gating]
@@ -19,6 +22,7 @@ graph TB
     Briefs --> OpenAI[OpenAI]
     Briefs --> ElevenLabs[ElevenLabs]
     Tools --> TodoDB[(manifest_todos.db)]
+    TtsQueue --> TodoDB
     Tools --> Coordinator[👁 coordination MCP server]
     Coordinator --> Operations[todo.update · todo.graph · todo.create_children_batch]
     Operations --> Governance[authenticated updates · confirmation for protected priority<br/>optimistic preconditions · idempotency]

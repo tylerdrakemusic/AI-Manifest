@@ -36,10 +36,22 @@ CREATE TABLE IF NOT EXISTS tts_queue (
 )
 """
 
+_CREATE_RECOVERY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS tts_queue_recoveries (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id             INTEGER NOT NULL,
+    recovered_at       TEXT NOT NULL,
+    previous_started_at TEXT,
+    retry_count        INTEGER NOT NULL,
+    reason             TEXT NOT NULL
+)
+"""
+
 
 def init_tts_queue(conn: sqlite3.Connection) -> None:
     """Create the tts_queue table if it does not exist (idempotent)."""
     conn.execute(_CREATE_TABLE_SQL)
+    conn.execute(_CREATE_RECOVERY_TABLE_SQL)
     conn.commit()
 
 
@@ -187,3 +199,52 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
         "SELECT * FROM tts_queue WHERE id=?", (job_id,)
     ).fetchone()
     return dict(row) if row is not None else None
+
+
+def recover_stale_jobs(
+    conn: sqlite3.Connection,
+    *,
+    lease_timeout_seconds: float,
+    now: datetime | None = None,
+) -> list[int]:
+    """Requeue expired ``IN_PROGRESS`` jobs and record each recovery.
+
+    Recovery is idempotent for a given observation because the status update
+    and recovery insert happen in one transaction.  Retry counts are retained.
+    """
+    if lease_timeout_seconds < 0:
+        raise ValueError("lease_timeout_seconds must be non-negative")
+    recovery_time = now or datetime.now(timezone.utc)
+    cutoff = recovery_time.timestamp() - lease_timeout_seconds
+    rows = conn.execute(
+        "SELECT id, started_at, retry_count FROM tts_queue "
+        "WHERE status='IN_PROGRESS' AND started_at IS NOT NULL"
+    ).fetchall()
+    stale = []
+    for row in rows:
+        try:
+            started_timestamp = datetime.fromisoformat(row["started_at"]).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if started_timestamp <= cutoff:
+            stale.append(row)
+
+    if not stale:
+        return []
+
+    reason = f"Recovered orphaned job after {lease_timeout_seconds:g}s lease timeout"
+    recovered_at = recovery_time.isoformat()
+    for row in stale:
+        conn.execute(
+            "UPDATE tts_queue SET status='PENDING', started_at=NULL, "
+            "error_message=? WHERE id=? AND status='IN_PROGRESS'",
+            (reason, row["id"]),
+        )
+        conn.execute(
+            "INSERT INTO tts_queue_recoveries "
+            "(job_id, recovered_at, previous_started_at, retry_count, reason) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (row["id"], recovered_at, row["started_at"], row["retry_count"], reason),
+        )
+    conn.commit()
+    return [row["id"] for row in stale]

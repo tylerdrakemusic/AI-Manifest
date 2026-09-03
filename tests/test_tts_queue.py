@@ -8,8 +8,10 @@ opt-in via ``pytest -m live``.
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +26,9 @@ from src.utils.tts_queue_db import (
     init_tts_queue,
     mark_done,
     mark_failed,
+    recover_stale_jobs,
 )
+from src.services.tts_queue_worker import classify_http_error, compute_backoff_delay
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +159,117 @@ def test_increment_retry_at_max() -> None:
     assert new_count == 1
     assert job is not None
     assert job["status"] == "FAILED"
+
+
+def test_recover_stale_job_requeues_and_records_recovery() -> None:
+    """Expired IN_PROGRESS jobs return to PENDING without losing retry history."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    stale_started = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    conn.execute(
+        "UPDATE tts_queue SET status='IN_PROGRESS', retry_count=2, started_at=? WHERE id=?",
+        (stale_started, row_id),
+    )
+    conn.commit()
+
+    recovered = recover_stale_jobs(conn, lease_timeout_seconds=60)
+
+    assert recovered == [row_id]
+    job = get_job(conn, row_id)
+    assert job is not None
+    assert job["status"] == "PENDING"
+    assert job["retry_count"] == 2
+    assert job["started_at"] is None
+    assert "recovered" in (job["error_message"] or "").lower()
+
+
+def test_recover_stale_jobs_does_not_requeue_valid_lease() -> None:
+    """A job started within the lease remains owned by its active worker."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    current = datetime.now(timezone.utc)
+    conn.execute(
+        "UPDATE tts_queue SET status='IN_PROGRESS', started_at=? WHERE id=?",
+        ((current - timedelta(seconds=10)).isoformat(), row_id),
+    )
+    conn.commit()
+
+    assert recover_stale_jobs(conn, lease_timeout_seconds=60, now=current) == []
+    assert get_job(conn, row_id)["status"] == "IN_PROGRESS"  # type: ignore[index]
+
+
+def test_recover_stale_jobs_is_idempotent() -> None:
+    """A recovered job is not recorded twice on a subsequent recovery pass."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    current = datetime.now(timezone.utc)
+    conn.execute(
+        "UPDATE tts_queue SET status='IN_PROGRESS', started_at=? WHERE id=?",
+        ((current - timedelta(minutes=2)).isoformat(), row_id),
+    )
+    conn.commit()
+
+    assert recover_stale_jobs(conn, lease_timeout_seconds=60, now=current) == [row_id]
+    assert recover_stale_jobs(conn, lease_timeout_seconds=60, now=current) == []
+    assert conn.execute("SELECT COUNT(*) FROM tts_queue_recoveries").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+def test_classify_http_error_marks_retryable_statuses_transient(status: int) -> None:
+    request = httpx.Request("POST", "https://example.test")
+    response = httpx.Response(status, request=request)
+    error = httpx.HTTPStatusError("provider error", request=request, response=response)
+    assert classify_http_error(error) == "transient"
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_classify_http_error_marks_other_4xx_permanent(status: int) -> None:
+    request = httpx.Request("POST", "https://example.test")
+    response = httpx.Response(status, request=request)
+    error = httpx.HTTPStatusError("provider error", request=request, response=response)
+    assert classify_http_error(error) == "permanent"
+
+
+def test_compute_backoff_delay_honors_retry_after_and_caps() -> None:
+    assert compute_backoff_delay(4, retry_after=90, base_delay=2, max_delay=30) == 30
+    assert compute_backoff_delay(2, retry_after=None, base_delay=2, max_delay=30) == 8
+
+
+def test_worker_publishes_deterministic_output_atomically(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A successful retry uses the job ID path and leaves no temporary file."""
+    caplog.set_level(logging.INFO)
+    fake_audio = b"ATOMIC_MP3"
+    db_path = tmp_path / "atomic.db"
+    conn = _file_conn(db_path)
+    row_id = _enqueue_mem(conn, "atomic", "voice")
+    conn.close()
+    conn_factory = _make_conn_factory(db_path)
+
+    with patch("src.services.tts_queue_worker.ElevenLabsClient") as mock_client, \
+         patch("src.services.tts_queue_worker.get_connection", side_effect=conn_factory):
+        mock_client.return_value.text_to_speech.return_value = fake_audio
+        from src.services.tts_queue_worker import TtsQueueWorker
+        worker = TtsQueueWorker(workers=1, poll_interval=0.05, output_dir=tmp_path / "tts")
+        worker.start()
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            check = conn_factory()
+            status = get_job(check, row_id)["status"]  # type: ignore[index]
+            check.close()
+            if status == "DONE":
+                break
+            time.sleep(0.05)
+        worker.stop()
+
+    assert (tmp_path / "tts" / f"{row_id}.mp3").read_bytes() == fake_audio
+    assert not list((tmp_path / "tts").glob("*.tmp"))
+    lifecycle = [record.message for record in caplog.records if "tts_queue" in record.message]
+    assert any('"event": "STARTED"' in message for message in lifecycle)
+    done_log = next(message for message in lifecycle if '"event": "DONE"' in message)
+    assert '"characters": 6' in done_log
+    assert '"output_size": 10' in done_log
 
 
 # ---------------------------------------------------------------------------
