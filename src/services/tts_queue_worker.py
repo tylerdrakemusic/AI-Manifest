@@ -23,7 +23,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -37,12 +37,20 @@ from src.utils.tts_queue_db import (
     mark_failed,
     recover_stale_jobs,
 )
+from src.utils.audio_output_policy import atomic_write_bytes
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def windows_playback(path: Path) -> None:
+    """Open an audio file with the local Windows-associated player asynchronously."""
+    if os.name != "nt":
+        raise OSError("Windows playback is only available on Windows")
+    os.startfile(str(path))  # type: ignore[attr-defined]
 
 
 def classify_http_error(error: httpx.HTTPStatusError) -> str:
@@ -76,6 +84,7 @@ class TtsQueueWorker:
         backoff_base_seconds: float = 2.0,
         backoff_max_seconds: float = 60.0,
         output_dir: Path | str | None = None,
+        playback: Callable[[Path], None] | None = None,
     ) -> None:
         self._workers = workers
         self._poll_interval = poll_interval
@@ -84,6 +93,7 @@ class TtsQueueWorker:
         self._backoff_base_seconds = backoff_base_seconds
         self._backoff_max_seconds = backoff_max_seconds
         self._output_dir = Path(output_dir) if output_dir is not None else _DEFAULT_OUTPUT_DIR
+        self._playback = playback
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -242,15 +252,29 @@ class TtsQueueWorker:
         # Compute checksum, write atomically
         sha256 = hashlib.sha256(audio_bytes).hexdigest()
         output_path = self._output_dir / f"{job_id}.mp3"
-        tmp_path = output_path.with_suffix(".tmp")
-        tmp_path.write_bytes(audio_bytes)
-        os.replace(tmp_path, output_path)
+        atomic_write_bytes(output_path, audio_bytes)
 
         conn = get_connection()
         try:
             mark_done(conn, job_id, str(output_path), sha256)
         finally:
             conn.close()
+
+        if self._playback is not None:
+            try:
+                self._playback(output_path)
+            except Exception as exc:
+                logger.exception("Playback failed for queue job %s", job_id)
+                failure_conn = get_connection()
+                try:
+                    mark_failed(failure_conn, job_id, f"playback failed: {exc}")
+                finally:
+                    failure_conn.close()
+                self._log_lifecycle(
+                    "FAILED", job_id=job_id, retry_count=job["retry_count"],
+                    characters=len(job["text"]), provider_error=f"playback failed: {exc}",
+                )
+                return
 
         self._log_lifecycle(
             "DONE", job_id=job_id, retry_count=job["retry_count"],

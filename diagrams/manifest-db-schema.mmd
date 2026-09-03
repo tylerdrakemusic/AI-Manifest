@@ -119,6 +119,7 @@ erDiagram
         integer retry_count
         text started_at "lease timestamp"
         text output_path
+        text decision_id "nullable; partial unique deduplication index idx_tts_queue_decision_id"
     }
     TTS_QUEUE_RECOVERIES {
         integer id PK

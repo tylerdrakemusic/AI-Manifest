@@ -47,11 +47,21 @@ CREATE TABLE IF NOT EXISTS tts_queue_recoveries (
 )
 """
 
+_CREATE_DECISION_INDEX_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_queue_decision_id
+ON tts_queue(decision_id)
+WHERE decision_id IS NOT NULL
+"""
+
 
 def init_tts_queue(conn: sqlite3.Connection) -> None:
     """Create the tts_queue table if it does not exist (idempotent)."""
     conn.execute(_CREATE_TABLE_SQL)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tts_queue)")}
+    if "decision_id" not in columns:
+        conn.execute("ALTER TABLE tts_queue ADD COLUMN decision_id TEXT")
     conn.execute(_CREATE_RECOVERY_TABLE_SQL)
+    conn.execute(_CREATE_DECISION_INDEX_SQL)
     conn.commit()
 
 
@@ -73,20 +83,102 @@ def enqueue(
     output_format: str = "mp3_44100_128",
     priority: int = 5,
     max_retries: int = 3,
+    decision_id: str | None = None,
 ) -> int:
-    """Insert a PENDING job and return its row ID."""
-    now = datetime.now(timezone.utc).isoformat()
+    """Insert a PENDING job and return its row ID, deduplicating by decision ID."""
     with get_connection() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO tts_queue
-                (text, voice_id, model_id, output_format, priority, max_retries, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (text, voice_id, model_id, output_format, priority, max_retries, now),
+        job_id, _ = enqueue_on_connection_status(
+            conn,
+            text,
+            voice_id,
+            model_id=model_id,
+            output_format=output_format,
+            priority=priority,
+            max_retries=max_retries,
+            decision_id=decision_id,
         )
-        conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        return job_id
+
+
+def enqueue_with_status(
+    text: str,
+    voice_id: str,
+    *,
+    model_id: str = "eleven_multilingual_v2",
+    output_format: str = "mp3_44100_128",
+    priority: int = 5,
+    max_retries: int = 3,
+    decision_id: str | None = None,
+) -> tuple[int, bool]:
+    """Insert a job and return ``(job_id, inserted)`` using the default DB."""
+    with get_connection() as conn:
+        return enqueue_on_connection_status(
+            conn,
+            text,
+            voice_id,
+            model_id=model_id,
+            output_format=output_format,
+            priority=priority,
+            max_retries=max_retries,
+            decision_id=decision_id,
+        )
+
+
+def enqueue_on_connection(
+    conn: sqlite3.Connection,
+    text: str,
+    voice_id: str,
+    *,
+    model_id: str = "eleven_multilingual_v2",
+    output_format: str = "mp3_44100_128",
+    priority: int = 5,
+    max_retries: int = 3,
+    decision_id: str | None = None,
+) -> int:
+    """Insert a queue job on an explicit connection with decision deduplication."""
+    job_id, _ = enqueue_on_connection_status(
+        conn,
+        text,
+        voice_id,
+        model_id=model_id,
+        output_format=output_format,
+        priority=priority,
+        max_retries=max_retries,
+        decision_id=decision_id,
+    )
+    return job_id
+
+
+def enqueue_on_connection_status(
+    conn: sqlite3.Connection,
+    text: str,
+    voice_id: str,
+    *,
+    model_id: str = "eleven_multilingual_v2",
+    output_format: str = "mp3_44100_128",
+    priority: int = 5,
+    max_retries: int = 3,
+    decision_id: str | None = None,
+) -> tuple[int, bool]:
+    """Insert a job and return ``(job_id, inserted)`` atomically."""
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.execute(
+        """
+        INSERT INTO tts_queue
+            (text, voice_id, model_id, output_format, priority, max_retries, created_at,
+             decision_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
+        """,
+        (text, voice_id, model_id, output_format, priority, max_retries, now, decision_id),
+    )
+    conn.commit()
+    if cur.rowcount == 1 and cur.lastrowid:
+        return int(cur.lastrowid), True
+    row = conn.execute("SELECT id FROM tts_queue WHERE decision_id=?", (decision_id,)).fetchone()
+    if row is None:
+        raise RuntimeError("queue insert was ignored without an existing decision")
+    return int(row[0]), False
 
 
 def dequeue_pending(conn: sqlite3.Connection, limit: int = 1) -> list[dict[str, Any]]:
