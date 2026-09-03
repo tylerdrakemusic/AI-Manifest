@@ -22,6 +22,17 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def test_scheduler_registration_uses_utf8_project_root() -> None:
+    scheduled_tasks = PROJECT_ROOT / "docs" / "scheduled_tasks.md"
+    contents = scheduled_tasks.read_text(encoding="utf-8")
+
+    registration_start = contents.index("schtasks /Create")
+    registration = contents[registration_start : contents.index("```", registration_start)]
+
+    assert "f:\\👁AI-Manifest\\tools\\weekly_priority_rescore.py" in registration
+    assert "???AI-Manifest" not in registration
+
 # ---------------------------------------------------------------------------
 # In-memory DB fixture
 # ---------------------------------------------------------------------------
