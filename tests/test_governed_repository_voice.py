@@ -1,4 +1,4 @@
-"""Tests for the governed asynchronous overseer voice-alert boundary."""
+"""Tests for the governed asynchronous overseer repository-voice boundary."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+from src.services.governed_repository_voice import submit_repository_voice
 from src.services.governed_voice_alerts import submit_alert
 from src.services.tts_queue_worker import TtsQueueWorker
 from src.utils.tts_queue_db import get_job, init_tts_queue
@@ -28,7 +29,7 @@ def test_concurrent_submissions_for_one_decision_create_one_queue_job(
     initial_conn.close()
 
     def submit() -> object:
-        return submit_alert(
+        return submit_repository_voice(
             "decision-42",
             "Review the quantum scheduler decision",
             voice_id="voice-1",
@@ -54,9 +55,9 @@ def test_concurrent_submissions_for_one_decision_create_one_queue_job(
 
 
 def test_invalid_submission_returns_failure_without_provider_call(tmp_path: Path) -> None:
-    """Invalid alert input is an explicit rejection and never reaches the provider."""
-    with patch("src.services.governed_voice_alerts.enqueue_with_status") as enqueue_call:
-        result = submit_alert(
+    """Invalid repository-voice input is rejected before queueing."""
+    with patch("src.services.governed_repository_voice.enqueue_with_status") as enqueue_call:
+        result = submit_repository_voice(
             "",
             "should not synthesize",
             voice_id="voice-1",
@@ -69,11 +70,16 @@ def test_invalid_submission_returns_failure_without_provider_call(tmp_path: Path
     enqueue_call.assert_not_called()
 
 
+def test_legacy_alert_api_remains_an_alias_for_repository_voice() -> None:
+    """Keep existing consumers on the same governed repository-voice boundary."""
+    assert submit_alert is submit_repository_voice
+
+
 def test_worker_plays_successful_audio_through_injected_boundary(tmp_path: Path) -> None:
     """A completed queue job is handed to the injected playback function."""
     db_path = tmp_path / "alerts.db"
     conn = _connection_factory(db_path)
-    result = submit_alert(
+    result = submit_repository_voice(
         "decision-1",
         "announce this",
         voice_id="voice-1",
@@ -108,7 +114,7 @@ def test_worker_reports_playback_failure_as_explicit_queue_failure(tmp_path: Pat
     """A local playback error is persisted as a clear FAILED queue result."""
     db_path = tmp_path / "alerts.db"
     conn = _connection_factory(db_path)
-    result = submit_alert(
+    result = submit_repository_voice(
         "decision-2",
         "announce failure",
         voice_id="voice-1",

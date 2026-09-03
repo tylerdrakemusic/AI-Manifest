@@ -23,14 +23,18 @@ may call ElevenLabs again and replace the same path. This can result in
 duplicate provider billing, so callers should use the queue's retry history
 when reconciling usage.
 
-## Governed overseer alerts
+## Governed repository voice
 
-Use `src.services.governed_voice_alerts.submit_alert()` for overseer voice
-alerts. It validates the decision ID and text, inserts a `PENDING` queue job,
-and returns an `AlertSubmissionResult`; it does not call ElevenLabs or mutate
-the caller's decision state. A non-empty `decision_id` is protected by a
-SQLite unique index, so concurrent submissions converge on one job and report
-`deduplicated=True` for ignored duplicates.
+Use `src.services.governed_repository_voice.submit_repository_voice()` for
+repository voice. It is the first authorized consumer for blocking decisions:
+it validates the decision ID and text, inserts a `PENDING` queue job, and
+returns a `RepositoryVoiceSubmissionResult`. Ordinary status narration is out
+of scope. The boundary does not call ElevenLabs or mutate the caller's
+decision state. A non-empty `decision_id` is protected by a SQLite unique
+index, so concurrent submissions converge on one job and report
+`deduplicated=True` for ignored duplicates. The legacy
+`src.services.governed_voice_alerts.submit_alert()` import remains an alias for
+existing consumers.
 
 Provider synthesis remains asynchronous through `TtsQueueWorker`. Configure
 the worker with the optional `playback` callback to inject local playback in
