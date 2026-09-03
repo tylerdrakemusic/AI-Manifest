@@ -110,6 +110,24 @@ erDiagram
         text request_payload "nullable JSON input payload for idempotency validation"
         text created_at
     }
+    TTS_QUEUE ||--o{ TTS_QUEUE_RECOVERIES : recovery
+    TTS_QUEUE {
+        integer id PK
+        text text
+        text voice_id
+        text status "PENDING|IN_PROGRESS|DONE|FAILED"
+        integer retry_count
+        text started_at "lease timestamp"
+        text output_path
+    }
+    TTS_QUEUE_RECOVERIES {
+        integer id PK
+        integer job_id FK
+        text recovered_at
+        text previous_started_at
+        integer retry_count
+        text reason
+    }
 
 classDef life     fill:#1a2e3a,stroke:#6ab4d4,color:#d0ecf8
 classDef music    fill:#3a1a24,stroke:#d47a8f,color:#f8d0dc
