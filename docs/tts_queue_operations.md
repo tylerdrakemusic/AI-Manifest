@@ -23,6 +23,22 @@ may call ElevenLabs again and replace the same path. This can result in
 duplicate provider billing, so callers should use the queue's retry history
 when reconciling usage.
 
+## Governed overseer alerts
+
+Use `src.services.governed_voice_alerts.submit_alert()` for overseer voice
+alerts. It validates the decision ID and text, inserts a `PENDING` queue job,
+and returns an `AlertSubmissionResult`; it does not call ElevenLabs or mutate
+the caller's decision state. A non-empty `decision_id` is protected by a
+SQLite unique index, so concurrent submissions converge on one job and report
+`deduplicated=True` for ignored duplicates.
+
+Provider synthesis remains asynchronous through `TtsQueueWorker`. Configure
+the worker with the optional `playback` callback to inject local playback in
+tests or deployments. `windows_playback` opens the published audio with the
+Windows-associated player and returns immediately. Playback exceptions are
+persisted as an explicit `FAILED` queue result; they are not retried against
+ElevenLabs.
+
 ## Operations CLI
 
 The CLI emits JSON and never prints credentials:

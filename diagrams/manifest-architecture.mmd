@@ -10,8 +10,11 @@ graph TB
     RootContainment --> AtomicPublish[atomic publication]
     Tools --> VoiceOrchestration[voice_orchestration.py]
     Tools --> TtsQueueWorker[tts_queue_worker.py<br/>lease recovery · bounded retry]
+    Tools --> GovernedAlerts[governed_voice_alerts.py<br/>decision-id dedup · explicit results]
+    GovernedAlerts --> TtsQueueWorker
     TtsQueueWorker --> TtsQueue[(tts_queue<br/>SQLite)]
     TtsQueueWorker --> ElevenLabsClient
+    TtsQueueWorker --> Playback[Injected Windows playback]
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
     VoiceRegistry --> PresetApproval[intended-use approval]
     VoiceRegistry --> AvailabilityGate[provider availability gating]
@@ -40,7 +43,7 @@ graph TB
     class Triggers,Tools,Briefs,Roadmap,VoiceOrchestration,VoiceRegistry,PresetApproval,AvailabilityGate,OrderedVoices,ElevenLabsClient orch
     class TodoDB db
     class CurrentMetadata,AssessmentHistory db
-    class AudioPolicy,AudioBoundary,DecisionMetadata manifest
+    class AudioPolicy,AudioBoundary,DecisionMetadata,GovernedAlerts,Playback manifest
     class Contract ws
     class OpenAI,ElevenLabs ext
     class Backup,Media,Todo ws
