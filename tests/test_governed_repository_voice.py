@@ -15,10 +15,11 @@ from src.services.tts_queue_worker import TtsQueueWorker
 from src.utils.tts_queue_db import get_job, init_tts_queue
 
 
-def _connection_factory(db_path: Path) -> sqlite3.Connection:
+def _connection_factory(db_path: Path, *, initialize: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=5)
     conn.row_factory = sqlite3.Row
-    init_tts_queue(conn)
+    if initialize:
+        init_tts_queue(conn)
     return conn
 
 
@@ -35,7 +36,7 @@ def test_concurrent_submissions_for_one_decision_create_one_queue_job(
             "decision-42",
             "Review the quantum scheduler decision",
             voice_id="voice-1",
-            connection_factory=lambda: _connection_factory(db_path),
+            connection_factory=lambda: _connection_factory(db_path, initialize=False),
         )
 
     with ThreadPoolExecutor(max_workers=8) as executor:
