@@ -41,6 +41,7 @@ from src.utils.tts_queue_db import (
 from src.utils.audio_output_policy import atomic_write_bytes
 
 logger = logging.getLogger(__name__)
+IS_WINDOWS_PLATFORM = os.name == "nt"
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
@@ -49,7 +50,7 @@ _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
 def windows_playback(path: Path) -> None:
     """Play an MP3 through Windows multimedia APIs without launching an app."""
-    if os.name != "nt":
+    if not IS_WINDOWS_PLATFORM:
         raise OSError("Windows playback is only available on Windows")
     if not path.is_file():
         raise FileNotFoundError(path)

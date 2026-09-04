@@ -157,7 +157,7 @@ def test_windows_playback_uses_background_native_multimedia_without_startfile(
             commands.append(command)
             return 0
 
-    monkeypatch.setattr(tts_queue_worker.os, "name", "nt")
+    monkeypatch.setattr(tts_queue_worker, "IS_WINDOWS_PLATFORM", True)
     monkeypatch.setattr(
         tts_queue_worker,
         "ctypes",
