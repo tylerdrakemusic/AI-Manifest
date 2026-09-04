@@ -44,6 +44,14 @@ def test_init_db_idempotent(tmp_db: Path) -> None:
     todos_db.init_db()
 
 
+def test_identifier_quoting_rejects_sql_control_characters() -> None:
+    import src.utils.todos_db as todos_db
+
+    assert todos_db._quote_identifier("todos") == '"todos"'
+    with pytest.raises(ValueError, match="unsafe SQL identifier"):
+        todos_db._quote_identifier('todos"; DROP TABLE todos; --')
+
+
 def test_init_db_adds_nullable_perfected_at_without_losing_existing_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import src.utils.todos_db as todos_db
 

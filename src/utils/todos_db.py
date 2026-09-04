@@ -36,6 +36,12 @@ TERMINAL_STATES = frozenset({"completed", "cancelled", "stale"})
 DEFAULT_TERMINAL_STATES = TERMINAL_STATES
 
 
+def _quote_identifier(identifier: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", identifier):
+        raise ValueError("unsafe SQL identifier")
+    return f'"{identifier}"'
+
+
 def resolve_worktree_db_path(start: Path, max_levels: int = 5) -> Path | None:
     """Walk up from `start` looking for src/data/manifest_todos.db.
 
@@ -90,7 +96,7 @@ def _normalize_project(project: str) -> str:
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # nosec B608 — PRAGMA does not support parameterized queries; table name is always a hardcoded literal from internal callers
+    rows = conn.execute(f"PRAGMA table_info({_quote_identifier(table)})").fetchall()
     return any(r[1] == column for r in rows)
 
 
@@ -129,7 +135,8 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 dependencies TEXT
             )
         """)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at, parent_id, dependencies)
             SELECT id, project, source, text, done, created_at, {closed_at_expression}, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}
             FROM todos
@@ -195,7 +202,9 @@ def _ensure_decision_metadata_schema(conn: sqlite3.Connection) -> None:
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (legacy_table,)
             ).fetchone():
-                conn.execute(f"ALTER TABLE {table} RENAME TO {legacy_table}")  # nosec B608 — table names are internal constants
+                conn.execute(
+                    f"ALTER TABLE {_quote_identifier(table)} RENAME TO {_quote_identifier(legacy_table)}"
+                )
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS todo_decision_metadata (
@@ -275,7 +284,9 @@ def init_db() -> None:
         # rebuild can preserve these fields from older schemas.
         for _column in ("fr_id", "perfected_at"):
             try:
-                conn.execute(f"ALTER TABLE todos ADD COLUMN {_column} TEXT")  # nosec B608 — column names are hardcoded above
+                conn.execute(
+                    f"ALTER TABLE {_quote_identifier('todos')} ADD COLUMN {_quote_identifier(_column)} TEXT"
+                )
             except sqlite3.OperationalError:
                 pass  # column already exists
 
