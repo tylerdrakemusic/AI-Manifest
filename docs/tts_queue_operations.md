@@ -36,12 +36,33 @@ index, so concurrent submissions converge on one job and report
 `src.services.governed_voice_alerts.submit_alert()` import remains an alias for
 existing consumers.
 
-Provider synthesis remains asynchronous through `TtsQueueWorker`. Configure
-the worker with the optional `playback` callback to inject local playback in
-tests or deployments. `windows_playback` opens the published audio with the
-Windows-associated player and returns immediately. Playback exceptions are
-persisted as an explicit `FAILED` queue result; they are not retried against
-ElevenLabs.
+Provider synthesis remains asynchronous through `TtsQueueWorker`. The
+`playback` callback is the injected local-capability boundary, so tests and
+deployments can provide their own playback implementation without changing
+queue or repository-voice authorization. When no callback is injected on
+Windows, `windows_playback` uses the native `winmm` multimedia API through
+MCI: it opens the published MP3 as `mpegvideo` and issues a background `play`
+command. It does not call `os.startfile`, open the Windows-associated player,
+or launch a visible application.
+
+MCI playback is asynchronous. `windows_playback` schedules a daemon cleanup
+timer to close the native MCI alias after 120 seconds, which keeps the
+operation bounded without stopping audio immediately. The cleanup is best
+effort; a playback diagnostic must not hold the queue worker open indefinitely.
+
+Playback is decision-scoped: the worker invokes the injected capability only
+when the queue job contains a stable, non-empty persisted `decision_id`.
+Ordinary queue jobs without that identifier are never played. The decision ID
+is not regenerated or inferred from playback state, so retries and concurrent
+submissions use the same authorization boundary described above.
+
+Synthesis and atomic publication determine the queue result. Playback runs
+after the job is marked `DONE`; playback exceptions are logged as
+`PLAYBACK_FAILED` diagnostics and do not change a successfully synthesized
+job back to `FAILED` or trigger another ElevenLabs attempt. This is
+intentional fail-open playback behavior: inspect lifecycle logs for local
+playback failures while treating the persisted audio and queue job as
+complete.
 
 ## Operations CLI
 
