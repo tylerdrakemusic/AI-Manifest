@@ -166,7 +166,12 @@ def test_windows_playback_uses_background_native_multimedia_without_startfile(
             create_unicode_buffer=lambda size: ["\0"] * size,
         ),
     )
-    monkeypatch.setattr(tts_queue_worker.os, "startfile", lambda *_args: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(
+        tts_queue_worker.os,
+        "startfile",
+        lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        raising=False,
+    )
 
     audio_path = tmp_path / "decision.mp3"
     audio_path.write_bytes(b"MP3")
