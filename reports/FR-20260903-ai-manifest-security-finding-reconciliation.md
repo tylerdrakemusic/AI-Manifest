@@ -16,7 +16,8 @@ Review scope: eight open vulnerability records whose paths are under `f:\👁AI-
 ## Executable evidence
 
 - `pytest tests/test_todos_db.py -k "identifier_quoting or init_db_adds_nullable or init_db_preserves_closure"`: 3 passed.
-- `pytest tests/test_database_backup.py tests/test_ollama_client.py tests/test_todos_db.py`: backup and Ollama tests passed; the TODO module passed its migration coverage, then hit an existing long-running test and was interrupted. No failure was reported in the changed behavior.
+- With `WORKSPACE_ROOT=F:\⊕Workspace` and the repository-scoped `F:\👁AI-Manifest\.venv`, `pytest tests/test_database_backup.py tests/test_ollama_client.py tests/test_todos_db.py`: **54 passed in 24.99s**. This supersedes the earlier interrupted run and confirms the focused slice.
+- The earlier failure without `WORKSPACE_ROOT` was an environment contract import error, not a test failure; it is not presented as validation.
 - Bandit `B608` on implicated files: the original open identifier findings are removed by the validator change. One separate fixed-literal schema-expression warning remains because the scanner cannot model the allowlisted expression selection; it is documented here and was not suppressed in source.
 - Editor diagnostics for changed Python files: no errors.
 
