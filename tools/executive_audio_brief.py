@@ -67,7 +67,7 @@ from src.utils.roadmap_panel import (
 todos_db.use_worktree_aware_db_path(PROJECT_ROOT)
 
 from src.utils.todos_db import (
-    init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, get_todo_by_id,
+    init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, close_todo_tree, get_todo_by_id,
     add_todo, update_priority, get_open_todos_by_autonomy, get_readiness,
 )
 from src.utils.priority_scorer import score_priority
@@ -1613,6 +1613,17 @@ function _updateProgressBar(card) {{
     if (label) label.textContent = done + '/' + total + ' tasks (' + pct + '%)';
 }}
 
+function _removeAffectedTodoRows(affectedIds) {{
+    for (const affectedId of affectedIds) {{
+        const buttons = Array.from(document.querySelectorAll('button.done-btn, button.cancel-btn'))
+            .filter(button => (button.getAttribute('onclick') || '').includes('(' + affectedId + ', '));
+        for (const button of buttons) {{
+            const row = button.closest('li') || button.closest('tr');
+            if (row) row.remove();
+        }}
+    }}
+}}
+
 async function markDone(todoId, btnEl) {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     btnEl.disabled = true;
@@ -1622,13 +1633,13 @@ async function markDone(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
+        const data = resp.ok ? await resp.json() : null;
         const row = btnEl.closest('li') || btnEl.closest('tr');
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
-            if (row) {{
-                row.remove();
-                _updateProgressBar(card);
-            }}
+            _removeAffectedTodoRows(data.affected_ids || [todoId]);
+            _updateProgressBar(card);
+            setTimeout(() => refreshStatus(), 350);
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Already done', 'var(--accent-green)');
@@ -1653,13 +1664,13 @@ async function cancelTodo(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
+        const data = resp.ok ? await resp.json() : null;
         const row = btnEl.closest('li') || btnEl.closest('tr');
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
-            if (row) {{
-                row.remove();
-                _updateProgressBar(card);
-            }}
+            _removeAffectedTodoRows(data.affected_ids || [todoId]);
+            _updateProgressBar(card);
+            setTimeout(() => refreshStatus(), 350);
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Already closed', 'var(--accent-green)');
@@ -2080,14 +2091,14 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"ok": false, "error": "already done"}')
                 return
 
-            success = mark_done(todo_id, force=True)
-            if success:
-                self._serve_json({"ok": True})
-            else:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "not found or already done"}')
+            result = close_todo_tree(todo_id, reason="completed")
+            self._serve_json({"ok": True, **result})
+        except ValueError as e:
+            status = 409 if "readiness" in str(e) else 400
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")
@@ -2116,13 +2127,14 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"ok": false, "error": "already closed"}')
                 return
 
-            if cancel_todo(todo_id):
-                self._serve_json({"ok": True})
-            else:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "not found or already closed"}')
+            result = close_todo_tree(todo_id, reason="cancelled")
+            self._serve_json({"ok": True, **result})
+        except ValueError as e:
+            status = 409 if "readiness" in str(e) else 400
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")

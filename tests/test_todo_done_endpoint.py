@@ -90,6 +90,33 @@ class TestTodoDoneEndpoint:
 
         assert status == 200
         assert body.get("ok") is True
+        assert body["affected_count"] == 1
+        assert body["affected_ids"] == [row_id]
+
+    def test_done_closes_open_parent_descendants(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        parent = todos_db.insert_todo("music", "AI", "Parent")
+        child = todos_db.insert_todo("music", "AI", "Child", parent_id=parent)
+
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": parent})
+
+        assert status == 200
+        assert body["affected_ids"] == [parent, child]
+        assert todos_db.get_todo_by_id(child)["done"] == 1
+
+    def test_done_rejects_blocked_parent_without_force_escape(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        parent = todos_db.insert_todo("music", "AI", "Blocked parent")
+        blocker = todos_db.insert_todo("music", "AI", "Blocking prerequisite")
+        todos_db.link_prerequisite(parent, blocker)
+
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": parent, "force": True})
+
+        assert status == 409
+        assert body["ok"] is False
+        assert todos_db.get_todo_by_id(parent)["done"] == 0
 
     def test_db_write_confirmed_after_200(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """After a successful mark-done HTTP call the todo is no longer in open list."""
@@ -124,8 +151,8 @@ class TestTodoDoneEndpoint:
         assert status == 404
         assert body.get("ok") is False
 
-    def test_deliberate_dashboard_completion_overrides_readiness(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A deliberate check-mark completes a blocked todo without changing its prerequisite edge."""
+    def test_dashboard_completion_enforces_readiness_without_changing_prerequisite_edge(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A blocked dashboard completion is rejected without changing its prerequisite edge."""
         import src.utils.todos_db as todos_db
         monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
         prerequisite = todos_db.insert_todo("music", "AI", "Still pending")
@@ -134,17 +161,29 @@ class TestTodoDoneEndpoint:
 
         status, body = _post_json(f"{todo_server}/api/todo/done", {"id": dependent})
 
-        assert status == 200
-        assert body.get("ok") is True
+        assert status == 409
+        assert body.get("ok") is False
         completed = todos_db.get_todo_by_id(dependent)
         assert completed is not None
-        assert completed["done"] == 1
-        assert completed["closed_at"] is not None
-        assert completed["closure_reason"] == "completed"
+        assert completed["done"] == 0
+        assert completed["closed_at"] is None
+        assert completed["closure_reason"] is None
         assert [row["id"] for row in todos_db.get_required_todos(dependent)] == [prerequisite]
 
 
 class TestTodoCancelEndpoint:
+    def test_cancel_closes_open_parent_descendants(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        parent = todos_db.insert_todo("music", "AI", "Parent")
+        child = todos_db.insert_todo("music", "AI", "Child", parent_id=parent)
+
+        status, body = _post_json(f"{todo_server}/api/todo/cancel", {"id": parent})
+
+        assert status == 200
+        assert body["affected_ids"] == [parent, child]
+        assert todos_db.get_todo_by_id(child)["closure_reason"] == "cancelled"
+
     def test_cancel_persists_terminal_outcome(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """POST /api/todo/cancel closes an open todo as cancelled."""
         import src.utils.todos_db as todos_db

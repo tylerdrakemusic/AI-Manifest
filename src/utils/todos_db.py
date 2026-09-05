@@ -419,6 +419,83 @@ def mark_done(todo_id: int, *, force: bool = False) -> bool:
     return cur.rowcount == 1
 
 
+_TRUSTED_BACKEND = object()
+
+
+def close_todo_tree(
+    todo_id: int,
+    *,
+    reason: str,
+    force: bool = False,
+    trusted_backend: object | None = None,
+) -> dict[str, Any]:
+    """Atomically close an open todo and its open ``parent_id`` descendants."""
+    if reason not in {"completed", "cancelled"}:
+        raise ValueError("reason must be completed or cancelled")
+    if force and trusted_backend is not _TRUSTED_BACKEND:
+        raise PermissionError("force requires a trusted backend")
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            root = conn.execute("SELECT done FROM todos WHERE id=?", (todo_id,)).fetchone()
+            if root is None:
+                raise ValueError("todo not found")
+            if root["done"]:
+                raise ValueError("todo already closed")
+
+            rows = conn.execute(
+                """
+                WITH RECURSIVE descendants(id, depth) AS (
+                    SELECT id, 0 FROM todos WHERE id=?
+                    UNION ALL
+                    SELECT child.id, descendants.depth + 1
+                    FROM todos child JOIN descendants ON child.parent_id=descendants.id
+                )
+                SELECT todos.id
+                FROM descendants JOIN todos ON todos.id=descendants.id
+                WHERE todos.done=0
+                ORDER BY descendants.depth, todos.id
+                """,
+                (todo_id,),
+            ).fetchall()
+            affected_ids = [int(row["id"]) for row in rows]
+            if not force:
+                for affected_id in affected_ids:
+                    blocking = conn.execute(
+                        """
+                        SELECT prerequisite.id
+                        FROM todo_prerequisites edge
+                        JOIN todos prerequisite ON prerequisite.id=edge.prerequisite_id
+                        WHERE edge.todo_id=?
+                          AND COALESCE(prerequisite.closure_reason, '') NOT IN (
+                              SELECT value FROM json_each(edge.allowed_terminal_states)
+                          )
+                        LIMIT 1
+                        """,
+                        (affected_id,),
+                    ).fetchone()
+                    if blocking is not None:
+                        raise ValueError("readiness check failed")
+
+            for affected_id in affected_ids:
+                conn.execute(
+                    "UPDATE todos SET done=1, closed_at=?, closure_reason=? WHERE id=? AND done=0",
+                    (closed_at, reason, affected_id),
+                )
+            conn.commit()
+            return {
+                "root_id": todo_id,
+                "reason": reason,
+                "affected_ids": affected_ids,
+                "affected_count": len(affected_ids),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def cancel_todo(todo_id: int) -> bool:
     """Close one open todo as cancelled and return whether it was updated."""
     closed_at = datetime.now(timezone.utc).isoformat()
