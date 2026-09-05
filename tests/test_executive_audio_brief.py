@@ -23,11 +23,11 @@ def test_orbit_desk_template_removes_deprioritized_scanning_content() -> None:
     """Orbit Desk keeps the scan surface focused on status, actions, and roadmap."""
     src = (_TOOLS / "executive_audio_brief.py").read_text(encoding="utf-8")
 
-    for removed in (".subtitle", "#controls", "#serveHint", ".audio-meta", ".summary",
-                    ".offload-subtitle", "#scriptSection"):
+    for removed in (".subtitle", "#controls", ".controls {{", ".orbit-desk-actions {{",
+                    "#serveHint", ".audio-meta", ".summary", ".offload-subtitle",
+                    "#scriptSection"):
         assert removed not in src
 
-    assert "orbit-desk" in src
     assert "max_width=180" in src
 
 

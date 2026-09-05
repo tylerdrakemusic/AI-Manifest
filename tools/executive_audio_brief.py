@@ -827,55 +827,6 @@ header h1 {{
     font-style: italic;
 }}
 
-/* Controls */
-.controls {{
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-    padding: 1rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-}}
-.orbit-desk-actions {{
-    justify-content: flex-start;
-    padding: 0.75rem 0;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    border-radius: 0;
-}}
-.controls select, .controls button {{
-    font-size: 0.9rem;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    cursor: pointer;
-}}
-.controls button {{
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
-    border: none;
-    font-weight: 600;
-    color: #fff;
-    transition: opacity 0.2s;
-}}
-.controls button:hover {{
-    opacity: 0.85;
-}}
-.controls button:disabled {{
-    opacity: 0.5;
-    cursor: wait;
-}}
-.controls label {{
-    color: var(--text-muted);
-    font-size: 0.85rem;
-}}
-
 /* Status Cards */
 .cards-grid {{
     display: grid;
@@ -1530,18 +1481,6 @@ footer {{
 
     {audio_section}
 
-    <div class="controls orbit-desk-actions">
-        <label for="voiceSelect">Voice:</label>
-        <select id="voiceSelect">
-            {voice_options}
-        </select>
-        <button id="generateBtn" onclick="generateBrief()">
-            🔄 Regenerate
-        </button>
-        <button id="refreshBtn" onclick="refreshStatus()">
-            🔄 Refresh Status
-        </button>
-    </div>
     <div id="refreshable-status">
     {tab_nav_html}
 
@@ -1593,9 +1532,12 @@ function _showServeHint() {{}}
 async function generateBrief() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('generateBtn');
-    const voiceId = document.getElementById('voiceSelect').value;
-    btn.disabled = true;
-    btn.textContent = '⏳ Generating...';
+    const voiceSelect = document.getElementById('voiceSelect');
+    const voiceId = voiceSelect ? voiceSelect.value : '';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Generating...';
+    }}
     try {{
         const resp = await fetch('/api/generate', {{
             method: 'POST',
@@ -1611,8 +1553,10 @@ async function generateBrief() {{
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Regenerate';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Regenerate';
+        }}
     }}
 }}
 
@@ -1739,15 +1683,19 @@ async function cancelTodo(todoId, btnEl) {{
 async function refreshStatus() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Refreshing...';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Refreshing...';
+    }}
     try {{
         await _refreshStatusInPlace();
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Refresh Status';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh Status';
+        }}
     }}
 }}
 

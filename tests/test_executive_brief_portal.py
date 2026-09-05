@@ -76,6 +76,12 @@ class TestPortalLoads:
         ts = page.locator(".timestamp")
         assert ts.count() >= 1
 
+    def test_deleted_orbit_desk_controls_are_absent(self, page) -> None:
+        """The generated surface must not render the deleted control rail."""
+        page.goto(PORTAL_URL)
+        for selector in (".orbit-desk-actions", "#voiceSelect", "#generateBtn", "#refreshBtn"):
+            assert page.locator(selector).count() == 0, f"Deleted control still rendered: {selector}"
+
 
 class TestStatusCards:
     def test_all_project_status_cards_rendered(self, page) -> None:
@@ -117,47 +123,6 @@ class TestBriefScript:
 
 
 class TestStaticModeUX:
-    def test_voice_dropdown_exists(self, page) -> None:
-        """Voice dropdown element must be present in the DOM."""
-        page.goto(PORTAL_URL)
-        select = page.locator("#voiceSelect")
-        assert select.count() == 1, "Voice dropdown not found"
-        # At least one option must exist (even if it's the fallback placeholder)
-        assert select.locator("option").count() >= 1
-
-    def test_voice_dropdown_populated_when_api_key_set(self, page) -> None:
-        """If ELEVENLABS_API_KEY is set, voice dropdown must have real voices (not just placeholder)."""
-        import os
-        if not os.environ.get("ELEVENLABS_API_KEY"):
-            pytest.skip("ELEVENLABS_API_KEY not set — voice population test skipped")
-        page.goto(PORTAL_URL)
-        select = page.locator("#voiceSelect")
-        options = select.locator("option")
-        count = options.count()
-        assert count >= 1
-        first_text = options.first.text_content() or ""
-        assert "No voices" not in first_text, (
-            "Only 'No voices available' option despite ELEVENLABS_API_KEY being set"
-        )
-
-    def test_generate_button_does_not_raise_on_click(self, page) -> None:
-        """Clicking Generate in static mode should not throw an uncaught JS error."""
-        errors: list[str] = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.goto(PORTAL_URL)
-        page.wait_for_load_state("domcontentloaded")
-        page.click("#generateBtn")
-        assert errors == [], f"JS error after clicking Generate: {errors}"
-
-    def test_refresh_button_does_not_raise_on_click(self, page) -> None:
-        """Clicking Refresh in static mode should not throw an uncaught JS error."""
-        errors: list[str] = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.goto(PORTAL_URL)
-        page.wait_for_load_state("domcontentloaded")
-        page.click("#refreshBtn")
-        assert errors == [], f"JS error after clicking Refresh: {errors}"
-
     def test_copy_todo_text_uses_fallback_on_served_localhost(self, live_server, browser) -> None:
         """Copy action remains usable when localhost is not a secure context."""
         page = browser.new_page()
@@ -207,7 +172,6 @@ class TestRefreshPreservesEditableState:
             priority_input = page.locator(".add-todo-priority").first
             todo_input.fill("unfinished todo draft")
             priority_input.fill("8")
-            page.select_option("#voiceSelect", "voice-b")
 
             page.click(".lily-edit-btn")
             prompt = page.locator("#lily-positive-prompt")
@@ -221,7 +185,6 @@ class TestRefreshPreservesEditableState:
 
             assert page.locator(".add-todo-input").first.input_value() == "unfinished todo draft"
             assert page.locator(".add-todo-priority").first.input_value() == "8"
-            assert page.locator("#voiceSelect").input_value() == "voice-b"
             assert page.locator("#lily-positive-prompt").input_value() == "unfinished Lily prompt"
             assert page.evaluate("document.activeElement.matches('.add-todo-input')")
             assert page.locator(".add-todo-input").first.evaluate(
@@ -276,16 +239,13 @@ class TestRefreshPreservesEditableState:
             todo_input = page.locator(".add-todo-input").first
             todo_input.fill("in-place refresh draft")
             page.evaluate("switchTab('roadmap')")
-            voice_select = page.locator("#voiceSelect")
-            voice_select.focus()
 
             page.evaluate("refreshStatus()")
-            page.wait_for_function("window.fetch && document.querySelector('#refreshBtn:not([disabled])')")
+            page.wait_for_function("window.fetch && document.querySelector('#tab-roadmap.active')")
 
             assert navigations == [live_server[0] + "/"]
             assert page.locator("#tab-roadmap").evaluate("element => element.classList.contains('active')")
             assert page.locator(".add-todo-input").first.input_value() == "in-place refresh draft"
-            assert page.evaluate("document.activeElement.matches('#voiceSelect')")
         finally:
             page.close()
 
