@@ -19,6 +19,18 @@ def test_executive_audio_brief_source_has_no_static_banner() -> None:
     assert "Static snapshot" not in src, "executive_audio_brief.py still contains 'Static snapshot' text"
 
 
+def test_orbit_desk_template_removes_deprioritized_scanning_content() -> None:
+    """Orbit Desk keeps the scan surface focused on status, actions, and roadmap."""
+    src = (_TOOLS / "executive_audio_brief.py").read_text(encoding="utf-8")
+
+    for removed in (".subtitle", "#controls", "#serveHint", ".audio-meta", ".summary",
+                    ".offload-subtitle", "#scriptSection"):
+        assert removed not in src
+
+    assert "orbit-desk" in src
+    assert "max_width=180" in src
+
+
 def test_executive_brief_portal_output_has_no_static_banner() -> None:
     """BFX-20260530-remove-live-dash-chrome: generated output HTML must not contain the toast."""
     if not _PORTAL_OUTPUT.exists():

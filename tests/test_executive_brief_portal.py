@@ -110,12 +110,10 @@ class TestAudioSection:
 
 
 class TestBriefScript:
-    def test_script_section_present(self, page) -> None:
-        """Brief script / transcript section should exist."""
+    def test_script_section_is_removed_from_scan_surface(self, page) -> None:
+        """The generated brief script is not repeated in the fast scan view."""
         page.goto(PORTAL_URL)
-        script_section = page.locator(".brief-script, .script-section, pre, .script-text")
-        # Accept any of the possible selectors the tool might use
-        assert script_section.count() >= 1 or "Executive Project Brief" in page.content()
+        assert page.locator("#scriptSection").count() == 0
 
 
 class TestStaticModeUX:
@@ -142,20 +140,6 @@ class TestStaticModeUX:
             "Only 'No voices available' option despite ELEVENLABS_API_KEY being set"
         )
 
-    def test_serve_hint_element_exists(self, page) -> None:
-        """serveHint div must exist in DOM (visible in static file:// mode)."""
-        page.goto(PORTAL_URL)
-        hint = page.locator("#serveHint")
-        assert hint.count() == 1, "serveHint element not found in DOM"
-
-    def test_serve_hint_visible_in_static_mode(self, page) -> None:
-        """When opened as file://, the serve hint should be visible."""
-        page.goto(PORTAL_URL)
-        # Small wait for JS to run
-        page.wait_for_load_state("domcontentloaded")
-        hint = page.locator("#serveHint")
-        assert hint.is_visible(), "serveHint not visible in static file:// mode"
-
     def test_generate_button_does_not_raise_on_click(self, page) -> None:
         """Clicking Generate in static mode should not throw an uncaught JS error."""
         errors: list[str] = []
@@ -173,6 +157,32 @@ class TestStaticModeUX:
         page.wait_for_load_state("domcontentloaded")
         page.click("#refreshBtn")
         assert errors == [], f"JS error after clicking Refresh: {errors}"
+
+    def test_copy_todo_text_uses_fallback_on_served_localhost(self, live_server, browser) -> None:
+        """Copy action remains usable when localhost is not a secure context."""
+        page = browser.new_page()
+        try:
+            page.goto(live_server[0])
+            page.evaluate("""
+                () => {
+                    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true });
+                    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+                    window.__fallbackUsed = false;
+                    document.execCommand = () => { window.__fallbackUsed = true; return true; };
+                    const button = document.createElement('button');
+                    button.className = 'copy-todo-btn';
+                    button.dataset.copyText = 'served localhost copy check';
+                    button.textContent = '⧉';
+                    button.onclick = () => copyTodoText(button);
+                    document.body.appendChild(button);
+                }
+            """)
+            button = page.locator(".copy-todo-btn").first
+            assert button.count() == 1
+            fallback_used = page.evaluate("() => copyTodoText(document.querySelector('.copy-todo-btn')).then(() => window.__fallbackUsed)")
+            assert fallback_used is True
+        finally:
+            page.close()
 
 
 class TestRefreshPreservesEditableState:
@@ -565,6 +575,8 @@ class TestCheckmarkLiveServer:
     def test_cancel_card_requires_confirmation_and_removes_row(self, live_server, live_page) -> None:
         """Accepting card cancellation removes the row and persists cancelled."""
         base_url, db_file = live_server
+        errors: list[str] = []
+        live_page.on("pageerror", lambda err: errors.append(str(err)))
         todo_id = self._insert_temp_todo(db_file, project="workspace", text="Cancel card item")
         live_page.goto(base_url)
         live_page.wait_for_load_state("domcontentloaded")
@@ -577,6 +589,7 @@ class TestCheckmarkLiveServer:
         live_page.wait_for_timeout(600)
 
         assert live_page.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
+        assert errors == [], f"Uncaught JS error after card cancellation: {errors}"
         assert self._closure_reason(db_file, todo_id) == "cancelled"
 
     def test_cancel_reject_keeps_card_open(self, live_server, live_page) -> None:
