@@ -502,6 +502,30 @@ class TestCheckmarkLiveServer:
 
         assert self._is_done(db_file, todo_id), "DB was not updated after checkmark click"
 
+    def test_parent_checkmark_refresh_removes_open_descendants(self, live_server, live_page) -> None:
+        """A served-origin parent close refresh removes every cascaded open row."""
+        base_url, db_file = live_server
+        import src.utils.todos_db as todos_db
+        original_path = todos_db.DB_PATH
+        todos_db.DB_PATH = db_file
+        try:
+            parent = todos_db.add_todo("workspace", "Parent card", source="AI")
+            child = todos_db.add_todo("workspace", "Child card", source="AI", parent_id=parent)
+        finally:
+            todos_db.DB_PATH = original_path
+
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+        btn = live_page.locator(f"button.done-btn[onclick*='markDone({parent},']").first
+        assert btn.count() == 1
+        with live_page.expect_response(lambda response: "/api/refresh" in response.url and response.ok, timeout=30_000):
+            btn.click()
+
+        assert live_page.locator(f"button.done-btn[onclick*='markDone({parent},']").count() == 0
+        assert live_page.locator(f"button.done-btn[onclick*='markDone({child},']").count() == 0
+        assert self._is_done(db_file, parent)
+        assert self._is_done(db_file, child)
+
     def test_checkmark_no_js_error_on_offload_panel_row(self, live_server, live_page) -> None:
         """Clicking ✓ on an offload-panel <tr> todo produces no uncaught JS TypeError.
 
