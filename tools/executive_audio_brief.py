@@ -359,19 +359,19 @@ def _priority_badge(priority: int) -> str:
 
 
 def _todo_signal_html(todo: dict[str, Any]) -> str:
-    """Render explicit refinement and FR-link signals independently."""
+    """Render the perfected signal when present and an independent FR-link signal."""
     perfected = bool(todo.get("perfected_at"))
     linked = bool(todo.get("fr_id"))
-    perfected_label = "Refined · perfect-scoped-td" if perfected else "Not perfected"
     linked_label = "FR linked" if linked else "No FR link"
-    perfected_class = "signal-refined" if perfected else "signal-muted"
     linked_class = "signal-linked" if linked else "signal-muted"
+    perfected_html = (
+        '<span class="todo-signal" data-signal="perfected">PERFECTED</span>'
+        if perfected else ""
+    )
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
-        f'<span class="todo-signal perfected-badge">PERFECTED</span>' if perfected else
-        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'{perfected_html}'
     ) + (
-        f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
     )
 
@@ -556,7 +556,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
   <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
-  <span class="priority-hint">leave blank \u2192 AI scores</span>
 </div>"""
 
     if rank == 1:
@@ -581,7 +580,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <div class="progress-bar" style="width: {pct}%"></div>
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
-        <p class="summary">{summary}</p>
         {full_html}
         {hierarchy_html}
         {add_todo_form_html}
@@ -609,7 +607,6 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
     if not rows:
         return """<div class="offload-panel">
   <h2>⚡ Fully Offloadable</h2>
-  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
   <p style="color:var(--text-muted);font-style:italic;">No fully offloadable tasks yet.</p>
 </div>"""
 
@@ -628,7 +625,6 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
     )
     return f"""<div class="offload-panel">
   <h2>⚡ Fully Offloadable</h2>
-  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
   <table class="offload-table">
     <thead><tr><th>Pri</th><th>Project</th><th>Task</th><th></th></tr></thead>
     <tbody>{table_rows}</tbody>
@@ -679,7 +675,7 @@ def generate_portal_html(
 
     # Lily portrait — injected as inline data-URI img tag
     # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
-    lily_img_tag = get_portrait_img_tag(max_width=140)
+    lily_img_tag = get_portrait_img_tag(max_width=180)
 
     # Voice selector options — Lily is default
     _lily_id = next((v["voice_id"] for v in voices if "lily" in v["name"].lower()), None)
@@ -703,9 +699,6 @@ def generate_portal_html(
                 <source src="data:audio/mpeg;base64,{audio_b64}" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
-            <div class="audio-meta">
-                Generated: {html.escape(timestamp)} | File: {html.escape(audio_path.name)}
-            </div>
         </div>
         """
     else:
@@ -747,61 +740,61 @@ def generate_portal_html(
 <title>👁 Executive Audio Brief Portal</title>
 <style>
 :root {{
-    --bg: #080c14;
-    --surface: rgba(22, 28, 40, 0.7);
-    --surface-solid: #161c28;
-    --border: rgba(99, 130, 200, 0.18);
-    --border-glow: rgba(88, 166, 255, 0.35);
-    --text: #e8eef8;
-    --text-muted: #7a8aa0;
-    --accent: #58a6ff;
-    --accent-green: #3fb950;
-    --accent-orange: #d29922;
-    --accent-red: #f85149;
-    --accent-purple: #bc8cff;
-    --music-pink: #ff6b9d;
-    --radius: 16px;
-    --blur: 18px;
+    --bg: #111827;
+    --surface: rgba(18, 28, 35, 0.84);
+    --surface-solid: #0e151b;
+    --border: rgba(218, 237, 236, 0.16);
+    --border-glow: rgba(125, 211, 252, 0.45);
+    --text: #edf3f7;
+    --text-muted: #9eabb3;
+    --accent: #7dd3fc;
+    --accent-green: #d5f36b;
+    --accent-orange: #f0b35b;
+    --accent-red: #ff8a5b;
+    --accent-purple: #9ddcf5;
+    --music-pink: #ff8a5b;
+    --radius: 0px;
+    --blur: 8px;
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: Georgia, 'Times New Roman', serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
     min-height: 100vh;
     background-image:
-        radial-gradient(ellipse at 20% 20%, rgba(88, 166, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 80%, rgba(188, 140, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 50% 50%, rgba(63, 185, 80, 0.04) 0%, transparent 60%);
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        radial-gradient(ellipse at 50% 0%, rgba(125, 211, 252, .22), transparent 34rem),
+        radial-gradient(ellipse at 70% 100%, rgba(240, 179, 91, .16), transparent 30rem);
+    background-size: 42px 42px, 42px 42px, auto, auto;
     background-attachment: fixed;
 }}
 .container {{
-    max-width: 1100px;
+    max-width: 1120px;
     margin: 0 auto;
-    padding: 2rem;
+    padding: 2.4rem 1.5rem 7rem;
 }}
 header {{
-    text-align: center;
-    margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 1.6rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+    padding: 1.5rem 0;
     border-bottom: 1px solid var(--border);
 }}
 .lily-portrait {{
     position: relative;
     display: inline-block;
-    margin-bottom: 1rem;
+    margin-bottom: 0;
 }}
 header h1 {{
-    font-size: 2rem;
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.5rem;
-}}
-header .subtitle {{
-    color: var(--text-muted);
-    font-size: 0.95rem;
+    font-size: clamp(2.1rem, 5vw, 4.6rem);
+    line-height: .94;
+    font-weight: 400;
+    margin-bottom: .5rem;
 }}
 .timestamp {{
     color: var(--text-muted);
@@ -828,65 +821,9 @@ header .subtitle {{
     margin: 0 auto;
     display: block;
 }}
-.audio-meta {{
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    margin-top: 0.75rem;
-}}
 .no-audio {{
     color: var(--text-muted);
     font-style: italic;
-}}
-
-/* Controls */
-.controls {{
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-    padding: 1rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-}}
-.serve-hint {{
-    text-align: center;
-    font-size: 0.85rem;
-    color: #c0a060;
-    background: #2a2010;
-    border: 1px solid #604020;
-    border-radius: var(--radius);
-    padding: 0.6rem 1.2rem;
-    margin-bottom: 1.5rem;
-}}
-.controls select, .controls button {{
-    font-size: 0.9rem;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    cursor: pointer;
-}}
-.controls button {{
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
-    border: none;
-    font-weight: 600;
-    color: #fff;
-    transition: opacity 0.2s;
-}}
-.controls button:hover {{
-    opacity: 0.85;
-}}
-.controls button:disabled {{
-    opacity: 0.5;
-    cursor: wait;
-}}
-.controls label {{
-    color: var(--text-muted);
-    font-size: 0.85rem;
 }}
 
 /* Status Cards */
@@ -949,7 +886,7 @@ header .subtitle {{
 }}
 .progress-bar {{
     height: 100%;
-    background: linear-gradient(90deg, var(--accent-green), var(--accent));
+    background: linear-gradient(90deg, #879d5c, #5797ad);
     border-radius: 6px;
     transition: width 0.5s ease;
 }}
@@ -962,11 +899,6 @@ header .subtitle {{
     font-weight: 600;
     color: var(--text);
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-}}
-.summary {{
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 0.5rem;
 }}
 .todo-list {{
     list-style: none;
@@ -1083,7 +1015,7 @@ header .subtitle {{
     white-space: nowrap;
 }}
 .todo-id {{
-    color: var(--accent-orange);
+    color: #c58e4a;
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
@@ -1098,14 +1030,10 @@ header .subtitle {{
     font-weight: 700;
     white-space: nowrap;
 }}
-.signal-refined {{
+.todo-signal[data-signal="perfected"] {{
     color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.12);
-}}
-.perfected-badge {{
-    color: #ffffff;
-    background: var(--accent-green);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(213, 243, 107, 0.14);
+    border: 1px solid rgba(213, 243, 107, 0.35);
 }}
 .signal-linked {{
     color: var(--accent);
@@ -1199,6 +1127,7 @@ header .subtitle {{
     border-radius: var(--radius);
     padding: 1.25rem;
     margin-bottom: 2rem;
+    overflow-x: auto;
 }}
 .all-projects h3 {{
     margin-bottom: 0.75rem;
@@ -1290,7 +1219,6 @@ footer {{
     transition: opacity 0.2s;
 }}
 .add-todo-btn:hover {{ opacity: 0.85; }}
-.priority-hint {{ font-size: 0.72rem; color: var(--text-muted); }}
 .priority-badge-inline {{
     font-size: 0.7rem;
     font-weight: 700;
@@ -1460,11 +1388,6 @@ footer {{
     color: #d29922;
     margin-bottom: 0.3rem;
 }}
-.offload-subtitle {{
-    color: var(--text-muted);
-    font-size: 0.88rem;
-    margin-bottom: 1rem;
-}}
 .offload-table {{
     width: 100%;
     border-collapse: collapse;
@@ -1495,7 +1418,11 @@ footer {{
 }}
 
 @media (max-width: 700px) {{
-    .container {{ padding: 1rem; }}
+    .container {{ padding: 1rem 0.75rem 6rem; }}
+    header {{ grid-template-columns: 92px 1fr; gap: 0.9rem; padding-top: 0.75rem; }}
+    .lily-portrait {{ width: 92px; }}
+    header h1 {{ font-size: 2.4rem; }}
+    .cards-grid {{ grid-template-columns: minmax(0, 1fr); }}
     .todo-list li {{
         grid-template-areas:
             "primary"
@@ -1540,9 +1467,6 @@ footer {{
               onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='0.35'">✏</button>
         </div>
         <h1>👁 Executive Audio Brief Portal</h1>
-        <div class="subtitle">
-            Cross-project status intelligence · ElevenLabs voice synthesis
-        </div>
         <div class="timestamp">
             <span class="status-dot status-live"></span>
             Last generated: {html.escape(timestamp)}
@@ -1550,23 +1474,6 @@ footer {{
     </header>
 
     {audio_section}
-
-    <div class="controls" id="controls">
-        <label for="voiceSelect">Voice:</label>
-        <select id="voiceSelect">
-            {voice_options}
-        </select>
-        <button id="generateBtn" onclick="generateBrief()">
-            🔄 Regenerate
-        </button>
-        <button id="refreshBtn" onclick="refreshStatus()">
-            🔄 Refresh Status
-        </button>
-    </div>
-    <div id="serveHint" class="serve-hint" style="display:none;">
-        ⚠️ Live generation requires server mode.
-        Run: <code>python tools/executive_audio_brief.py --serve</code>
-    </div>
 
     <div id="refreshable-status">
     {tab_nav_html}
@@ -1578,11 +1485,6 @@ footer {{
     <h2 style="margin-bottom:1rem;">Project Priorities</h2>
     <div class="cards-grid">
         {cards_html}
-    </div>
-
-    <div class="script-section" id="scriptSection" onclick="this.classList.toggle('open')">
-        <h3>📝 Brief Script</h3>
-        <div class="script-text">{script_escaped}</div>
     </div>
 
     <div class="all-projects">
@@ -1617,20 +1519,19 @@ footer {{
 </div>
 
 <script>
-// Detect static file:// mode — API endpoints only exist in --serve mode
+// Detect static file:// mode. API endpoints only exist in --serve mode.
 const IS_STATIC = window.location.protocol === 'file:';
-if (IS_STATIC) {{ document.getElementById('serveHint').style.display = 'block'; }}
-
-function _showServeHint() {{
-    document.getElementById('serveHint').style.display = 'block';
-}}
+function _showServeHint() {{}}
 
 async function generateBrief() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('generateBtn');
-    const voiceId = document.getElementById('voiceSelect').value;
-    btn.disabled = true;
-    btn.textContent = '⏳ Generating...';
+    const voiceSelect = document.getElementById('voiceSelect');
+    const voiceId = voiceSelect ? voiceSelect.value : '';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Generating...';
+    }}
     try {{
         const resp = await fetch('/api/generate', {{
             method: 'POST',
@@ -1646,8 +1547,10 @@ async function generateBrief() {{
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Regenerate';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Regenerate';
+        }}
     }}
 }}
 
@@ -1723,12 +1626,8 @@ async function markDone(todoId, btnEl) {{
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
             if (row) {{
-                row.style.transition = 'opacity 0.3s';
-                row.style.opacity = '0';
-                setTimeout(() => {{
-                    row.remove();
-                    _updateProgressBar(card);
-                }}, 300);
+                row.remove();
+                _updateProgressBar(card);
             }}
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
@@ -1758,12 +1657,8 @@ async function cancelTodo(todoId, btnEl) {{
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
             if (row) {{
-                row.style.transition = 'opacity 0.3s';
-                row.style.opacity = '0';
-                setTimeout(() => {{
-                    row.remove();
-                    _updateProgressBar(card);
-                }}, 300);
+                row.remove();
+                _updateProgressBar(card);
             }}
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
@@ -1782,15 +1677,19 @@ async function cancelTodo(todoId, btnEl) {{
 async function refreshStatus() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Refreshing...';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Refreshing...';
+    }}
     try {{
         await _refreshStatusInPlace();
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Refresh Status';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh Status';
+        }}
     }}
 }}
 

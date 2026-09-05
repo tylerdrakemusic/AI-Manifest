@@ -19,6 +19,28 @@ def test_executive_audio_brief_source_has_no_static_banner() -> None:
     assert "Static snapshot" not in src, "executive_audio_brief.py still contains 'Static snapshot' text"
 
 
+def test_orbit_desk_template_removes_deprioritized_scanning_content() -> None:
+    """Orbit Desk keeps the scan surface focused on status, actions, and roadmap."""
+    src = (_TOOLS / "executive_audio_brief.py").read_text(encoding="utf-8")
+
+    for removed in (".subtitle", "#controls", ".controls {{", ".orbit-desk-actions {{",
+                    "#serveHint", ".audio-meta", ".summary", ".offload-subtitle",
+                    "#scriptSection"):
+        assert removed not in src
+
+    assert "max_width=180" in src
+
+
+def test_orbit_desk_status_accents_are_muted_against_dark_surfaces() -> None:
+    """Status badges and progress fills should support scanning without glowing."""
+    src = (_TOOLS / "executive_audio_brief.py").read_text(encoding="utf-8")
+
+    assert "background: rgba(213, 243, 107, 0.14);" in src
+    assert "color: var(--accent-green);" in src
+    assert "background: linear-gradient(90deg, #879d5c, #5797ad);" in src
+    assert "color: #c58e4a;" in src
+
+
 def test_executive_brief_portal_output_has_no_static_banner() -> None:
     """BFX-20260530-remove-live-dash-chrome: generated output HTML must not contain the toast."""
     if not _PORTAL_OUTPUT.exists():
@@ -272,11 +294,16 @@ def test_status_card_renders_ids_and_independent_provenance_signals_without_chan
 
     assert "TODO #227" in out
     assert "TODO #228" in out
+    assert out.count('class="todo-signal perfected-badge"') == 0
+    assert out.count('class="todo-signal signal-refined"') == 0
+    assert out.count('class="todo-signal"') == 1
+    assert out.count('<span class="todo-signal') == 3
     assert "PERFECTED" in out
-    assert "Refined · perfect-scoped-td" in out
-    assert "Not perfected" in out
+    assert "Not perfected" not in out
     assert "FR linked" in out
     assert "No FR link" in out
+    assert "priority-hint" not in out
+    assert "leave blank" not in out
     assert 'onclick="markDone(227, this)"' in out
     assert 'onclick="markDone(228, this)"' in out
 

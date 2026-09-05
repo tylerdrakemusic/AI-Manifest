@@ -76,6 +76,12 @@ class TestPortalLoads:
         ts = page.locator(".timestamp")
         assert ts.count() >= 1
 
+    def test_deleted_orbit_desk_controls_are_absent(self, page) -> None:
+        """The generated surface must not render the deleted control rail."""
+        page.goto(PORTAL_URL)
+        for selector in (".orbit-desk-actions", "#voiceSelect", "#generateBtn", "#refreshBtn"):
+            assert page.locator(selector).count() == 0, f"Deleted control still rendered: {selector}"
+
 
 class TestStatusCards:
     def test_all_project_status_cards_rendered(self, page) -> None:
@@ -110,69 +116,38 @@ class TestAudioSection:
 
 
 class TestBriefScript:
-    def test_script_section_present(self, page) -> None:
-        """Brief script / transcript section should exist."""
+    def test_script_section_is_removed_from_scan_surface(self, page) -> None:
+        """The generated brief script is not repeated in the fast scan view."""
         page.goto(PORTAL_URL)
-        script_section = page.locator(".brief-script, .script-section, pre, .script-text")
-        # Accept any of the possible selectors the tool might use
-        assert script_section.count() >= 1 or "Executive Project Brief" in page.content()
+        assert page.locator("#scriptSection").count() == 0
 
 
 class TestStaticModeUX:
-    def test_voice_dropdown_exists(self, page) -> None:
-        """Voice dropdown element must be present in the DOM."""
-        page.goto(PORTAL_URL)
-        select = page.locator("#voiceSelect")
-        assert select.count() == 1, "Voice dropdown not found"
-        # At least one option must exist (even if it's the fallback placeholder)
-        assert select.locator("option").count() >= 1
-
-    def test_voice_dropdown_populated_when_api_key_set(self, page) -> None:
-        """If ELEVENLABS_API_KEY is set, voice dropdown must have real voices (not just placeholder)."""
-        import os
-        if not os.environ.get("ELEVENLABS_API_KEY"):
-            pytest.skip("ELEVENLABS_API_KEY not set — voice population test skipped")
-        page.goto(PORTAL_URL)
-        select = page.locator("#voiceSelect")
-        options = select.locator("option")
-        count = options.count()
-        assert count >= 1
-        first_text = options.first.text_content() or ""
-        assert "No voices" not in first_text, (
-            "Only 'No voices available' option despite ELEVENLABS_API_KEY being set"
-        )
-
-    def test_serve_hint_element_exists(self, page) -> None:
-        """serveHint div must exist in DOM (visible in static file:// mode)."""
-        page.goto(PORTAL_URL)
-        hint = page.locator("#serveHint")
-        assert hint.count() == 1, "serveHint element not found in DOM"
-
-    def test_serve_hint_visible_in_static_mode(self, page) -> None:
-        """When opened as file://, the serve hint should be visible."""
-        page.goto(PORTAL_URL)
-        # Small wait for JS to run
-        page.wait_for_load_state("domcontentloaded")
-        hint = page.locator("#serveHint")
-        assert hint.is_visible(), "serveHint not visible in static file:// mode"
-
-    def test_generate_button_does_not_raise_on_click(self, page) -> None:
-        """Clicking Generate in static mode should not throw an uncaught JS error."""
-        errors: list[str] = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.goto(PORTAL_URL)
-        page.wait_for_load_state("domcontentloaded")
-        page.click("#generateBtn")
-        assert errors == [], f"JS error after clicking Generate: {errors}"
-
-    def test_refresh_button_does_not_raise_on_click(self, page) -> None:
-        """Clicking Refresh in static mode should not throw an uncaught JS error."""
-        errors: list[str] = []
-        page.on("pageerror", lambda err: errors.append(str(err)))
-        page.goto(PORTAL_URL)
-        page.wait_for_load_state("domcontentloaded")
-        page.click("#refreshBtn")
-        assert errors == [], f"JS error after clicking Refresh: {errors}"
+    def test_copy_todo_text_uses_fallback_on_served_localhost(self, live_server, browser) -> None:
+        """Copy action remains usable when localhost is not a secure context."""
+        page = browser.new_page()
+        try:
+            page.goto(live_server[0])
+            page.evaluate("""
+                () => {
+                    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true });
+                    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+                    window.__fallbackUsed = false;
+                    document.execCommand = () => { window.__fallbackUsed = true; return true; };
+                    const button = document.createElement('button');
+                    button.className = 'copy-todo-btn';
+                    button.dataset.copyText = 'served localhost copy check';
+                    button.textContent = '⧉';
+                    button.onclick = () => copyTodoText(button);
+                    document.body.appendChild(button);
+                }
+            """)
+            button = page.locator(".copy-todo-btn").first
+            assert button.count() == 1
+            fallback_used = page.evaluate("() => copyTodoText(document.querySelector('.copy-todo-btn')).then(() => window.__fallbackUsed)")
+            assert fallback_used is True
+        finally:
+            page.close()
 
 
 class TestRefreshPreservesEditableState:
@@ -197,7 +172,6 @@ class TestRefreshPreservesEditableState:
             priority_input = page.locator(".add-todo-priority").first
             todo_input.fill("unfinished todo draft")
             priority_input.fill("8")
-            page.select_option("#voiceSelect", "voice-b")
 
             page.click(".lily-edit-btn")
             prompt = page.locator("#lily-positive-prompt")
@@ -211,7 +185,6 @@ class TestRefreshPreservesEditableState:
 
             assert page.locator(".add-todo-input").first.input_value() == "unfinished todo draft"
             assert page.locator(".add-todo-priority").first.input_value() == "8"
-            assert page.locator("#voiceSelect").input_value() == "voice-b"
             assert page.locator("#lily-positive-prompt").input_value() == "unfinished Lily prompt"
             assert page.evaluate("document.activeElement.matches('.add-todo-input')")
             assert page.locator(".add-todo-input").first.evaluate(
@@ -266,16 +239,13 @@ class TestRefreshPreservesEditableState:
             todo_input = page.locator(".add-todo-input").first
             todo_input.fill("in-place refresh draft")
             page.evaluate("switchTab('roadmap')")
-            voice_select = page.locator("#voiceSelect")
-            voice_select.focus()
 
             page.evaluate("refreshStatus()")
-            page.wait_for_function("window.fetch && document.querySelector('#refreshBtn:not([disabled])')")
+            page.wait_for_function("window.fetch && document.querySelector('#tab-roadmap.active')")
 
             assert navigations == [live_server[0] + "/"]
             assert page.locator("#tab-roadmap").evaluate("element => element.classList.contains('active')")
             assert page.locator(".add-todo-input").first.input_value() == "in-place refresh draft"
-            assert page.evaluate("document.activeElement.matches('#voiceSelect')")
         finally:
             page.close()
 
@@ -362,9 +332,9 @@ class TestProvenanceSignalRail:
         page = browser.new_page()
         try:
             expected_states = {
-                927: {"PERFECTED", "Refined · perfect-scoped-td", "No FR link"},
-                928: {"Not perfected", "FR linked"},
-                929: {"PERFECTED", "Refined · perfect-scoped-td", "FR linked"},
+                927: {"PERFECTED", "No FR link"},
+                928: {"FR linked"},
+                929: {"PERFECTED", "FR linked"},
             }
             viewports = {
                 "desktop": (1280, 900),
@@ -565,6 +535,8 @@ class TestCheckmarkLiveServer:
     def test_cancel_card_requires_confirmation_and_removes_row(self, live_server, live_page) -> None:
         """Accepting card cancellation removes the row and persists cancelled."""
         base_url, db_file = live_server
+        errors: list[str] = []
+        live_page.on("pageerror", lambda err: errors.append(str(err)))
         todo_id = self._insert_temp_todo(db_file, project="workspace", text="Cancel card item")
         live_page.goto(base_url)
         live_page.wait_for_load_state("domcontentloaded")
@@ -577,6 +549,7 @@ class TestCheckmarkLiveServer:
         live_page.wait_for_timeout(600)
 
         assert live_page.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
+        assert errors == [], f"Uncaught JS error after card cancellation: {errors}"
         assert self._closure_reason(db_file, todo_id) == "cancelled"
 
     def test_cancel_reject_keeps_card_open(self, live_server, live_page) -> None:
