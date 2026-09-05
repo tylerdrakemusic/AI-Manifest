@@ -333,7 +333,7 @@ class TestProvenanceSignalRail:
         try:
             expected_states = {
                 927: {"PERFECTED", "No FR link"},
-                928: {"Not perfected", "FR linked"},
+                928: {"FR linked"},
                 929: {"PERFECTED", "FR linked"},
             }
             viewports = {

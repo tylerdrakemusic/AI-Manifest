@@ -359,15 +359,18 @@ def _priority_badge(priority: int) -> str:
 
 
 def _todo_signal_html(todo: dict[str, Any]) -> str:
-    """Render one perfection signal and an independent FR-link signal."""
+    """Render the perfected signal when present and an independent FR-link signal."""
     perfected = bool(todo.get("perfected_at"))
     linked = bool(todo.get("fr_id"))
-    perfected_label = "PERFECTED" if perfected else "Not perfected"
     linked_label = "FR linked" if linked else "No FR link"
     linked_class = "signal-linked" if linked else "signal-muted"
+    perfected_html = (
+        '<span class="todo-signal" data-signal="perfected">PERFECTED</span>'
+        if perfected else ""
+    )
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
-        f'<span class="todo-signal" data-signal="{"perfected" if perfected else "not-perfected"}">{perfected_label}</span>'
+        f'{perfected_html}'
     ) + (
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
     )
@@ -553,7 +556,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
   <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
-  <span class="priority-hint">leave blank \u2192 AI scores</span>
 </div>"""
 
     if rank == 1:
@@ -1217,7 +1219,6 @@ footer {{
     transition: opacity 0.2s;
 }}
 .add-todo-btn:hover {{ opacity: 0.85; }}
-.priority-hint {{ font-size: 0.72rem; color: var(--text-muted); }}
 .priority-badge-inline {{
     font-size: 0.7rem;
     font-weight: 700;
