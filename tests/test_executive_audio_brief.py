@@ -294,8 +294,10 @@ def test_status_card_renders_ids_and_independent_provenance_signals_without_chan
 
     assert "TODO #227" in out
     assert "TODO #228" in out
+    assert out.count('class="todo-signal perfected-badge"') == 0
+    assert out.count('class="todo-signal signal-refined"') == 0
+    assert out.count('class="todo-signal"') == 2
     assert "PERFECTED" in out
-    assert "Refined · perfect-scoped-td" in out
     assert "Not perfected" in out
     assert "FR linked" in out
     assert "No FR link" in out

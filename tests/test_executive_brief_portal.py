@@ -332,9 +332,9 @@ class TestProvenanceSignalRail:
         page = browser.new_page()
         try:
             expected_states = {
-                927: {"PERFECTED", "Refined · perfect-scoped-td", "No FR link"},
+                927: {"PERFECTED", "No FR link"},
                 928: {"Not perfected", "FR linked"},
-                929: {"PERFECTED", "Refined · perfect-scoped-td", "FR linked"},
+                929: {"PERFECTED", "FR linked"},
             }
             viewports = {
                 "desktop": (1280, 900),

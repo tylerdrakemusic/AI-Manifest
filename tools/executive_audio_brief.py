@@ -359,19 +359,16 @@ def _priority_badge(priority: int) -> str:
 
 
 def _todo_signal_html(todo: dict[str, Any]) -> str:
-    """Render explicit refinement and FR-link signals independently."""
+    """Render one perfection signal and an independent FR-link signal."""
     perfected = bool(todo.get("perfected_at"))
     linked = bool(todo.get("fr_id"))
-    perfected_label = "Refined · perfect-scoped-td" if perfected else "Not perfected"
+    perfected_label = "PERFECTED" if perfected else "Not perfected"
     linked_label = "FR linked" if linked else "No FR link"
-    perfected_class = "signal-refined" if perfected else "signal-muted"
     linked_class = "signal-linked" if linked else "signal-muted"
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
-        f'<span class="todo-signal perfected-badge">PERFECTED</span>' if perfected else
-        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'<span class="todo-signal" data-signal="{"perfected" if perfected else "not-perfected"}">{perfected_label}</span>'
     ) + (
-        f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
     )
 
@@ -1031,11 +1028,7 @@ header h1 {{
     font-weight: 700;
     white-space: nowrap;
 }}
-.signal-refined {{
-    color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.12);
-}}
-.perfected-badge {{
+.todo-signal[data-signal="perfected"] {{
     color: var(--accent-green);
     background: rgba(213, 243, 107, 0.14);
     border: 1px solid rgba(213, 243, 107, 0.35);
