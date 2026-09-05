@@ -936,7 +936,7 @@ header h1 {{
 }}
 .progress-bar {{
     height: 100%;
-    background: linear-gradient(90deg, var(--accent-green), var(--accent));
+    background: linear-gradient(90deg, #879d5c, #5797ad);
     border-radius: 6px;
     transition: width 0.5s ease;
 }}
@@ -1065,7 +1065,7 @@ header h1 {{
     white-space: nowrap;
 }}
 .todo-id {{
-    color: var(--accent-orange);
+    color: #c58e4a;
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
@@ -1085,9 +1085,9 @@ header h1 {{
     background: rgba(63, 185, 80, 0.12);
 }}
 .perfected-badge {{
-    color: #ffffff;
-    background: var(--accent-green);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--accent-green);
+    background: rgba(213, 243, 107, 0.14);
+    border: 1px solid rgba(213, 243, 107, 0.35);
 }}
 .signal-linked {{
     color: var(--accent);

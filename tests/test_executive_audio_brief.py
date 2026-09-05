@@ -31,6 +31,16 @@ def test_orbit_desk_template_removes_deprioritized_scanning_content() -> None:
     assert "max_width=180" in src
 
 
+def test_orbit_desk_status_accents_are_muted_against_dark_surfaces() -> None:
+    """Status badges and progress fills should support scanning without glowing."""
+    src = (_TOOLS / "executive_audio_brief.py").read_text(encoding="utf-8")
+
+    assert "background: rgba(213, 243, 107, 0.14);" in src
+    assert "color: var(--accent-green);" in src
+    assert "background: linear-gradient(90deg, #879d5c, #5797ad);" in src
+    assert "color: #c58e4a;" in src
+
+
 def test_executive_brief_portal_output_has_no_static_banner() -> None:
     """BFX-20260530-remove-live-dash-chrome: generated output HTML must not contain the toast."""
     if not _PORTAL_OUTPUT.exists():
