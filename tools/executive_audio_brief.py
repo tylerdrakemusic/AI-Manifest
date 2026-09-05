@@ -1568,6 +1568,7 @@ footer {{
         Run: <code>python tools/executive_audio_brief.py --serve</code>
     </div>
 
+    <div id="refreshable-status">
     {tab_nav_html}
 
     <div id="tab-overview" class="tab-panel active">
@@ -1606,6 +1607,7 @@ footer {{
 
     <div id="tab-roadmap" class="tab-panel">
         {roadmap_tab_html}
+    </div>
     </div>
 
     <footer>
@@ -1783,19 +1785,29 @@ async function refreshStatus() {{
     btn.disabled = true;
     btn.textContent = '⏳ Refreshing...';
     try {{
-        const resp = await fetch('/api/refresh', {{ method: 'POST' }});
-        if (resp.ok) {{
-            _preserveEditableStateBeforeReload();
-            window.location.reload();
-        }} else {{
-            alert('Refresh failed');
-        }}
+        await _refreshStatusInPlace();
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
         btn.disabled = false;
         btn.textContent = '🔄 Refresh Status';
     }}
+}}
+
+async function _refreshStatusInPlace() {{
+    const editableState = _captureEditableState();
+    const response = await fetch('/api/refresh', {{ method: 'POST' }});
+    if (!response.ok) throw new Error('Refresh failed (' + response.status + ')');
+    const data = await response.json();
+    if (!data.html) throw new Error('Refresh response did not include portal HTML');
+
+    const parsed = new DOMParser().parseFromString(data.html, 'text/html');
+    const current = document.getElementById('refreshable-status');
+    const replacement = parsed.getElementById('refreshable-status');
+    if (!current || !replacement) throw new Error('Refresh response was missing status content');
+    current.replaceWith(replacement);
+    restoreActiveTab();
+    _restoreEditableState(editableState);
 }}
 
 async function addTodo(btn) {{
@@ -1894,12 +1906,16 @@ function _editableControls() {{
 }}
 
 function _editableControlKey(element, index) {{
-    return element.id || element.name || `${{element.tagName.toLowerCase()}}:${{index}}`;
+    if (element.id || element.name) return element.id || element.name;
+    const project = element.closest('.add-todo-form')?.querySelector('.add-todo-input')?.dataset.project;
+    if (project) return `todo:${{project}}:${{element.className}}`;
+    return `${{element.tagName.toLowerCase()}}:${{index}}`;
 }}
 
-function _preserveEditableStateBeforeReload() {{
+function _captureEditableState() {{
     const controls = _editableControls();
-    const state = {{
+    const focusedIndex = controls.indexOf(document.activeElement);
+    return {{
         controls: controls.map((element, index) => {{
             const entry = {{
                 key: _editableControlKey(element, index),
@@ -1919,8 +1935,15 @@ function _preserveEditableStateBeforeReload() {{
             }}
             return entry;
         }}),
-        focusedIndex: controls.indexOf(document.activeElement),
+        focusedIndex,
+        focusedKey: focusedIndex >= 0
+            ? _editableControlKey(document.activeElement, focusedIndex)
+            : null,
     }};
+}}
+
+function _preserveEditableStateBeforeReload() {{
+    const state = _captureEditableState();
     try {{
         sessionStorage.setItem(EDITABLE_STATE_KEY, JSON.stringify(state));
     }} catch (e) {{
@@ -1928,17 +1951,7 @@ function _preserveEditableStateBeforeReload() {{
     }}
 }}
 
-function _restoreEditableStateAfterReload() {{
-    let state;
-    try {{
-        const stored = sessionStorage.getItem(EDITABLE_STATE_KEY);
-        if (!stored) return;
-        state = JSON.parse(stored);
-        sessionStorage.removeItem(EDITABLE_STATE_KEY);
-    }} catch (e) {{
-        return;
-    }}
-
+function _restoreEditableState(state) {{
     const controls = _editableControls();
     const controlsByKey = new Map(controls.map((element, index) => [
         _editableControlKey(element, index), element,
@@ -1966,9 +1979,22 @@ function _restoreEditableStateAfterReload() {{
         }}
     }}
 
-    const focused = state.focusedIndex >= 0 ? controls[state.focusedIndex] : null;
+    const focused = state.focusedKey
+        ? controlsByKey.get(state.focusedKey)
+        : state.focusedIndex >= 0 ? controls[state.focusedIndex] : null;
     if (focused && !focused.disabled) {{
         try {{ focused.focus({{preventScroll: true}}); }} catch (e) {{ focused.focus(); }}
+    }}
+}}
+
+function _restoreEditableStateAfterReload() {{
+    try {{
+        const stored = sessionStorage.getItem(EDITABLE_STATE_KEY);
+        if (!stored) return;
+        sessionStorage.removeItem(EDITABLE_STATE_KEY);
+        _restoreEditableState(JSON.parse(stored));
+    }} catch (e) {{
+        return;
     }}
 }}
 
@@ -1979,8 +2005,7 @@ function _restoreEditableStateAfterReload() {{
         var audio = document.getElementById('briefAudio');
         var playing = audio && !audio.paused && !audio.ended && audio.readyState > 2;
         if (!playing) {{
-            _preserveEditableStateBeforeReload();
-            window.location.reload();
+            _refreshStatusInPlace().catch(error => console.error('Automatic refresh failed:', error));
         }}
     }}, REFRESH_INTERVAL);
 }})();
@@ -2126,7 +2151,7 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"ok": true}')
+            self.wfile.write(json.dumps({"ok": True, "html": result["html"]}).encode("utf-8"))
         except Exception as e:
             msg = str(e).encode("utf-8")
             self.send_response(500)

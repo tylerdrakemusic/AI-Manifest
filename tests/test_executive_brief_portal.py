@@ -255,6 +255,30 @@ class TestRefreshPreservesEditableState:
         finally:
             page.close()
 
+    def test_refresh_updates_in_place_without_navigation(self, live_server, browser) -> None:
+        page = browser.new_page()
+        navigations: list[str] = []
+        page.on("framenavigated", lambda frame: navigations.append(frame.url))
+        try:
+            page.goto(live_server[0])
+            page.wait_for_load_state("domcontentloaded")
+
+            todo_input = page.locator(".add-todo-input").first
+            todo_input.fill("in-place refresh draft")
+            page.evaluate("switchTab('roadmap')")
+            voice_select = page.locator("#voiceSelect")
+            voice_select.focus()
+
+            page.evaluate("refreshStatus()")
+            page.wait_for_function("window.fetch && document.querySelector('#refreshBtn:not([disabled])')")
+
+            assert navigations == [live_server[0] + "/"]
+            assert page.locator("#tab-roadmap").evaluate("element => element.classList.contains('active')")
+            assert page.locator(".add-todo-input").first.input_value() == "in-place refresh draft"
+            assert page.evaluate("document.activeElement.matches('#voiceSelect')")
+        finally:
+            page.close()
+
 
 class TestNoConsoleErrors:
     def test_no_critical_js_errors(self, page) -> None:
