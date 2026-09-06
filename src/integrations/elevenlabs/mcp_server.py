@@ -17,6 +17,10 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.utils.audio_output_policy import atomic_write_bytes, resolve_audio_output_path
 
 # ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
