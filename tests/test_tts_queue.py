@@ -665,9 +665,12 @@ def test_worker_retries_on_429(tmp_path: Path) -> None:
 def test_live_tts_enqueue_and_process(tmp_path: Path) -> None:
     """Skipped by default.  Run with: pytest -m live
 
-    Requires ELEVENLABS_API_KEY to be set in the environment.
+    Requires an explicit ``RUN_LIVE_TTS_SMOKE=1`` opt-in and
+    ``ELEVENLABS_API_KEY`` to be set in the environment.
     """
     import os
+    if os.environ.get("RUN_LIVE_TTS_SMOKE") != "1":
+        pytest.skip("RUN_LIVE_TTS_SMOKE=1 not set")
     if not os.environ.get("ELEVENLABS_API_KEY"):
         pytest.skip("ELEVENLABS_API_KEY not set")
 
