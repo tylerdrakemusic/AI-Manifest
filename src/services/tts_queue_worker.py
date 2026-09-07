@@ -23,6 +23,7 @@ import queue
 import sqlite3
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -46,6 +47,12 @@ IS_WINDOWS_PLATFORM = os.name == "nt"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _default_provider(**kwargs: object) -> bytes:
+    """Adapt the existing ElevenLabs client to the internal provider API."""
+    client = ElevenLabsClient()
+    return client.text_to_speech(**kwargs)  # type: ignore[arg-type]
 
 
 def windows_playback(path: Path) -> None:
@@ -111,6 +118,8 @@ class TtsQueueWorker:
         backoff_max_seconds: float = 60.0,
         output_dir: Path | str | None = None,
         playback: Callable[[Path], None] | None = None,
+        provider: Callable[..., bytes] | None = None,
+        failure_injector: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self._workers = workers
         self._poll_interval = poll_interval
@@ -120,6 +129,8 @@ class TtsQueueWorker:
         self._backoff_max_seconds = backoff_max_seconds
         self._output_dir = Path(output_dir) if output_dir is not None else _DEFAULT_OUTPUT_DIR
         self._playback = playback if playback is not None else windows_playback
+        self._provider = provider or _default_provider
+        self._failure_injector = failure_injector
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -239,8 +250,7 @@ class TtsQueueWorker:
         )
 
         try:
-            client = ElevenLabsClient()
-            audio_bytes: bytes = client.text_to_speech(
+            audio_bytes: bytes = self._provider(
                 text=job["text"],
                 voice_id=job["voice_id"],
                 model_id=job["model_id"],
@@ -248,6 +258,9 @@ class TtsQueueWorker:
             )
         except httpx.HTTPStatusError as exc:
             if classify_http_error(exc) == "transient":
+                if exc.response.status_code >= 500:
+                    self._handle_ambiguous_error(job, exc)
+                    return
                 self._handle_transient_error(job, exc)
                 return
             self._log_lifecycle(
@@ -261,13 +274,15 @@ class TtsQueueWorker:
                 conn.close()
             return
         except httpx.RequestError as exc:
-            self._handle_transient_error(job, exc)
+            self._handle_ambiguous_error(job, exc)
             return
         except Exception as exc:
             self._log_lifecycle(
                 "FAILED", job_id=job_id, retry_count=job["retry_count"],
                 characters=len(job["text"]), provider_error=str(exc),
             )
+            if self._failure_injector is not None:
+                raise
             conn = get_connection()
             try:
                 mark_failed(conn, job_id, str(exc))
@@ -278,7 +293,20 @@ class TtsQueueWorker:
         # Compute checksum, write atomically
         sha256 = hashlib.sha256(audio_bytes).hexdigest()
         output_path = self._output_dir / f"{job_id}.mp3"
+        if self._failure_injector is not None:
+            self._failure_injector("before_publish", job)
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE tts_queue SET publication_state='WRITING' WHERE id=?",
+                (job_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         atomic_write_bytes(output_path, audio_bytes)
+        if self._failure_injector is not None:
+            self._failure_injector("after_publish", job)
 
         conn = get_connection()
         try:
@@ -344,6 +372,24 @@ class TtsQueueWorker:
                 self._job_queue.put(refreshed, timeout=5)
             except queue.Full:
                 pass  # Will be picked up by the next poll cycle
+
+    def _handle_ambiguous_error(self, job: dict[str, Any], exc: Exception) -> None:
+        """Stop replay when the provider outcome cannot be established."""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE tts_queue SET status='AMBIGUOUS', error_message=?, completed_at=? WHERE id=?",
+                (str(exc), datetime.now(timezone.utc).isoformat(), job["id"]),
+            )
+            conn.execute(
+                "UPDATE tts_queue_attempts SET status='AMBIGUOUS', error_message=?, completed_at=? "
+                "WHERE job_id=? AND status='STARTED'",
+                (str(exc), datetime.now(timezone.utc).isoformat(), job["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self._log_lifecycle("AMBIGUOUS", job_id=job["id"], provider_error=str(exc))
 
     @staticmethod
     def _log_lifecycle(event: str, **fields: Any) -> None:

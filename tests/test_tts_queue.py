@@ -21,14 +21,20 @@ import pytest
 from src.utils.tts_queue_db import (
     dequeue_pending,
     enqueue,
+    enqueue_on_connection_status,
     get_job,
     increment_retry,
     init_tts_queue,
     mark_done,
     mark_failed,
     recover_stale_jobs,
+    reconcile_existing_artifact,
 )
-from src.services.tts_queue_worker import classify_http_error, compute_backoff_delay
+from src.services.tts_queue_worker import (
+    TtsQueueWorker,
+    classify_http_error,
+    compute_backoff_delay,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +95,111 @@ def test_enqueue_status_pending() -> None:
     assert job["status"] == "PENDING"
 
 
+def test_enqueue_uses_stable_request_identity_for_logical_render_claim() -> None:
+    """Equivalent render requests converge on one logical queue claim."""
+    conn = _mem_conn()
+    first = enqueue_on_connection_status(
+        conn, "same text", "voice", model_id="model", output_format="format"
+    )
+    second = enqueue_on_connection_status(
+        conn, "same text", "voice", model_id="model", output_format="format"
+    )
+
+    assert first == (first[0], True)
+    assert second == (first[0], False)
+    job = get_job(conn, first[0])
+    assert job is not None
+    assert len(job["request_identity"]) == 64
+
+
+def test_claim_creates_provider_neutral_attempt_and_usage_record() -> None:
+    """A logical claim creates an attempt row without provider-specific fields."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+
+    claimed = dequeue_pending(conn)
+
+    assert claimed[0]["attempt_id"] == 1
+    attempt = conn.execute(
+        "SELECT * FROM tts_queue_attempts WHERE id=1"
+    ).fetchone()
+    assert attempt is not None
+    assert attempt["job_id"] == row_id
+    assert attempt["status"] == "STARTED"
+    assert attempt["usage_characters"] == 5
+
+
+def test_stale_claim_becomes_ambiguous_and_is_not_replayed() -> None:
+    """A worker crash must stop automatic replay when provider outcome is unknown."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    stale_started = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    conn.execute(
+        "UPDATE tts_queue SET status='IN_PROGRESS', started_at=? WHERE id=?",
+        (stale_started, row_id),
+    )
+    conn.commit()
+
+    assert recover_stale_jobs(conn, lease_timeout_seconds=60) == [row_id]
+    assert get_job(conn, row_id)["status"] == "AMBIGUOUS"  # type: ignore[index]
+    assert dequeue_pending(conn) == []
+
+
+def test_mark_done_requires_existing_artifact_with_matching_sha256(tmp_path: Path) -> None:
+    """Completion and reconciliation accept only an existing verified artifact."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    dequeue_pending(conn)
+    artifact = tmp_path / "render.mp3"
+    artifact.write_bytes(b"verified")
+    checksum = hashlib.sha256(b"verified").hexdigest()
+
+    mark_done(conn, row_id, str(artifact), checksum)
+    assert get_job(conn, row_id)["status"] == "DONE"  # type: ignore[index]
+
+    conn.execute("UPDATE tts_queue SET status='AMBIGUOUS' WHERE id=?", (row_id,))
+    conn.commit()
+    reconcile_existing_artifact(conn, row_id, str(artifact), checksum)
+    assert get_job(conn, row_id)["status"] == "DONE"  # type: ignore[index]
+
+
+def test_worker_internal_provider_api_supports_deterministic_failure_injection(
+    tmp_path: Path,
+) -> None:
+    """The worker can run with an injected provider and deterministic failure hook."""
+    db_path = tmp_path / "worker.db"
+    conn = _file_conn(db_path)
+    row_id = _enqueue_mem(conn, "inject", "voice")
+    claimed = dequeue_pending(conn)
+    conn.close()
+    calls = {"count": 0}
+
+    def provider(**_: object) -> bytes:
+        calls["count"] += 1
+        return b"injected"
+
+    def fail_once(event: str, _job: dict[str, object]) -> None:
+        if event == "before_publish" and calls["count"] == 1:
+            raise RuntimeError("injected crash")
+
+    worker = TtsQueueWorker(
+        workers=1,
+        output_dir=tmp_path / "tts",
+        provider=provider,
+        failure_injector=fail_once,
+    )
+    check = _file_conn(db_path)
+    job = get_job(check, row_id)
+    check.close()
+    assert job is not None
+    with pytest.raises(RuntimeError, match="injected crash"):
+        worker._process_job({**job, "status": "IN_PROGRESS"})
+
+    check = _file_conn(db_path)
+    assert get_job(check, row_id)["status"] == "IN_PROGRESS"  # type: ignore[index]
+    assert calls["count"] == 1
+
+
 def test_dequeue_claims_job() -> None:
     """dequeue_pending() must transition status from PENDING → IN_PROGRESS."""
     conn = _mem_conn()
@@ -99,17 +210,19 @@ def test_dequeue_claims_job() -> None:
     assert claimed[0]["status"] == "IN_PROGRESS"
 
 
-def test_mark_done_writes_record() -> None:
+def test_mark_done_writes_record(tmp_path: Path) -> None:
     """mark_done() must set status=DONE, output_path, and content_sha256."""
     conn = _mem_conn()
     row_id = _enqueue_mem(conn)
     dequeue_pending(conn, limit=1)
-    mark_done(conn, row_id, "/tmp/out.mp3", "abc123")
+    artifact = tmp_path / "out.mp3"
+    artifact.write_bytes(b"audio")
+    mark_done(conn, row_id, str(artifact), hashlib.sha256(b"audio").hexdigest())
     job = get_job(conn, row_id)
     assert job is not None
     assert job["status"] == "DONE"
-    assert job["output_path"] == "/tmp/out.mp3"
-    assert job["content_sha256"] == "abc123"
+    assert job["output_path"] == str(artifact)
+    assert job["content_sha256"] == hashlib.sha256(b"audio").hexdigest()
 
 
 def test_mark_failed_sets_error() -> None:
@@ -177,7 +290,7 @@ def test_recover_stale_job_requeues_and_records_recovery() -> None:
     assert recovered == [row_id]
     job = get_job(conn, row_id)
     assert job is not None
-    assert job["status"] == "PENDING"
+    assert job["status"] == "AMBIGUOUS"
     assert job["retry_count"] == 2
     assert job["started_at"] is None
     assert "recovered" in (job["error_message"] or "").lower()
