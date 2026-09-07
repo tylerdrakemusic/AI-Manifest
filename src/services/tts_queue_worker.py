@@ -38,6 +38,7 @@ from src.utils.tts_queue_db import (
     mark_done,
     mark_failed,
     recover_stale_jobs,
+    requeue_after_local_failure,
 )
 from src.utils.audio_output_policy import atomic_write_bytes
 
@@ -207,14 +208,10 @@ class TtsQueueWorker:
                         self._job_queue.put(job, timeout=self._poll_interval)
                     except queue.Full:
                         logger.warning("Job queue full; job %s will be retried next poll.", job["id"])
-                        # Reset back to PENDING so it is picked up next poll
+                        error_message = "internal queue full"
                         conn2 = get_connection()
                         try:
-                            conn2.execute(
-                                "UPDATE tts_queue SET status='PENDING', started_at=NULL WHERE id=?",
-                                (job["id"],),
-                            )
-                            conn2.commit()
+                            requeue_after_local_failure(conn2, job["id"], error_message)
                         finally:
                             conn2.close()
             except Exception:

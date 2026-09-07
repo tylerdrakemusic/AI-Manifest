@@ -374,6 +374,45 @@ def test_worker_transient_retry_closes_current_attempt_before_second_attempt(
     ]
 
 
+def test_poll_queue_full_terminalizes_claimed_attempt_before_requeue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full internal queue must close the claimed attempt before requeueing."""
+    db_path = tmp_path / "poll_queue_full.db"
+    conn = _file_conn(db_path)
+    row_id = _enqueue_mem(conn, "queue full", "voice")
+    conn.close()
+    conn_factory = _make_conn_factory(db_path)
+
+    worker = TtsQueueWorker(workers=1, poll_interval=0, output_dir=tmp_path / "tts")
+    worker._job_queue = queue.Queue(maxsize=1)
+    worker._job_queue.put({"id": "already queued"})
+
+    def stop_after_poll(_: float) -> bool:
+        worker._stop_event.set()
+        return True
+
+    monkeypatch.setattr("src.services.tts_queue_worker.get_connection", conn_factory)
+    monkeypatch.setattr(worker._stop_event, "wait", stop_after_poll)
+
+    worker._poll_loop()
+
+    check = conn_factory()
+    job = get_job(check, row_id)
+    attempt = check.execute(
+        "SELECT status, error_message, completed_at FROM tts_queue_attempts WHERE job_id=?",
+        (row_id,),
+    ).fetchone()
+    check.close()
+
+    assert job is not None
+    assert job["status"] == "PENDING"
+    assert attempt is not None
+    assert attempt["status"] == "FAILED"
+    assert attempt["error_message"] == "internal queue full"
+    assert attempt["completed_at"] is not None
+
+
 def test_increment_retry_at_max() -> None:
     """increment_retry() when retry_count reaches max_retries must set FAILED."""
     conn = _mem_conn()

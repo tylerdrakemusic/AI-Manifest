@@ -453,6 +453,27 @@ def mark_failed(
     conn.commit()
 
 
+def requeue_after_local_failure(
+    conn: sqlite3.Connection,
+    job_id: int,
+    error_message: str,
+) -> None:
+    """Close the active attempt and requeue its job in one transaction."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "UPDATE tts_queue_attempts SET status='FAILED', error_message=?, completed_at=? "
+        "WHERE id=(SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1)",
+        (error_message, now, job_id),
+    )
+    conn.execute(
+        "UPDATE tts_queue SET status='PENDING', started_at=NULL WHERE id=? AND status='IN_PROGRESS'",
+        (job_id,),
+    )
+    conn.commit()
+
+
 def increment_retry(
     conn: sqlite3.Connection,
     job_id: int,
