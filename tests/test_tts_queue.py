@@ -29,6 +29,7 @@ from src.utils.tts_queue_db import (
     mark_failed,
     recover_stale_jobs,
     reconcile_existing_artifact,
+    set_attempt_usage,
 )
 from src.services.tts_queue_worker import (
     TtsQueueWorker,
@@ -127,12 +128,37 @@ def test_claim_creates_provider_neutral_attempt_and_usage_record() -> None:
     assert attempt["job_id"] == row_id
     assert attempt["status"] == "STARTED"
     assert attempt["usage_characters"] == 5
+    assert attempt["usage_state"] == "UNKNOWN"
+
+
+def test_attempt_usage_api_persists_known_usage() -> None:
+    """An attempt can record provider-neutral usage as a known fact."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    claimed = dequeue_pending(conn)
+
+    set_attempt_usage(
+        conn,
+        claimed[0]["attempt_id"],
+        usage_state="KNOWN",
+        usage_units=7,
+        usage_json='{"characters": 7}',
+    )
+
+    attempt = conn.execute(
+        "SELECT * FROM tts_queue_attempts WHERE job_id=?", (row_id,)
+    ).fetchone()
+    assert attempt is not None
+    assert attempt["usage_state"] == "KNOWN"
+    assert attempt["usage_units"] == 7
+    assert attempt["usage_json"] == '{"characters": 7}'
 
 
 def test_stale_claim_becomes_ambiguous_and_is_not_replayed() -> None:
     """A worker crash must stop automatic replay when provider outcome is unknown."""
     conn = _mem_conn()
     row_id = _enqueue_mem(conn)
+    dequeue_pending(conn)
     stale_started = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     conn.execute(
         "UPDATE tts_queue SET status='IN_PROGRESS', started_at=? WHERE id=?",
@@ -142,6 +168,11 @@ def test_stale_claim_becomes_ambiguous_and_is_not_replayed() -> None:
 
     assert recover_stale_jobs(conn, lease_timeout_seconds=60) == [row_id]
     assert get_job(conn, row_id)["status"] == "AMBIGUOUS"  # type: ignore[index]
+    attempt = conn.execute(
+        "SELECT usage_state FROM tts_queue_attempts WHERE job_id=?", (row_id,)
+    ).fetchone()
+    assert attempt is not None
+    assert attempt["usage_state"] == "AMBIGUOUS"
     assert dequeue_pending(conn) == []
 
 

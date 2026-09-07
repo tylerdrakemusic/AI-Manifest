@@ -382,7 +382,8 @@ class TtsQueueWorker:
                 (str(exc), datetime.now(timezone.utc).isoformat(), job["id"]),
             )
             conn.execute(
-                "UPDATE tts_queue_attempts SET status='AMBIGUOUS', error_message=?, completed_at=? "
+                "UPDATE tts_queue_attempts SET status='AMBIGUOUS', usage_state='AMBIGUOUS', "
+                "error_message=?, completed_at=? "
                 "WHERE job_id=? AND status='STARTED'",
                 (str(exc), datetime.now(timezone.utc).isoformat(), job["id"]),
             )

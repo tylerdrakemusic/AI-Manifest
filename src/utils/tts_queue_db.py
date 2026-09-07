@@ -17,6 +17,7 @@ from typing import Any
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_USAGE_STATES = frozenset({"KNOWN", "UNKNOWN", "AMBIGUOUS"})
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS tts_queue (
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS tts_queue_attempts (
     provider_name      TEXT,
     provider_request_id TEXT,
     status             TEXT NOT NULL CHECK(status IN ('STARTED','SUCCEEDED','FAILED','AMBIGUOUS')),
+    usage_state        TEXT NOT NULL DEFAULT 'UNKNOWN'
+                       CHECK(usage_state IN ('KNOWN','UNKNOWN','AMBIGUOUS')),
     usage_characters   INTEGER NOT NULL,
     usage_units        REAL,
     usage_json         TEXT,
@@ -118,6 +121,15 @@ def init_tts_queue(conn: sqlite3.Connection) -> None:
             (request_identity(row["text"], row["voice_id"], row["model_id"], row["output_format"]), row["id"]),
         )
     conn.execute(_CREATE_ATTEMPTS_TABLE_SQL)
+    attempt_columns = {row[1] for row in conn.execute("PRAGMA table_info(tts_queue_attempts)")}
+    if "usage_state" not in attempt_columns:
+        conn.execute(
+            "ALTER TABLE tts_queue_attempts ADD COLUMN usage_state TEXT NOT NULL DEFAULT 'UNKNOWN'"
+        )
+    conn.execute(
+        "UPDATE tts_queue_attempts SET usage_state='AMBIGUOUS' "
+        "WHERE status='AMBIGUOUS' AND usage_state='UNKNOWN'"
+    )
     conn.execute(_CREATE_RECOVERY_TABLE_SQL)
     conn.execute(_CREATE_DECISION_INDEX_SQL)
     conn.execute(_CREATE_REQUEST_INDEX_SQL)
@@ -289,8 +301,8 @@ def dequeue_pending(conn: sqlite3.Connection, limit: int = 1) -> list[dict[str, 
         ).fetchone()[0]
         attempt = conn.execute(
             "INSERT INTO tts_queue_attempts "
-            "(job_id, attempt_number, request_identity, status, usage_characters, started_at) "
-            "VALUES (?, ?, ?, 'STARTED', ?, ?)",
+            "(job_id, attempt_number, request_identity, status, usage_state, usage_characters, started_at) "
+            "VALUES (?, ?, ?, 'STARTED', 'UNKNOWN', ?, ?)",
             (job_id, attempt_number, identity, len(job["text"]), now),
         )
         attempt_ids[job_id] = int(attempt.lastrowid)
@@ -306,6 +318,31 @@ def dequeue_pending(conn: sqlite3.Connection, limit: int = 1) -> list[dict[str, 
         item["attempt_id"] = attempt_ids.get(item["id"])
         result.append(item)
     return result
+
+
+def set_attempt_usage(
+    conn: sqlite3.Connection,
+    attempt_id: int,
+    *,
+    usage_state: str,
+    usage_characters: int | None = None,
+    usage_units: float | None = None,
+    usage_json: str | None = None,
+) -> None:
+    """Persist provider-neutral usage facts and their certainty state."""
+    if usage_state not in _USAGE_STATES:
+        raise ValueError(f"usage_state must be one of {sorted(_USAGE_STATES)}")
+    attempt = conn.execute(
+        "SELECT id FROM tts_queue_attempts WHERE id=?", (attempt_id,)
+    ).fetchone()
+    if attempt is None:
+        raise ValueError(f"No tts_queue_attempts row with id={attempt_id}")
+    conn.execute(
+        "UPDATE tts_queue_attempts SET usage_state=?, usage_characters=COALESCE(?, usage_characters), "
+        "usage_units=?, usage_json=? WHERE id=?",
+        (usage_state, usage_characters, usage_units, usage_json, attempt_id),
+    )
+    conn.commit()
 
 
 def mark_done(
@@ -465,7 +502,8 @@ def recover_stale_jobs(
             (row["id"], recovered_at, row["started_at"], row["retry_count"], reason),
         )
         conn.execute(
-            "UPDATE tts_queue_attempts SET status='AMBIGUOUS', completed_at=?, error_message=? "
+            "UPDATE tts_queue_attempts SET status='AMBIGUOUS', usage_state='AMBIGUOUS', "
+            "completed_at=?, error_message=? "
             "WHERE job_id=? AND status='STARTED'",
             (recovered_at, reason, row["id"]),
         )
