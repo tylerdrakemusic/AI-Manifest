@@ -43,6 +43,21 @@ index, so concurrent submissions converge on one job and report
 `src.services.governed_voice_alerts.submit_alert()` import remains an alias for
 existing consumers.
 
+The active AI-Manifest MCP server registers the same boundary as
+`submit_repository_voice` and exposes `repository_voice_status` for discovery.
+The status response identifies the `durable_tts_queue` transport, reports
+`provider_access` as `worker_only`, and always reports
+`credentials_exposed: false`. A healthy status means the governed submission
+service and queue dependency are registered. An unavailable status includes a
+safe dependency reason and does not call ElevenLabs or include credentials.
+
+For an MCP health check, call `repository_voice_status`. For an authorized
+blocking decision, call `submit_repository_voice` with the stable
+`decision_id`, non-empty `text`, and explicit `voice_id`. The MCP adapter
+returns the queue result as JSON-compatible fields and does not create audio,
+perform provider calls, or mutate decision state. Use the queue CLI below to
+inspect or recover jobs when status is healthy but delivery is delayed.
+
 Provider synthesis remains asynchronous through `TtsQueueWorker`. The
 `playback` callback is the injected local-capability boundary, so tests and
 deployments can provide their own playback implementation without changing

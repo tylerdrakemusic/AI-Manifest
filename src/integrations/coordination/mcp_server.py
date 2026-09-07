@@ -21,7 +21,7 @@ _ALLOWED_OPERATIONS = frozenset({
     "todo.create", "todo.read", "todo.draft_scope",
     "todo.set_decision_metadata", "todo.get_decision_metadata",
     "todo.get_decision_assessments", "todo.priority_guidance",
-    "todo.set_priority", "todo.update", "todo.graph", "todo.create_children_batch",
+    "todo.set_priority", "todo.update", "todo.complete", "todo.graph", "todo.create_children_batch",
 })
 _FORBIDDEN_ARGUMENTS = frozenset({"db", "sql"})
 
@@ -67,6 +67,10 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
             "todo_id", "expected_version", "authenticated", "text", "priority",
             "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
             "estimated_effort", "dependencies", "perfected_at",
+        },
+        "todo.complete": {
+            "todo_id", "expected_version", "authenticated", "confirmed",
+            "terminal_state", "completion_evidence", "artifact_reference",
         },
         "todo.graph": {"todo_id"},
         "todo.create_children_batch": {"parent_id", "children", "confirmed", "idempotency_key"},
@@ -123,6 +127,24 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         }}
         todos_db.update_todo(payload["todo_id"], payload["expected_version"], fields)
         return todos_db.get_todo_response(payload["todo_id"])
+    if operation == "todo.complete":
+        if payload.get("authenticated") is not True:
+            raise PermissionError("authentication is required before completing a todo")
+        if payload.get("confirmed") is not True:
+            raise PermissionError("confirmation is required before completing a todo")
+        if payload.get("terminal_state") != "completed":
+            raise ValueError("terminal_state must be exactly completed")
+        if not isinstance(payload.get("expected_version"), str):
+            raise ValueError("expected_version is required")
+        if todos_db.get_todo_graph(payload["todo_id"])["children"]:
+            raise PermissionError("parent todos require Tyler to complete them manually")
+        result = todos_db.complete_todo(
+            payload["todo_id"],
+            payload["expected_version"],
+            payload["completion_evidence"],
+            payload["artifact_reference"],
+        )
+        return todos_db.get_todo_response(result["id"])
     if operation == "todo.graph":
         return todos_db.get_todo_graph(payload["todo_id"])
     if operation == "todo.create_children_batch":
@@ -338,6 +360,28 @@ def update_todo(
         if value is not None:
             payload[key] = value
     return invoke_todo_operation("todo.update", payload)
+
+
+@mcp.tool(name="todo.complete")
+def complete_todo(
+    todo_id: int,
+    expected_version: str,
+    authenticated: bool,
+    confirmed: bool,
+    terminal_state: str,
+    completion_evidence: str,
+    artifact_reference: str,
+) -> dict[str, Any]:
+    """Complete a todo through the authenticated, evidence-backed public contract."""
+    return invoke_todo_operation("todo.complete", {
+        "todo_id": todo_id,
+        "expected_version": expected_version,
+        "authenticated": authenticated,
+        "confirmed": confirmed,
+        "terminal_state": terminal_state,
+        "completion_evidence": completion_evidence,
+        "artifact_reference": artifact_reference,
+    })
 
 
 @mcp.tool(name="todo.graph")

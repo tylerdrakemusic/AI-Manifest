@@ -467,6 +467,145 @@ def test_authenticated_rich_update_rejects_priority_as_protected_field(tmp_db):
     assert todos_db.get_todo_by_id(todo_id)["priority"] == 4
 
 
+def test_todo_completion_requires_authentication_and_confirmation(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Governed completion")
+    todo = todos_db.get_todo_by_id(todo_id)
+
+    with pytest.raises(PermissionError, match="authentication"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": todo_id,
+                "expected_version": todo["updated_at"],
+                "authenticated": False,
+                "confirmed": True,
+                "terminal_state": "completed",
+                "completion_evidence": "Focused tests passed",
+                "artifact_reference": "reports/proof.md",
+            },
+        )
+
+    with pytest.raises(PermissionError, match="confirmation"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": todo_id,
+                "expected_version": todo["updated_at"],
+                "authenticated": True,
+                "confirmed": False,
+                "terminal_state": "completed",
+                "completion_evidence": "Focused tests passed",
+                "artifact_reference": "reports/proof.md",
+            },
+        )
+
+
+def test_todo_completion_rejects_stale_version(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Stale completion")
+    todo = todos_db.get_todo_by_id(todo_id)
+    mcp_server.invoke_todo_operation(
+        "todo.update",
+        {
+            "todo_id": todo_id,
+            "expected_version": todo["updated_at"],
+            "authenticated": True,
+            "text": "Changed before completion",
+        },
+    )
+
+    with pytest.raises(ValueError, match="precondition"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": todo_id,
+                "expected_version": todo["updated_at"],
+                "authenticated": True,
+                "confirmed": True,
+                "terminal_state": "completed",
+                "completion_evidence": "Focused tests passed",
+                "artifact_reference": "reports/proof.md",
+            },
+        )
+
+
+def test_todo_completion_allows_only_completed_terminal_state(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Invalid completion state")
+    todo = todos_db.get_todo_by_id(todo_id)
+
+    with pytest.raises(ValueError, match="completed"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": todo_id,
+                "expected_version": todo["updated_at"],
+                "authenticated": True,
+                "confirmed": True,
+                "terminal_state": "cancelled",
+                "completion_evidence": "Focused tests passed",
+                "artifact_reference": "reports/proof.md",
+            },
+        )
+
+
+def test_todo_completion_rejects_parent_todo_for_manual_oversight(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    parent_id = todos_db.add_todo("workspace", "Parent completion requires Tyler")
+    todos_db.add_todo("workspace", "Child completion", parent_id=parent_id)
+    parent = todos_db.get_todo_by_id(parent_id)
+
+    with pytest.raises(PermissionError, match="parent"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": parent_id,
+                "expected_version": parent["updated_at"],
+                "authenticated": True,
+                "confirmed": True,
+                "terminal_state": "completed",
+                "completion_evidence": "Focused coordination tests passed",
+                "artifact_reference": "reports/FR-proof.md",
+            },
+        )
+
+    assert todos_db.get_todo_by_id(parent_id)["done"] == 0
+
+
+def test_todo_completion_records_required_evidence_and_artifact_reference(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("workspace", "Successful completion")
+    todo = todos_db.get_todo_by_id(todo_id)
+    result = mcp_server.invoke_todo_operation(
+        "todo.complete",
+        {
+            "todo_id": todo_id,
+            "expected_version": todo["updated_at"],
+            "authenticated": True,
+            "confirmed": True,
+            "terminal_state": "completed",
+            "completion_evidence": "Focused coordination tests passed",
+            "artifact_reference": "reports/FR-proof.md",
+        },
+    )
+
+    assert result["graph"]["completion"]["done"] is True
+    assert result["closure_reason"] == "completed"
+    assert result["completion_evidence"] == "Focused coordination tests passed"
+    assert result["artifact_reference"] == "reports/FR-proof.md"
+
+
 def test_child_batch_is_idempotent_and_graph_read_is_complete(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db
