@@ -13,8 +13,17 @@ graph TB
     Tools --> GovernedRepositoryVoice[governed_repository_voice.py<br/>blocking decisions · explicit authorization · decision-id dedup]
     GovernedRepositoryVoice --> TtsQueueWorker
     TtsQueueWorker --> TtsQueue[(tts_queue<br/>SQLite)]
+    TtsQueueWorker ==> AttemptLedger[(tts_queue_attempts<br/>durable attempt ledger)]
+    AttemptLedger --> RequestIdentity[request_identity<br/>stable logical render identity]
+    AttemptLedger --> UsageBoundary[provider-neutral usage boundary<br/>usage_state: KNOWN · UNKNOWN · AMBIGUOUS]
+    UsageBoundary --> ElevenLabsClient
+    TtsQueueWorker --> PublicationState[publication_state<br/>UNPUBLISHED -> WRITING -> VERIFIED]
     TtsQueueWorker --> ElevenLabsClient
     TtsQueueWorker --> Playback[Injected Windows playback]
+    ElevenLabsClient -.-> AmbiguousOutcome{provider outcome cannot be established}
+    AmbiguousOutcome --> AmbiguousState[queue + attempt status: AMBIGUOUS<br/>attempt usage_state: AMBIGUOUS]
+    AmbiguousState --> Reconciliation[reconcile_existing_artifact<br/>checksum-verified publication]
+    Reconciliation ==> TtsQueue
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
     VoiceRegistry --> PresetApproval[intended-use approval]
     VoiceRegistry --> AvailabilityGate[provider availability gating]

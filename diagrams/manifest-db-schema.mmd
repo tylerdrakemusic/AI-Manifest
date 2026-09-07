@@ -111,15 +111,34 @@ erDiagram
         text created_at
     }
     TTS_QUEUE ||--o{ TTS_QUEUE_RECOVERIES : recovery
+    TTS_QUEUE ||--o{ TTS_QUEUE_ATTEMPTS : attempts
     TTS_QUEUE {
         integer id PK
         text text
         text voice_id
-        text status "PENDING|IN_PROGRESS|DONE|FAILED"
+        text status "PENDING|IN_PROGRESS|DONE|FAILED|AMBIGUOUS"
         integer retry_count
         text started_at "lease timestamp"
         text output_path
         text decision_id "nullable; partial unique deduplication index idx_tts_queue_decision_id"
+        text request_identity "stable logical request identity; unique when present"
+        text publication_state "UNPUBLISHED|WRITING|VERIFIED"
+    }
+    TTS_QUEUE_ATTEMPTS {
+        integer id PK
+        integer job_id FK
+        integer attempt_number
+        text request_identity "stable logical request identity"
+        text provider_name "nullable"
+        text provider_request_id "nullable"
+        text status "STARTED|SUCCEEDED|FAILED|AMBIGUOUS"
+        text usage_state "KNOWN|UNKNOWN|AMBIGUOUS"
+        integer usage_characters
+        real usage_units "nullable"
+        text usage_json "nullable provider-neutral usage facts"
+        text error_message "nullable"
+        text started_at
+        text completed_at "nullable"
     }
     TTS_QUEUE_RECOVERIES {
         integer id PK
