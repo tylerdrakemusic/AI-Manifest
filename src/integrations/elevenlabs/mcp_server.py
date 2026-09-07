@@ -8,6 +8,7 @@ API key: set ELEVENLABS_API_KEY in Windows System Environment Variables.
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.audio_output_policy import atomic_write_bytes, resolve_audio_output_path
+from src.services import governed_repository_voice
 
 # ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
 # No hardcoded path fallback — use Windows System Environment Variables.
@@ -46,6 +48,8 @@ DEFAULT_VOICE_SETTINGS = {
     "style": 0.0,
     "use_speaker_boost": True,
 }
+
+REPOSITORY_VOICE_CAPABILITY = "repository_voice"
 
 # ── API Key ──────────────────────────────────────────────────────
 
@@ -78,6 +82,60 @@ mcp = FastMCP(
         "Use get_subscription_info to check usage quota."
     ),
 )
+
+
+def _repository_voice_unavailable_reason() -> str | None:
+    """Return a safe dependency error without contacting the provider."""
+    if not callable(governed_repository_voice.submit_repository_voice):
+        return "submission service unavailable"
+    if not callable(governed_repository_voice.enqueue_with_status):
+        return "queue unavailable"
+    return None
+
+
+@mcp.tool()
+def submit_repository_voice(
+    decision_id: str,
+    text: str,
+    voice_id: str,
+    model_id: str = DEFAULT_MODEL_ID,
+    output_format: str = DEFAULT_OUTPUT_FORMAT,
+    priority: int = 5,
+    max_retries: int = 3,
+) -> dict[str, object]:
+    """Queue a governed repository-voice notification without provider access."""
+    result = governed_repository_voice.submit_repository_voice(
+        decision_id,
+        text,
+        voice_id=voice_id,
+        model_id=model_id,
+        output_format=output_format,
+        priority=priority,
+        max_retries=max_retries,
+    )
+    return asdict(result)
+
+
+@mcp.tool()
+def repository_voice_status() -> dict[str, object]:
+    """Report governed repository-voice registration and queue availability."""
+    reason = _repository_voice_unavailable_reason()
+    if reason is not None:
+        return {
+            "capability": REPOSITORY_VOICE_CAPABILITY,
+            "status": "unavailable",
+            "reason": reason,
+            "transport": "durable_tts_queue",
+            "provider_access": "worker_only",
+            "credentials_exposed": False,
+        }
+    return {
+        "capability": REPOSITORY_VOICE_CAPABILITY,
+        "status": "healthy",
+        "transport": "durable_tts_queue",
+        "provider_access": "worker_only",
+        "credentials_exposed": False,
+    }
 
 
 @mcp.tool()
