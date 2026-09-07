@@ -99,9 +99,44 @@ def request_identity(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _migrate_legacy_tts_queue(conn: sqlite3.Connection) -> None:
+    """Rebuild a pre-AMBIGUOUS queue while retaining rows and user indexes."""
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tts_queue'"
+    ).fetchone()
+    if schema is None or "'AMBIGUOUS'" in (schema[0] or ""):
+        return
+
+    indexes = [
+        row[0]
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='tts_queue' AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    conn.execute("ALTER TABLE tts_queue RENAME TO tts_queue_legacy")
+    conn.execute(_CREATE_TABLE_SQL)
+    current_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(tts_queue)").fetchall()
+    }
+    legacy_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(tts_queue_legacy)").fetchall()
+    }
+    columns = sorted(current_columns & legacy_columns)
+    column_list = ", ".join(columns)
+    conn.execute(
+        f"INSERT INTO tts_queue ({column_list}) "
+        f"SELECT {column_list} FROM tts_queue_legacy"  # nosec B608
+    )
+    conn.execute("DROP TABLE tts_queue_legacy")
+    for index_sql in indexes:
+        conn.execute(index_sql)
+
+
 def init_tts_queue(conn: sqlite3.Connection) -> None:
     """Create the tts_queue table if it does not exist (idempotent)."""
     conn.execute(_CREATE_TABLE_SQL)
+    _migrate_legacy_tts_queue(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(tts_queue)")}
     if "decision_id" not in columns:
         conn.execute("ALTER TABLE tts_queue ADD COLUMN decision_id TEXT")
@@ -418,7 +453,11 @@ def mark_failed(
     conn.commit()
 
 
-def increment_retry(conn: sqlite3.Connection, job_id: int) -> int:
+def increment_retry(
+    conn: sqlite3.Connection,
+    job_id: int,
+    error_message: str = "transient retry",
+) -> int:
     """Bump retry_count by 1.
 
     If the new count is less than max_retries the status is reset to PENDING
@@ -435,15 +474,22 @@ def increment_retry(conn: sqlite3.Connection, job_id: int) -> int:
     new_count = row["retry_count"] + 1
     if new_count < row["max_retries"]:
         conn.execute(
-            "UPDATE tts_queue SET retry_count=?, status='PENDING' WHERE id=?",
-            (new_count, job_id),
+            "UPDATE tts_queue SET retry_count=?, status='PENDING', error_message=? WHERE id=?",
+            (new_count, error_message, job_id),
         )
     else:
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "UPDATE tts_queue SET retry_count=?, status='FAILED', completed_at=? WHERE id=?",
-            (new_count, now, job_id),
+            "UPDATE tts_queue SET retry_count=?, status='FAILED', error_message=?, completed_at=? WHERE id=?",
+            (new_count, error_message, now, job_id),
         )
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE tts_queue_attempts SET status='FAILED', error_message=?, completed_at=? "
+        "WHERE id=(SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1)",
+        (error_message, now, job_id),
+    )
     conn.commit()
     return new_count
 

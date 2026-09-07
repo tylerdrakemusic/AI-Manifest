@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import queue
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -64,6 +65,54 @@ def _enqueue_mem(conn: sqlite3.Connection, text: str = "hello", voice_id: str = 
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
+
+
+def test_init_migrates_legacy_status_constraint_and_preserves_rows_and_indexes() -> None:
+    """Legacy queues accept AMBIGUOUS after migration without losing data or indexes."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE tts_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            voice_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            output_format TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('PENDING','IN_PROGRESS','DONE','FAILED')),
+            retry_count INTEGER NOT NULL,
+            max_retries INTEGER NOT NULL,
+            output_path TEXT,
+            content_sha256 TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX idx_legacy_tts_queue_priority ON tts_queue(priority)")
+    conn.execute(
+        """INSERT INTO tts_queue
+        (text, voice_id, model_id, output_format, priority, status, retry_count,
+         max_retries, created_at)
+        VALUES ('legacy', 'voice', 'model', 'format', 2, 'PENDING', 0, 3, 'now')"""
+    )
+    conn.commit()
+
+    init_tts_queue(conn)
+
+    conn.execute("UPDATE tts_queue SET status='AMBIGUOUS' WHERE id=1")
+    row = conn.execute("SELECT text, status FROM tts_queue WHERE id=1").fetchone()
+    indexes = {
+        item[1]
+        for item in conn.execute("PRAGMA index_list(tts_queue)").fetchall()
+    }
+    assert row is not None
+    assert (row["text"], row["status"]) == ("legacy", "AMBIGUOUS")
+    assert "idx_legacy_tts_queue_priority" in indexes
+
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +328,50 @@ def test_increment_retry_below_max() -> None:
     assert job is not None
     assert job["status"] == "PENDING"
     assert job["retry_count"] == 1
+
+
+def test_worker_transient_retry_closes_current_attempt_before_second_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A queue-full retry terminalizes attempt one before the next claim."""
+    conn = _mem_conn()
+    row_id = _enqueue_mem(conn)
+    first_claim = dequeue_pending(conn)[0]
+
+    connection_proxy = MagicMock(wraps=conn)
+    connection_proxy.close = MagicMock()
+    monkeypatch.setattr(
+        "src.services.tts_queue_worker.get_connection",
+        lambda: connection_proxy,
+    )
+    monkeypatch.setattr("src.services.tts_queue_worker.time.sleep", lambda _: None)
+    worker = TtsQueueWorker(workers=1, backoff_base_seconds=0)
+    worker._job_queue = MagicMock()
+    worker._job_queue.put.side_effect = queue.Full
+
+    job = get_job(conn, row_id)
+    assert job is not None
+    worker._handle_transient_error(job, RuntimeError("transient retry"))
+
+    first_attempt = conn.execute(
+        "SELECT status, error_message, completed_at FROM tts_queue_attempts WHERE id=?",
+        (first_claim["attempt_id"],),
+    ).fetchone()
+    assert first_attempt is not None
+    assert first_attempt["status"] == "FAILED"
+    assert first_attempt["error_message"] == "transient retry"
+    assert first_attempt["completed_at"] is not None
+
+    second_claim = dequeue_pending(conn)[0]
+    assert second_claim["attempt_id"] != first_claim["attempt_id"]
+    attempts = conn.execute(
+        "SELECT attempt_number, status FROM tts_queue_attempts WHERE job_id=? ORDER BY id",
+        (row_id,),
+    ).fetchall()
+    assert [(attempt["attempt_number"], attempt["status"]) for attempt in attempts] == [
+        (1, "FAILED"),
+        (2, "STARTED"),
+    ]
 
 
 def test_increment_retry_at_max() -> None:

@@ -344,7 +344,7 @@ class TtsQueueWorker:
 
         conn = get_connection()
         try:
-            new_count = increment_retry(conn, job_id)
+            new_count = increment_retry(conn, job_id, str(exc))
         finally:
             conn.close()
 
