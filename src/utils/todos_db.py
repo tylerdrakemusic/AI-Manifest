@@ -128,6 +128,8 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 created_at TEXT NOT NULL,
                 closed_at  TEXT,
                 closure_reason TEXT CHECK(closure_reason IN ('completed', 'cancelled', 'stale')),
+                completion_evidence TEXT,
+                artifact_reference TEXT,
                 priority   INTEGER NOT NULL DEFAULT 5,
                 fr_id      TEXT,
                 perfected_at TEXT,
@@ -343,6 +345,10 @@ def init_db() -> None:
         if not _has_column(conn, "todos", "updated_at"):
             conn.execute("ALTER TABLE todos ADD COLUMN updated_at TEXT")
         conn.execute("UPDATE todos SET updated_at = COALESCE(updated_at, created_at)")
+
+        for _column in ("completion_evidence", "artifact_reference"):
+            if not _has_column(conn, "todos", _column):
+                conn.execute(f"ALTER TABLE todos ADD COLUMN {_quote_identifier(_column)} TEXT")
 
         _create_graph_schema(conn)
 
@@ -610,6 +616,42 @@ def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> 
             if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
                 raise ValueError("todo not found")
             raise ValueError("precondition failed: todo version is stale")
+        conn.commit()
+        row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+    return dict(row)
+
+
+def complete_todo(
+    todo_id: int,
+    expected_version: str,
+    completion_evidence: str,
+    artifact_reference: str,
+) -> dict[str, Any]:
+    """Complete one open todo with version-checked evidence and an artifact reference."""
+    if not isinstance(completion_evidence, str) or not completion_evidence.strip():
+        raise ValueError("completion_evidence is required")
+    if not isinstance(artifact_reference, str) or not artifact_reference.strip():
+        raise ValueError("artifact_reference is required")
+    closed_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cur = conn.execute(
+            """UPDATE todos
+               SET done=1, closed_at=?, closure_reason='completed',
+                   completion_evidence=?, artifact_reference=?, updated_at=?
+               WHERE id=? AND updated_at=? AND done=0""",
+            (
+                closed_at,
+                completion_evidence,
+                artifact_reference,
+                closed_at,
+                todo_id,
+                expected_version,
+            ),
+        )
+        if cur.rowcount != 1:
+            if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
+                raise ValueError("todo not found")
+            raise ValueError("precondition failed: todo version is stale or todo is already closed")
         conn.commit()
         row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
     return dict(row)
