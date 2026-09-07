@@ -136,6 +136,8 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
             raise ValueError("terminal_state must be exactly completed")
         if not isinstance(payload.get("expected_version"), str):
             raise ValueError("expected_version is required")
+        if todos_db.get_todo_graph(payload["todo_id"])["children"]:
+            raise PermissionError("parent todos require Tyler to complete them manually")
         result = todos_db.complete_todo(
             payload["todo_id"],
             payload["expected_version"],

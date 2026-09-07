@@ -556,6 +556,31 @@ def test_todo_completion_allows_only_completed_terminal_state(tmp_db):
         )
 
 
+def test_todo_completion_rejects_parent_todo_for_manual_oversight(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    parent_id = todos_db.add_todo("workspace", "Parent completion requires Tyler")
+    todos_db.add_todo("workspace", "Child completion", parent_id=parent_id)
+    parent = todos_db.get_todo_by_id(parent_id)
+
+    with pytest.raises(PermissionError, match="parent"):
+        mcp_server.invoke_todo_operation(
+            "todo.complete",
+            {
+                "todo_id": parent_id,
+                "expected_version": parent["updated_at"],
+                "authenticated": True,
+                "confirmed": True,
+                "terminal_state": "completed",
+                "completion_evidence": "Focused coordination tests passed",
+                "artifact_reference": "reports/FR-proof.md",
+            },
+        )
+
+    assert todos_db.get_todo_by_id(parent_id)["done"] == 0
+
+
 def test_todo_completion_records_required_evidence_and_artifact_reference(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db
