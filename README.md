@@ -2,14 +2,20 @@
 
 AI integration platform for Tyler James Drake. Centralized hub for external AI service integrations, starting with ElevenLabs voice synthesis.
 
+## Navigation
+
+- [Agent startup guide](AGENT_STARTUP.md)
+- [Project profile](PROJECT_PROFILE.json)
+- [Vocal synthesis contract](docs/vocal_synthesis_contract.md)
+- [TTS queue operations](docs/tts_queue_operations.md)
+
 ## Quick Start
 
 ```bash
 # Install dependencies
 C:\G\python.exe -m pip install -r requirements.txt
 
-# Set up API key (one-time)
-# Place your ElevenLabs API key in: f:\executedcode\tokens\elevenlabs
+# Set ELEVENLABS_API_KEY in Windows System Environment Variables before running API-backed commands
 
 # Test the connection
 C:\G\python.exe -m src.integrations.elevenlabs.client --test
