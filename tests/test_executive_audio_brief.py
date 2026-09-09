@@ -5,12 +5,37 @@ BFX-20260530-lily-brief-priority-offload
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 _PORTAL_OUTPUT = Path(__file__).resolve().parent.parent / "output" / "executive_brief_portal.html"
+
+
+def test_portal_import_uses_configured_workspace_root_for_shared_imports() -> None:
+    """The portal must import Workspace utilities from WORKSPACE_ROOT on CI."""
+    repo_root = Path(__file__).resolve().parent.parent
+    workspace_root = Path(os.environ.get("WORKSPACE_ROOT", "f:/⊕Workspace"))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import tools.executive_audio_brief; "
+            "print('\\n'.join(sys.path))",
+        ],
+        cwd=repo_root,
+        env={**os.environ, "WORKSPACE_ROOT": str(workspace_root)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert str(workspace_root / "src") in result.stdout.splitlines()
 
 
 def test_executive_audio_brief_source_has_no_static_banner() -> None:

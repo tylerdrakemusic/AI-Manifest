@@ -44,8 +44,10 @@ ROADMAP_GENERATOR_PYTHON = Path(r"C:\G\python.exe")
 ROADMAP_JSON_OUTPUT_PATH = Path(r"f:\⊕Workspace\src\data\roadmap.json")
 ROADMAP_GENERATOR_TIMEOUT_SECONDS = 30
 
-# Add workspace root to path for shared integrations
-_WORKSPACE_ROOT = Path("f:/⊕Workspace")
+# Add the shared Workspace checkout to path for cross-repository integrations.
+# CI checks out the paired repository under WORKSPACE_ROOT; local runs retain
+# the existing workstation default when the variable is absent.
+_WORKSPACE_ROOT = Path(os.environ.get("WORKSPACE_ROOT", "f:/⊕Workspace"))
 if str(_WORKSPACE_ROOT) not in sys.path:
     sys.path.append(str(_WORKSPACE_ROOT))
 _WORKSPACE_SRC = _WORKSPACE_ROOT / "src"
