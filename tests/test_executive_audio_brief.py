@@ -5,6 +5,7 @@ BFX-20260530-lily-brief-priority-offload
 """
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -166,15 +167,71 @@ def test_gather_project_status_preserves_provenance_fields_for_each_view_model()
 def test_todo_classification_uses_execution_state_before_readiness() -> None:
     from tools.executive_audio_brief import classify_todo
 
-    assert classify_todo({"id": 1, "done": 0, "execution_state": "claimed"}, {}) == "claimed"
-    assert classify_todo({"id": 2, "done": 0, "execution_state": "running"}, {}) == "running"
-    assert classify_todo({"id": 3, "done": 1, "closure_reason": "stale"}, {}) == "stale"
-    assert classify_todo({"id": 4, "done": 0, "execution_state": "failed", "retry_eligible": True}, {}) == "retry-eligible"
-    assert classify_todo({"id": 5, "done": 0}, {5: False}) == "blocked"
-    assert classify_todo({"id": 6, "done": 0}, {6: True}) == "runnable"
+    with patch(
+        "tools.executive_audio_brief.get_todo_execution_state",
+        side_effect={
+            1: "claimed",
+            2: "running",
+            3: "completed",
+            4: "failed",
+            5: "cancelled",
+            6: "stale",
+            7: "queued",
+        }.get,
+    ):
+        assert classify_todo({"id": 1, "done": 0}, {1: False}) == "claimed"
+        assert classify_todo({"id": 2, "done": 0}, {2: False}) == "running"
+        assert classify_todo({"id": 3, "done": 1}, {3: False}) == "completed"
+        assert classify_todo({"id": 4, "done": 0}, {4: True}) == "failed"
+        assert classify_todo({"id": 5, "done": 1}, {5: False}) == "cancelled"
+        assert classify_todo({"id": 6, "done": 1}, {6: True}) == "stale"
+        assert classify_todo({"id": 7, "done": 0}, {7: False}) == "queued"
 
 
-def test_build_todo_hierarchy_keeps_runnable_children_inline_and_collapses_other_children() -> None:
+def test_missing_lifecycle_record_defaults_to_queued_and_ignores_readiness() -> None:
+    from tools.executive_audio_brief import classify_todo
+
+    with patch("tools.executive_audio_brief.get_todo_execution_state", return_value=None):
+        assert classify_todo({"id": 8, "done": 0}, {8: False}) == "queued"
+
+
+def test_execution_state_projection_does_not_initialize_or_commit_lifecycle_schema() -> None:
+    from tools.executive_audio_brief import get_todo_execution_state
+
+    class TrackingConnection(sqlite3.Connection):
+        schema_attempted = False
+        commit_attempted = False
+
+        def executescript(self, script: str) -> sqlite3.Cursor:
+            self.schema_attempted = True
+            return super().executescript(script)
+
+        def commit(self) -> None:
+            self.commit_attempted = True
+            super().commit()
+
+    connection = sqlite3.connect(":memory:", factory=TrackingConnection)
+    with patch("tools.executive_audio_brief.get_workspace_connection", return_value=connection):
+        assert get_todo_execution_state(8) is None
+
+    assert not connection.schema_attempted
+    assert not connection.commit_attempted
+
+
+def test_portal_styles_only_canonical_execution_states() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    out = generate_portal_html([], "Brief script", None, [], "2026-08-10 00:00:00")
+
+    for state in ("queued", "claimed", "running", "completed", "failed", "cancelled", "stale"):
+        assert f'[data-state="{state}"]' in out
+    assert '[data-state="runnable"]' not in out
+    assert '[data-state="blocked"]' not in out
+    assert "RUNNABLE" not in out
+    assert "BLOCKED" not in out
+
+
+def test_build_todo_hierarchy_keeps_existing_grouping_without_readiness_labels() -> None:
     from tools.executive_audio_brief import build_todo_hierarchy
 
     rows = [
@@ -189,6 +246,8 @@ def test_build_todo_hierarchy_keeps_runnable_children_inline_and_collapses_other
     assert hierarchy[0]["parent"]["id"] == 10
     assert [child["id"] for child in hierarchy[0]["inline_children"]] == [11]
     assert [child["id"] for child in hierarchy[0]["collapsed_children"]] == [12]
+    assert hierarchy[0]["inline_children"][0]["state"] == "queued"
+    assert hierarchy[0]["collapsed_children"][0]["state"] == "queued"
     assert hierarchy[0]["expanded_by_default"] is False
 
 
@@ -259,7 +318,7 @@ def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
 
     assert 'aria-expanded="false"' in output
     assert "A very long parent title" in output
-    assert "2 children · 1 runnable" in output
+    assert "2 children" in output
     assert 'title="A very long parent title"' in output
     assert 'class="todo-collapsed-children" hidden' in output
     assert output.index("Runnable child") < output.index("Blocked child")
@@ -269,8 +328,7 @@ def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
     assert 'data-copy-text="Blocked child"' in output
     assert 'onclick="markDone(10, this)"' in output
     assert 'onclick="cancelTodo(10, this)"' in output
-    parent_primary = output.split('<div class="todo-meta">', 1)[0]
-    assert '<span class="todo-state">' not in parent_primary
+    assert '<span class="todo-state">queued</span>' in output
     assert "runNext" not in output
     assert "Execution queue" not in output
 
@@ -344,8 +402,11 @@ def test_portal_styles_distinguish_execution_states() -> None:
 
     out = generate_portal_html([], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
 
-    for state in ("runnable", "blocked", "claimed", "running", "retry-eligible"):
+    for state in ("queued", "claimed", "running", "completed", "failed", "cancelled", "stale"):
         assert f'[data-state="{state}"]' in out
+    assert '[data-state="runnable"]' not in out
+    assert '[data-state="blocked"]' not in out
+    assert '[data-state="retry-eligible"]' not in out
     assert '.todo-state::before' not in out
 
 
