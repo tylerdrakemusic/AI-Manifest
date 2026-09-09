@@ -18,7 +18,8 @@ def test_ci_exports_backup_contract_and_preserves_blocking_exclusion_reporting()
         Path(__file__).resolve().parent.parent / ".github" / "workflows" / "test.yml"
     ).read_text(encoding="utf-8")
 
-    assert "repository: tylerdrakemusic/-Workspace\n          ref: feature/FR-20260908-executive-brief-todo-execution-states\n          path: workspace" in workflow
+    assert "repository: tylerdrakemusic/-Workspace\n          path: workspace" in workflow
+    assert "ref: feature/FR-20260908-executive-brief-todo-execution-states" not in workflow
     assert "WORKSPACE_BACKUP_ENGINE_PATH=${GITHUB_WORKSPACE}/workspace/src/utils/database_backup.py" in workflow
     assert "CI exclusion report: pytest will print skip reasons and summary counts" in workflow
     assert "pytest --collect-only -q -o addopts= -m \"not playwright and not live\"" in workflow
