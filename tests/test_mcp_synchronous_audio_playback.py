@@ -20,7 +20,10 @@ def test_play_audio_file_plays_governed_mp3_synchronously(tmp_path: Path) -> Non
     with patch.object(mcp_server, "OUTPUT_DIR", tmp_path), patch.object(
         mcp_server, "IS_WINDOWS_PLATFORM", True
     ), patch.object(mcp_server, "get_audio_duration_seconds", return_value=2.0), patch.object(
-        mcp_server.ctypes, "windll", Mock(winmm=Mock(mciSendStringW=fake_mci))
+        mcp_server.ctypes,
+        "windll",
+        Mock(winmm=Mock(mciSendStringW=fake_mci)),
+        create=True,
     ):
         result = mcp_server.play_audio_file("brief.mp3")
 
@@ -87,6 +90,7 @@ def test_native_playback_closes_alias_when_play_fails(tmp_path: Path) -> None:
         mcp_server.ctypes,
         "windll",
         Mock(winmm=Mock(mciSendStringW=failing_mci)),
+        create=True,
     ):
         with pytest.raises(OSError, match="playback"):
             mcp_server.play_audio_path(tmp_path / "brief.mp3")
