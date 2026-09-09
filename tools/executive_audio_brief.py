@@ -32,7 +32,7 @@ from urllib.parse import parse_qs
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(r"f:\\")
+WORKSPACE_ROOT = Path("f:/")
 OUTPUT_DIR = PROJECT_ROOT / "output" / "briefs"
 REPORT_PATH = PROJECT_ROOT / "output" / "executive_brief_portal.html"
 
@@ -44,10 +44,15 @@ ROADMAP_GENERATOR_PYTHON = Path(r"C:\G\python.exe")
 ROADMAP_JSON_OUTPUT_PATH = Path(r"f:\⊕Workspace\src\data\roadmap.json")
 ROADMAP_GENERATOR_TIMEOUT_SECONDS = 30
 
-# Add workspace root to path for shared integrations
-_WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
+# Add the shared Workspace checkout to path for cross-repository integrations.
+# CI checks out the paired repository under WORKSPACE_ROOT; local runs retain
+# the existing workstation default when the variable is absent.
+_WORKSPACE_ROOT = Path(os.environ.get("WORKSPACE_ROOT", "f:/⊕Workspace"))
 if str(_WORKSPACE_ROOT) not in sys.path:
     sys.path.append(str(_WORKSPACE_ROOT))
+_WORKSPACE_SRC = _WORKSPACE_ROOT / "src"
+if str(_WORKSPACE_SRC) not in sys.path:
+    sys.path.insert(0, str(_WORKSPACE_SRC))
 
 # Add project root to path for any remaining project-local imports
 if str(PROJECT_ROOT) not in sys.path:
@@ -71,6 +76,8 @@ from src.utils.todos_db import (
     add_todo, update_priority, get_open_todos_by_autonomy, get_readiness,
 )
 from src.utils.priority_scorer import score_priority
+from utils.init_db import get_connection as get_workspace_connection
+from utils.todo_execution_lifecycle import ExecutionLifecycle
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -376,18 +383,26 @@ def _todo_signal_html(todo: dict[str, Any]) -> str:
     )
 
 
+def get_todo_execution_state(todo_id: int) -> str | None:
+    """Read one TODO lifecycle state from the shared Workspace contract."""
+    try:
+        connection = get_workspace_connection()
+        try:
+            lifecycle = ExecutionLifecycle.read_only(connection)
+            return lifecycle.get(str(todo_id)).state
+        except KeyError:
+            return None
+        finally:
+            connection.close()
+    except Exception:
+        return None
+
+
 def classify_todo(todo: dict[str, Any], readiness: dict[int, bool]) -> str:
-    """Classify a TODO using execution state, closure reason, and readiness."""
-    execution_state = str(todo.get("execution_state", todo.get("state", ""))).lower()
-    if execution_state in {"claimed", "running"}:
-        return execution_state
-    if todo.get("done") or todo.get("closure_reason"):
-        return str(todo.get("closure_reason") or execution_state or "terminal").lower()
-    if execution_state == "failed" and todo.get("retry_eligible"):
-        return "retry-eligible"
-    if not readiness.get(todo["id"], todo.get("ready", True)):
-        return "blocked"
-    return "runnable"
+    """Return the canonical shared lifecycle state, defaulting missing rows to queued."""
+    del readiness
+    state = get_todo_execution_state(todo["id"])
+    return state if state in {"queued", "claimed", "running", "completed", "failed", "cancelled", "stale"} else "queued"
 
 
 def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool]) -> list[dict[str, Any]]:
@@ -421,14 +436,14 @@ def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool])
                 "expanded_by_default": True,
             })
             continue
-        runnable = [child for child in children if child["state"] in {"runnable", "retry-eligible"}]
-        terminal = [child for child in children if child["state"] not in {"runnable", "retry-eligible"}]
+        runnable = [child for child in children if readiness.get(child["id"], child.get("ready", True))]
+        terminal = [child for child in children if child not in runnable]
         groups.append({
             "parent": parent,
             "inline_children": runnable,
             "collapsed_children": terminal,
-            "aggregate_state": "runnable" if runnable else (children[0]["state"] if children else parent["state"]),
-            "join_status": f"{len(children)} children · {len(runnable)} runnable",
+            "aggregate_state": parent["state"],
+            "join_status": f"{len(children)} children",
             "expanded_by_default": False,
         })
     return groups
@@ -453,6 +468,7 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
             <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
               onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
             <span class="todo-text" title="{parent_text}">{parent_text}</span>
+            <span class="todo-state">{html.escape(parent.get('state', 'queued'))}</span>
             {_copy_todo_button(parent['id'], parent['text'])}
                         <span class="todo-actions"><button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
                         <button class="cancel-btn" onclick="cancelTodo({parent['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{parent['id']}">×</button></span>
@@ -474,12 +490,12 @@ def _todo_node_html(todo: dict[str, Any], sigil: str, name: str, key: str) -> st
     child_rows = "".join(
         _todo_node_html(child, sigil, name, f"{key}-{child['id']}") for child in children
     )
-    return f"""<li class="nested-todo-group" data-state="{html.escape(todo.get('state', 'runnable'))}">
+    return f"""<li class="nested-todo-group" data-state="{html.escape(todo.get('state', 'queued'))}">
             <div class="todo-primary">
                 <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
                     onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
                 <span class="todo-text" title="{text}">{text}</span>
-                <span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+                <span class="todo-state">{html.escape(todo.get('state', 'queued'))}</span>
                 <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                     <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span>
             </div>
@@ -500,8 +516,8 @@ def _copy_todo_button(todo_id: int, text: str) -> str:
 def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
     """Render a child or standalone TODO row with its existing actions."""
     text = html.escape(todo["text"])
-    return f"""<li data-state="{html.escape(todo.get('state', 'runnable'))}" title="{text}">
-            <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+    return f"""<li data-state="{html.escape(todo.get('state', 'queued'))}" title="{text}">
+            <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', 'queued'))}</span>
                                 <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                 <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span></div>
             <div class="todo-meta"><span class="todo-project">{html.escape(sigil)}{html.escape(name)}</span>{_priority_badge(todo.get('priority', 5))}{_todo_signal_html(todo)}<span class="source-tag">{html.escape(todo.get('source', ''))}</span></div>
@@ -527,6 +543,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
             f'<li>'
             f'<div class="todo-primary">'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<span class="todo-state">{html.escape(t.get("state") or classify_todo(t, {}))}</span>'
             f'<span class="todo-actions">'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done" aria-label="Mark TODO #{t["id"]} done">✓</button>'
             f'<button class="cancel-btn" onclick="cancelTodo({t["id"]}, this)" title="Cancel todo" aria-label="Cancel TODO #{t["id"]}">×</button>'
@@ -979,16 +996,20 @@ header h1 {{
     font-weight: 700;
     text-transform: uppercase;
 }}
-[data-state="runnable"] {{ border-left: 3px solid var(--accent); }}
-[data-state="runnable"] .todo-state {{ color: var(--accent); }}
-[data-state="blocked"] {{ border-left: 3px solid var(--accent-red); }}
-[data-state="blocked"] .todo-state {{ color: var(--accent-red); }}
+[data-state="queued"] {{ border-left: 3px solid var(--accent); }}
+[data-state="queued"] .todo-state {{ color: var(--accent); }}
 [data-state="claimed"] {{ border-left: 3px solid #56d4dd; }}
 [data-state="claimed"] .todo-state {{ color: #56d4dd; }}
 [data-state="running"] {{ border-left: 3px solid var(--accent-green); }}
 [data-state="running"] .todo-state {{ color: var(--accent-green); }}
-[data-state="retry-eligible"] {{ border-left: 3px solid var(--accent-orange); }}
-[data-state="retry-eligible"] .todo-state {{ color: var(--accent-orange); }}
+[data-state="completed"] {{ border-left: 3px solid #8fc36a; }}
+[data-state="completed"] .todo-state {{ color: #8fc36a; }}
+[data-state="failed"] {{ border-left: 3px solid var(--accent-red); }}
+[data-state="failed"] .todo-state {{ color: var(--accent-red); }}
+[data-state="cancelled"] {{ border-left: 3px solid var(--accent-orange); }}
+[data-state="cancelled"] .todo-state {{ color: var(--accent-orange); }}
+[data-state="stale"] {{ border-left: 3px solid #c58e4a; }}
+[data-state="stale"] .todo-state {{ color: #c58e4a; }}
 .todo-children {{
     list-style: none;
     margin: 0.25rem 0 0 1.9rem;
