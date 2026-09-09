@@ -8,7 +8,9 @@ API key: set ELEVENLABS_API_KEY in Windows System Environment Variables.
 from __future__ import annotations
 
 import base64
+import ctypes
 from dataclasses import asdict
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +41,10 @@ log = logging.getLogger("elevenlabs-mcp")
 # ── Constants ────────────────────────────────────────────────────
 BASE_URL = "https://api.elevenlabs.io/v1"
 OUTPUT_DIR = Path(r"f:\👁AI-Manifest\output\tts")
+IS_WINDOWS_PLATFORM = os.name == "nt"
+SUPPORTED_PLAYBACK_EXTENSIONS = (".mp3",)
+MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024
+MAX_AUDIO_DURATION_SECONDS = 120.0
 
 DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
@@ -77,11 +83,114 @@ def _headers() -> dict[str, str]:
 mcp = FastMCP(
     "elevenlabs",
     instructions=(
-        "ElevenLabs voice synthesis server. Use text_to_speech to convert text "
-        "to audio files. Use list_voices to discover available voice IDs. "
-        "Use get_subscription_info to check usage quota."
+        "ElevenLabs voice synthesis server. Use text_to_speech to generate an "
+        "audio artifact, play_audio_file to synchronously play one governed MP3 "
+        "from output/tts, and submit_repository_voice to enqueue an authorized "
+        "repository voice notification. Use list_voices to discover voice IDs "
+        "and get_subscription_info to check usage quota."
     ),
 )
+
+
+def _playback_alias(path: Path) -> str:
+    digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
+    return f"mcp_audio_{digest}"
+
+
+def _winmm() -> object:
+    if not IS_WINDOWS_PLATFORM:
+        raise OSError("Synchronous audio playback is only available on Windows")
+    return ctypes.windll.winmm
+
+
+def get_audio_duration_seconds(path: Path) -> float:
+    """Read an audio duration through the native Windows multimedia API."""
+    winmm = _winmm()
+    alias = _playback_alias(path)
+    command_buffer = ctypes.create_unicode_buffer(256)
+    opened = False
+    try:
+        error = winmm.mciSendStringW(  # type: ignore[attr-defined]
+            f'open "{path}" type mpegvideo alias {alias}',
+            command_buffer,
+            len(command_buffer),
+            0,
+        )
+        if error:
+            raise OSError(f"Windows multimedia open failed: {error}")
+        opened = True
+        error = winmm.mciSendStringW(  # type: ignore[attr-defined]
+            f"status {alias} length",
+            command_buffer,
+            len(command_buffer),
+            0,
+        )
+        if error:
+            raise OSError(f"Windows multimedia duration lookup failed: {error}")
+        return float(command_buffer.value) / 1000.0
+    finally:
+        if opened:
+            winmm.mciSendStringW(  # type: ignore[attr-defined]
+                f"close {alias}", command_buffer, len(command_buffer), 0
+            )
+
+
+def play_audio_path(path: Path) -> None:
+    """Play an already-validated audio path synchronously through MCI."""
+    winmm = _winmm()
+    alias = _playback_alias(path)
+    command_buffer = ctypes.create_unicode_buffer(256)
+    opened = False
+    try:
+        error = winmm.mciSendStringW(  # type: ignore[attr-defined]
+            f'open "{path}" type mpegvideo alias {alias}',
+            command_buffer,
+            len(command_buffer),
+            0,
+        )
+        if error:
+            raise OSError(f"Windows multimedia open failed: {error}")
+        opened = True
+        error = winmm.mciSendStringW(  # type: ignore[attr-defined]
+            f"play {alias} wait",
+            command_buffer,
+            len(command_buffer),
+            0,
+        )
+        if error:
+            raise OSError(f"Windows multimedia playback failed: {error}")
+    finally:
+        if opened:
+            winmm.mciSendStringW(  # type: ignore[attr-defined]
+                f"close {alias}", command_buffer, len(command_buffer), 0
+            )
+
+
+@mcp.tool()
+def play_audio_file(filename: str) -> dict[str, object]:
+    """Synchronously play a generated MP3 from the governed output/tts directory."""
+    audio_path = resolve_audio_output_path(
+        OUTPUT_DIR,
+        filename,
+        allowed_extensions=SUPPORTED_PLAYBACK_EXTENSIONS,
+    )
+    if not audio_path.is_file():
+        raise FileNotFoundError(filename)
+    file_size = audio_path.stat().st_size
+    if file_size > MAX_AUDIO_FILE_BYTES:
+        raise ValueError(f"audio file size exceeds {MAX_AUDIO_FILE_BYTES} bytes")
+    duration_seconds = get_audio_duration_seconds(audio_path)
+    if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
+        raise ValueError(
+            f"audio duration exceeds {MAX_AUDIO_DURATION_SECONDS:g} seconds"
+        )
+    play_audio_path(audio_path)
+    return {
+        "status": "completed",
+        "filename": filename,
+        "size_bytes": file_size,
+        "duration_seconds": duration_seconds,
+    }
 
 
 def _repository_voice_unavailable_reason() -> str | None:
@@ -167,7 +276,7 @@ def text_to_speech(
     output_filename: str = "output.mp3",
     model_id: str = DEFAULT_MODEL_ID,
 ) -> str:
-    """Synthesize text to an MP3 audio file using ElevenLabs.
+    """Generate an MP3 artifact with ElevenLabs under the governed output/tts directory.
 
     Args:
         text: The text to convert to speech (max ~5000 chars recommended).

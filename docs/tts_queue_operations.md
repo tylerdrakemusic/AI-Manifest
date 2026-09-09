@@ -51,6 +51,28 @@ The status response identifies the `durable_tts_queue` transport, reports
 service and queue dependency are registered. An unavailable status includes a
 safe dependency reason and does not call ElevenLabs or include credentials.
 
+## Synchronous local playback
+
+The MCP server also exposes `play_audio_file` for a lightweight local check of
+an already-generated artifact. It accepts only a single filename for an MP3
+stored directly under `output/tts`; path separators, traversal, absolute paths,
+other formats, missing files, files larger than 25 MiB, and audio longer than
+120 seconds are rejected before playback.
+
+The tool uses Windows Multimedia Control Interface (MCI) with `play <alias>
+wait`, so the MCP call completes only after playback finishes. The native alias
+is always closed, including when opening or playback fails. It does not launch
+the associated desktop player, accept arbitrary filesystem paths, or read API
+credentials.
+
+Keep the capabilities distinct when selecting an MCP tool:
+
+- `text_to_speech` calls ElevenLabs and creates a governed MP3 artifact.
+- `play_audio_file` synchronously plays one existing governed MP3 locally.
+- `submit_repository_voice` creates a durable, provider-neutral queue claim for
+  an authorized repository voice notification. It remains asynchronous and
+  does not perform playback itself.
+
 For an MCP health check, call `repository_voice_status`. For an authorized
 blocking decision, call `submit_repository_voice` with the stable
 `decision_id`, non-empty `text`, and explicit `voice_id`. The MCP adapter
