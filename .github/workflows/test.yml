@@ -46,6 +46,18 @@ jobs:
           pytest --collect-only -q -o addopts= -m "not playwright and not live"
           python tools/run_tests.py --parallel --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log
 
+      - name: Diagnose failed test run
+        if: failure()
+        run: |
+          echo "=== pytest.log tail (redacted) ==="
+          if [ -f pytest.log ]; then
+            tail -n 80 pytest.log | sed -E 's/((token|secret|password|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig'
+          else
+            echo "pytest.log was not created"
+          fi
+          echo "=== JUnit summary ==="
+          python -c 'import xml.etree.ElementTree as ET; from pathlib import Path; p=Path("tmp/pytest-junit.xml"); root=ET.parse(p).getroot() if p.exists() else None; print("missing report" if root is None else "tests={0} failures={1} errors={2} skipped={3}".format(root.attrib.get("tests", "0"), root.attrib.get("failures", "0"), root.attrib.get("errors", "0"), root.attrib.get("skipped", "0")))'
+
       - name: Upload JUnit report
         if: always()
         uses: actions/upload-artifact@v4
