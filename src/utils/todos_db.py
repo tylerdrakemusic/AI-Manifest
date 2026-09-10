@@ -197,7 +197,10 @@ def _ensure_decision_metadata_schema(conn: sqlite3.Connection) -> None:
         ("todo_decision_assessments", history_columns, "legacy"),
     ):
         existing = {
-            row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            row[1]
+            for row in conn.execute(
+                f"PRAGMA table_info({_quote_identifier(table)})"
+            ).fetchall()
         }
         if existing and not required_columns.issubset(existing):
             legacy_table = f"{table}_{suffix}"
@@ -337,7 +340,10 @@ def init_db() -> None:
             ("dependencies", None),
         ]:
             if not _has_column(conn, "todos", _col):
-                conn.execute(f"ALTER TABLE todos ADD COLUMN {_col} TEXT")  # nosec B608 — col name is a hardcoded literal
+                conn.execute(
+                    f"ALTER TABLE {_quote_identifier('todos')} ADD COLUMN "
+                    f"{_quote_identifier(_col)} TEXT"
+                )
 
         if not _has_column(conn, "todos", "parent_id"):
             conn.execute("ALTER TABLE todos ADD COLUMN parent_id INTEGER")

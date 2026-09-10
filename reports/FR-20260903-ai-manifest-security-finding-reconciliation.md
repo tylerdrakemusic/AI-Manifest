@@ -4,6 +4,8 @@ Review scope: eight open vulnerability records whose paths are under `f:\👁AI-
 
 | Finding | Location | Validation and disposition |
 | --- | --- | --- |
+| `8d1fae56480c59ab` | `src/utils/todos_db.py:351` | Remediated. Rich-context migration column names now pass through `_quote_identifier` before SQL construction. Regression coverage: `test_schema_migrations_validate_interpolated_identifiers`. |
+| `e4364d27bac61578` | `src/utils/todos_db.py:200` | Remediated. Decision-metadata table names now pass through `_quote_identifier` before `PRAGMA table_info` construction. Regression coverage: `test_schema_migrations_validate_interpolated_identifiers`. |
 | `7eedc140b26ad8fd` | `src/utils/todos_db.py:191` | High SQL finding. Table names come from fixed internal migration tuples. Remediated by strict identifier validation and quoted identifiers, with regression coverage. |
 | `33173a5b071ff676` | `tests/test_database_backup.py:369` | High SQL finding. Test-only SQLCipher `PRAGMA key` setup uses a local test value and is not production query construction. Confirmed false positive. |
 | `9b68623a819d7a16` | `tests/test_ollama_client.py:31` | Low HTTP finding. Local mocked Ollama fixture; no network call. Confirmed false positive. |
@@ -15,6 +17,8 @@ Review scope: eight open vulnerability records whose paths are under `f:\👁AI-
 
 ## Executable evidence
 
+- Focused red-green cycle: the new regression initially failed because the metadata table names and rich-context columns were absent from `_quote_identifier` calls; after remediation, `pytest tests/test_todos_db.py::test_schema_migrations_validate_interpolated_identifiers -q`: **1 passed**.
+- Focused identifier slice with the repository workspace-root contract: `pytest tests/test_todos_db.py -k "identifier_quoting or schema_migrations" -q`: **2 passed**. The adjacent legacy migration tests were not included because they hang in the existing scan-source migration path at `src/utils/todos_db.py:309`.
 - `pytest tests/test_todos_db.py -k "identifier_quoting or init_db_adds_nullable or init_db_preserves_closure"`: 3 passed.
 - With `WORKSPACE_ROOT=F:\⊕Workspace` and the repository-scoped `F:\👁AI-Manifest\.venv`, `pytest tests/test_database_backup.py tests/test_ollama_client.py tests/test_todos_db.py`: **54 passed in 24.99s**. This supersedes the earlier interrupted run and confirms the focused slice.
 - The earlier failure without `WORKSPACE_ROOT` was an environment contract import error, not a test failure; it is not presented as validation.
