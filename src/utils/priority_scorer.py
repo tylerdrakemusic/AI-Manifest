@@ -1,8 +1,6 @@
 """Deterministic priority scorer for todo items.
 
-Rule-based heuristic only (no LLM dependency — Ollama/OpenAI paths were
-removed as part of FR-20260807-tech-debt-scanner's workspace-wide Ollama
-dependency removal). Returns an int 1-10; never raises.
+Rule-based heuristic only. Returns an int 1-10; never raises.
 
 The scorer accepts the existing open todos for the same project for API
 compatibility with callers, but the current heuristic does not yet use them

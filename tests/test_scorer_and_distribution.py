@@ -80,7 +80,6 @@ class TestDistributionReport:
         with (
             patch("tools.bulk_score_todos.get_open_todos", return_value=fake_todos),
             patch("tools.bulk_score_todos.update_priority"),
-            patch("tools.bulk_score_todos._detect_backends", return_value=(True, False)),
             patch("tools.bulk_score_todos.score_priority", side_effect=[8, 9]),
         ):
             monkeypatch.setattr(sys, "argv", ["bulk_score_todos.py"])

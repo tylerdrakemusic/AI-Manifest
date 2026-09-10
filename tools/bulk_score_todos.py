@@ -9,8 +9,6 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +17,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.integrations.ollama import OllamaClient
 from src.utils.priority_scorer import score_priority
 from src.utils.todos_db import get_open_todos, update_priority
 
@@ -49,11 +46,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional max number of open todos to process.",
-    )
-    parser.add_argument(
-        "--ollama-only",
-        action="store_true",
-        help="Require Ollama for scoring; fail if Ollama is unavailable (no OpenAI fallback).",
     )
     return parser
 
@@ -134,14 +126,6 @@ def _coerce_limit(raw_limit: int | None) -> int | None:
     return raw_limit
 
 
-def _detect_backends() -> tuple[bool, bool]:
-    has_openai = bool(os.environ.get("OPENAPI_TOKEN")) and (
-        importlib.util.find_spec("openai") is not None
-    )
-    has_ollama = OllamaClient().health_check()
-    return has_ollama, has_openai
-
-
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -156,12 +140,7 @@ def main() -> int:
     if limit is not None:
         rows = rows[:limit]
 
-    has_ollama, has_openai = _detect_backends()
-    print(
-        "Scoring backends: "
-        f"Ollama={'up' if has_ollama else 'down'}, "
-        f"OpenAI={'configured' if has_openai else 'not-configured'}"
-    )
+    print("Scoring backend: deterministic rule-based heuristic")
 
     stats: dict[str, int] = {
         "scanned": len(rows),
@@ -188,11 +167,7 @@ def main() -> int:
             text = str(row["text"])
             old_priority = int(row.get("priority", 5))
             existing = context_by_project.get(project, [])
-            if args.ollama_only and not has_ollama:
-                raise RuntimeError("--ollama-only flag set but Ollama is not available")
-            if not has_ollama and not has_openai:
-                raise RuntimeError("no scoring backend available (Ollama down, OpenAI unavailable)")
-            new_priority = score_priority(text, project, existing_todos=existing, ollama_only=args.ollama_only)
+            new_priority = score_priority(text, project, existing_todos=existing)
             if new_priority not in range(1, 11):
                 raise ValueError(f"score out of range: {new_priority}")
         except Exception as exc:
