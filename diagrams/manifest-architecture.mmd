@@ -4,6 +4,8 @@
 graph TB
     Triggers[Task Scheduler, CLI, Manual] --> Tools[AI-Manifest tools]
     Tools --> Briefs[brief generators]
+    Tools --> ExecutiveBriefPortal[Executive Audio Brief Portal<br/>read-only TODO lifecycle projection]
+    ExecutiveBriefPortal -.->|read-only state projection| TodoExecutionLifecycle[(⊕ todo_execution_lifecycle<br/>canonical execution state)]
     Tools --> AudioPolicy[audio_output_policy.py]
     AudioPolicy --> AudioBoundary[Audio-output policy boundary<br/>strict rejection · resolved-root containment · atomic publication]
     AudioPolicy --> RootContainment[resolved-root containment]
@@ -13,8 +15,17 @@ graph TB
     Tools --> GovernedRepositoryVoice[governed_repository_voice.py<br/>blocking decisions · explicit authorization · decision-id dedup]
     GovernedRepositoryVoice --> TtsQueueWorker
     TtsQueueWorker --> TtsQueue[(tts_queue<br/>SQLite)]
+    TtsQueueWorker ==> AttemptLedger[(tts_queue_attempts<br/>durable attempt ledger)]
+    AttemptLedger --> RequestIdentity[request_identity<br/>stable logical render identity]
+    AttemptLedger --> UsageBoundary[provider-neutral usage boundary<br/>usage_state: KNOWN · UNKNOWN · AMBIGUOUS]
+    UsageBoundary --> ElevenLabsClient
+    TtsQueueWorker --> PublicationState[publication_state<br/>UNPUBLISHED -> WRITING -> VERIFIED]
     TtsQueueWorker --> ElevenLabsClient
     TtsQueueWorker --> Playback[Injected Windows playback]
+    ElevenLabsClient -.-> AmbiguousOutcome{provider outcome cannot be established}
+    AmbiguousOutcome --> AmbiguousState[queue + attempt status: AMBIGUOUS<br/>attempt usage_state: AMBIGUOUS]
+    AmbiguousState --> Reconciliation[reconcile_existing_artifact<br/>checksum-verified publication]
+    Reconciliation ==> TtsQueue
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
     VoiceRegistry --> PresetApproval[intended-use approval]
     VoiceRegistry --> AvailabilityGate[provider availability gating]
@@ -41,9 +52,9 @@ graph TB
     Tools -.->|parent details| Media[manifest-derived-media-pipeline]
     Tools -.->|parent details| Todo[manifest-derived-todo-and-backup]
     class Triggers,Tools,Briefs,Roadmap,VoiceOrchestration,VoiceRegistry,PresetApproval,AvailabilityGate,OrderedVoices,ElevenLabsClient orch
-    class TodoDB db
+    class TodoDB,TodoExecutionLifecycle db
     class CurrentMetadata,AssessmentHistory db
-    class AudioPolicy,AudioBoundary,DecisionMetadata,GovernedRepositoryVoice,Playback manifest
+    class ExecutiveBriefPortal,AudioPolicy,AudioBoundary,DecisionMetadata,GovernedRepositoryVoice,Playback manifest
     class Contract ws
     class OpenAI,ElevenLabs ext
     class Backup,Media,Todo ws

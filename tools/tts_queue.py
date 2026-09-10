@@ -39,7 +39,7 @@ def main() -> int:
             rows = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM tts_queue GROUP BY status"
             ).fetchall()
-            counts = {status: 0 for status in ("PENDING", "IN_PROGRESS", "DONE", "FAILED")}
+            counts = {status: 0 for status in ("PENDING", "IN_PROGRESS", "DONE", "FAILED", "AMBIGUOUS")}
             counts.update({row["status"]: row["count"] for row in rows})
             print(json.dumps({"counts": counts}, sort_keys=True))
         elif args.command == "job":

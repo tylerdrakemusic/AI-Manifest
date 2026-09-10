@@ -8,23 +8,22 @@
 
 ```
 1. Read this file completely
-2. Read TODO_AI.md for current agentic task queue
-3. Read TODO_TYLER.md for pending human actions and blockers
-4. Read PROJECT_PROFILE.json for current project state
-5. Read README.md for architecture context if needed
+2. Read PROJECT_PROFILE.json for current project state
+3. Read README.md for navigation and architecture context
+4. Read src/config/mcp_status.json when present
 ```
 
 ## 2. Project Location & Key Paths
 
 | Resource | Path |
 |----------|------|
-| **Project Root** | `f:\executedcode\👁AI-Manifest\` |
+| **Project Root** | `f:\👁AI-Manifest\` |
 | **Workspace Root** | `f:\` |
-| **Parent Repo** | `f:\executedcode\` (private git repo — source controlled) |
+| **Parent Repo** | `tylerdrakemusic/AI-Manifest` (public GitHub repository) |
 | **Python Executable** | `C:\G\python.exe` |
 | **Agent Definitions** | `.github/agents/👁ai-manifest-*.agent.md` |
-| **Instructions** | `.github/instructions/👁ai-manifest-*.instructions.md` |
-| **System Specs** | `f:\SYSTEM_SPECS.md` |
+| **Instructions** | `.github/agents/👁ai-manifest-*.agent.md` and workspace instructions |
+| **System Specs** | `f:\⊕Workspace\SYSTEM_SPECS.md` |
 
 ### 👁AI-Manifest Agents (`.github/agents/`)
 
@@ -43,7 +42,7 @@ All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `.github/
 - **AI service integrations** — centralized hub for external AI API connections
 
 ### ElevenLabs Access
-- **API Key:** Store in `f:\executedcode\tokens\elevenlabs` (NOT checked in)
+- **API Key:** Set `ELEVENLABS_API_KEY` in Windows System Environment Variables; never store credentials in repository files. The token loader retains a legacy file fallback for compatibility, but new setup and agent workflows must use the environment variable.
 - **Primary use:** Voice synthesis, voice cloning, streaming audio
 
 ## 4. Key Data
@@ -59,7 +58,7 @@ All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `.github/
 
 ## 5. Rules
 
-- All API keys loaded from `f:\executedcode\tokens/` — NEVER hardcode secrets
+- Use system environment variables for all new credential setup — NEVER hardcode or store secrets in files. `src/utils/tokens.py` still contains a legacy file fallback for compatibility; do not rely on or extend that fallback.
 - Python 3.11+ with type hints on all function signatures
 - Docstrings on public functions only
 - Tests in `tests/` using pytest

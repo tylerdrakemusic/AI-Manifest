@@ -1,14 +1,22 @@
 # Durable TTS Queue Operations
 
 The SQLite-backed queue is stored in `manifest_todos.db` and is safe to use
-with a process restart. `TtsQueueWorker` requeues `IN_PROGRESS` jobs whose
+with a process restart. `TtsQueueWorker` resolves `IN_PROGRESS` jobs whose
 `started_at` is older than `lease_timeout_seconds` (five minutes by default).
-Recovery preserves `retry_count` and records an entry in
-`tts_queue_recoveries`.
+Recovery preserves `retry_count`, records an entry in `tts_queue_recoveries`,
+and changes the job to `AMBIGUOUS`. An ambiguous provider outcome is never
+automatically replayed. Reconcile it only after finding an existing artifact
+and validating its SHA-256 checksum with `reconcile_existing_artifact()`.
+
+Each logical render has a deterministic `request_identity` derived from its
+text, voice, model, and output format. A unique index makes concurrent
+submissions converge on one logical claim. Every claim creates a row in
+`tts_queue_attempts`, which stores provider-neutral status and usage fields.
 
 ## Retry policy
 
-HTTP 408, 429, and 5xx responses, plus `httpx.RequestError`, are transient.
+HTTP 408 and 429 responses are transient. A request error or server response
+whose provider outcome is uncertain becomes `AMBIGUOUS` and is not retried.
 They are retried with bounded exponential backoff. A numeric `Retry-After`
 header takes precedence, subject to the configured maximum delay. Other 4xx
 responses are permanent and end in `FAILED`. The job's `max_retries` value
@@ -17,11 +25,10 @@ controls terminal failure.
 ## Publication and billing
 
 Audio is written to a temporary file and atomically published as
-`output/tts/<job-id>.mp3`. The deterministic path makes recovery at-least-once:
-if a process exits after publication but before the database update, a retry
-may call ElevenLabs again and replace the same path. This can result in
-duplicate provider billing, so callers should use the queue's retry history
-when reconciling usage.
+`output/tts/<job-id>.mp3`. Publication state moves through `WRITING` to
+`VERIFIED`; `DONE` is impossible unless the existing file's bytes match the
+persisted lowercase SHA-256 digest. A process exit during publication leaves
+the claim recoverable as `AMBIGUOUS`, requiring evidence-driven reconciliation.
 
 ## Governed repository voice
 
@@ -35,6 +42,43 @@ index, so concurrent submissions converge on one job and report
 `deduplicated=True` for ignored duplicates. The legacy
 `src.services.governed_voice_alerts.submit_alert()` import remains an alias for
 existing consumers.
+
+The active AI-Manifest MCP server registers the same boundary as
+`submit_repository_voice` and exposes `repository_voice_status` for discovery.
+The status response identifies the `durable_tts_queue` transport, reports
+`provider_access` as `worker_only`, and always reports
+`credentials_exposed: false`. A healthy status means the governed submission
+service and queue dependency are registered. An unavailable status includes a
+safe dependency reason and does not call ElevenLabs or include credentials.
+
+## Synchronous local playback
+
+The MCP server also exposes `play_audio_file` for a lightweight local check of
+an already-generated artifact. It accepts only a single filename for an MP3
+stored directly under `output/tts`; path separators, traversal, absolute paths,
+other formats, missing files, files larger than 25 MiB, and audio longer than
+120 seconds are rejected before playback.
+
+The tool uses Windows Multimedia Control Interface (MCI) with `play <alias>
+wait`, so the MCP call completes only after playback finishes. The native alias
+is always closed, including when opening or playback fails. It does not launch
+the associated desktop player, accept arbitrary filesystem paths, or read API
+credentials.
+
+Keep the capabilities distinct when selecting an MCP tool:
+
+- `text_to_speech` calls ElevenLabs and creates a governed MP3 artifact.
+- `play_audio_file` synchronously plays one existing governed MP3 locally.
+- `submit_repository_voice` creates a durable, provider-neutral queue claim for
+  an authorized repository voice notification. It remains asynchronous and
+  does not perform playback itself.
+
+For an MCP health check, call `repository_voice_status`. For an authorized
+blocking decision, call `submit_repository_voice` with the stable
+`decision_id`, non-empty `text`, and explicit `voice_id`. The MCP adapter
+returns the queue result as JSON-compatible fields and does not create audio,
+perform provider calls, or mutate decision state. Use the queue CLI below to
+inspect or recover jobs when status is healthy but delivery is delayed.
 
 Provider synthesis remains asynchronous through `TtsQueueWorker`. The
 `playback` callback is the injected local-capability boundary, so tests and

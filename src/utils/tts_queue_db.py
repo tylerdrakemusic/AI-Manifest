@@ -8,12 +8,16 @@ helpers (``get_connection`` / ``enqueue``) which open their own connection.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "manifest_todos.db"
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_USAGE_STATES = frozenset({"KNOWN", "UNKNOWN", "AMBIGUOUS"})
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS tts_queue (
@@ -24,7 +28,7 @@ CREATE TABLE IF NOT EXISTS tts_queue (
     output_format  TEXT NOT NULL DEFAULT 'mp3_44100_128',
     priority       INTEGER NOT NULL DEFAULT 5,
     status         TEXT NOT NULL DEFAULT 'PENDING'
-                       CHECK(status IN ('PENDING','IN_PROGRESS','DONE','FAILED')),
+                       CHECK(status IN ('PENDING','IN_PROGRESS','DONE','FAILED','AMBIGUOUS')),
     retry_count    INTEGER NOT NULL DEFAULT 0,
     max_retries    INTEGER NOT NULL DEFAULT 3,
     output_path    TEXT,
@@ -32,7 +36,29 @@ CREATE TABLE IF NOT EXISTS tts_queue (
     error_message  TEXT,
     created_at     TEXT NOT NULL,
     started_at     TEXT,
-    completed_at   TEXT
+    completed_at   TEXT,
+    request_identity TEXT,
+    publication_state TEXT NOT NULL DEFAULT 'UNPUBLISHED'
+)
+"""
+
+_CREATE_ATTEMPTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS tts_queue_attempts (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id             INTEGER NOT NULL,
+    attempt_number     INTEGER NOT NULL,
+    request_identity   TEXT NOT NULL,
+    provider_name      TEXT,
+    provider_request_id TEXT,
+    status             TEXT NOT NULL CHECK(status IN ('STARTED','SUCCEEDED','FAILED','AMBIGUOUS')),
+    usage_state        TEXT NOT NULL DEFAULT 'UNKNOWN'
+                       CHECK(usage_state IN ('KNOWN','UNKNOWN','AMBIGUOUS')),
+    usage_characters   INTEGER NOT NULL,
+    usage_units        REAL,
+    usage_json         TEXT,
+    error_message      TEXT,
+    started_at         TEXT NOT NULL,
+    completed_at       TEXT
 )
 """
 
@@ -53,15 +79,95 @@ ON tts_queue(decision_id)
 WHERE decision_id IS NOT NULL
 """
 
+_CREATE_REQUEST_INDEX_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_queue_request_identity
+ON tts_queue(request_identity)
+WHERE request_identity IS NOT NULL
+"""
+
+
+def request_identity(
+    text: str, voice_id: str, model_id: str, output_format: str
+) -> str:
+    """Return the stable identity of one logical render request."""
+    payload = json.dumps(
+        {"model_id": model_id, "output_format": output_format, "text": text, "voice_id": voice_id},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _migrate_legacy_tts_queue(conn: sqlite3.Connection) -> None:
+    """Rebuild a pre-AMBIGUOUS queue while retaining rows and user indexes."""
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tts_queue'"
+    ).fetchone()
+    if schema is None or "'AMBIGUOUS'" in (schema[0] or ""):
+        return
+
+    indexes = [
+        row[0]
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='tts_queue' AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    conn.execute("ALTER TABLE tts_queue RENAME TO tts_queue_legacy")
+    conn.execute(_CREATE_TABLE_SQL)
+    current_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(tts_queue)").fetchall()
+    }
+    legacy_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(tts_queue_legacy)").fetchall()
+    }
+    columns = sorted(current_columns & legacy_columns)
+    column_list = ", ".join(columns)
+    conn.execute(
+        f"INSERT INTO tts_queue ({column_list}) "
+        f"SELECT {column_list} FROM tts_queue_legacy"  # nosec B608
+    )
+    conn.execute("DROP TABLE tts_queue_legacy")
+    for index_sql in indexes:
+        conn.execute(index_sql)
+
 
 def init_tts_queue(conn: sqlite3.Connection) -> None:
     """Create the tts_queue table if it does not exist (idempotent)."""
     conn.execute(_CREATE_TABLE_SQL)
+    _migrate_legacy_tts_queue(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(tts_queue)")}
     if "decision_id" not in columns:
         conn.execute("ALTER TABLE tts_queue ADD COLUMN decision_id TEXT")
+    if "request_identity" not in columns:
+        conn.execute("ALTER TABLE tts_queue ADD COLUMN request_identity TEXT")
+    if "publication_state" not in columns:
+        conn.execute(
+            "ALTER TABLE tts_queue ADD COLUMN publication_state TEXT NOT NULL DEFAULT 'UNPUBLISHED'"
+        )
+    legacy_rows = conn.execute(
+        "SELECT id, text, voice_id, model_id, output_format FROM tts_queue "
+        "WHERE request_identity IS NULL"
+    ).fetchall()
+    for row in legacy_rows:
+        conn.execute(
+            "UPDATE tts_queue SET request_identity=? WHERE id=?",
+            (request_identity(row["text"], row["voice_id"], row["model_id"], row["output_format"]), row["id"]),
+        )
+    conn.execute(_CREATE_ATTEMPTS_TABLE_SQL)
+    attempt_columns = {row[1] for row in conn.execute("PRAGMA table_info(tts_queue_attempts)")}
+    if "usage_state" not in attempt_columns:
+        conn.execute(
+            "ALTER TABLE tts_queue_attempts ADD COLUMN usage_state TEXT NOT NULL DEFAULT 'UNKNOWN'"
+        )
+    conn.execute(
+        "UPDATE tts_queue_attempts SET usage_state='AMBIGUOUS' "
+        "WHERE status='AMBIGUOUS' AND usage_state='UNKNOWN'"
+    )
     conn.execute(_CREATE_RECOVERY_TABLE_SQL)
     conn.execute(_CREATE_DECISION_INDEX_SQL)
+    conn.execute(_CREATE_REQUEST_INDEX_SQL)
     conn.commit()
 
 
@@ -162,20 +268,24 @@ def enqueue_on_connection_status(
 ) -> tuple[int, bool]:
     """Insert a job and return ``(job_id, inserted)`` atomically."""
     now = datetime.now(timezone.utc).isoformat()
+    identity = request_identity(text, voice_id, model_id, output_format)
     cur = conn.execute(
         """
         INSERT INTO tts_queue
             (text, voice_id, model_id, output_format, priority, max_retries, created_at,
-             decision_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               decision_id, request_identity)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT DO NOTHING
         """,
-        (text, voice_id, model_id, output_format, priority, max_retries, now, decision_id),
+        (text, voice_id, model_id, output_format, priority, max_retries, now, decision_id, identity),
     )
     conn.commit()
     if cur.rowcount == 1 and cur.lastrowid:
         return int(cur.lastrowid), True
-    row = conn.execute("SELECT id FROM tts_queue WHERE decision_id=?", (decision_id,)).fetchone()
+    row = conn.execute(
+        "SELECT id FROM tts_queue WHERE decision_id=? OR request_identity=?",
+        (decision_id, identity),
+    ).fetchone()
     if row is None:
         raise RuntimeError("queue insert was ignored without an existing decision")
     return int(row[0]), False
@@ -190,6 +300,7 @@ def dequeue_pending(conn: sqlite3.Connection, limit: int = 1) -> list[dict[str, 
     # Fetch candidate IDs first, then UPDATE — SQLite does not support
     # UPDATE … RETURNING in older versions, but this two-step approach is
     # safe under WAL when running inside a single connection.
+    conn.execute("BEGIN IMMEDIATE")
     rows = conn.execute(
         """
         SELECT id FROM tts_queue
@@ -201,21 +312,72 @@ def dequeue_pending(conn: sqlite3.Connection, limit: int = 1) -> list[dict[str, 
     ).fetchall()
 
     if not rows:
+        conn.commit()
         return []
 
     ids = [r["id"] for r in rows]
     placeholders = ",".join("?" * len(ids))
     conn.execute(
-        f"UPDATE tts_queue SET status='IN_PROGRESS', started_at=? WHERE id IN ({placeholders})",  # nosec B608 — placeholders are ?-bound params; ids are ints from SELECT
+        f"UPDATE tts_queue SET status='IN_PROGRESS', started_at=?, publication_state='UNPUBLISHED' WHERE id IN ({placeholders})",  # nosec B608
         [now, *ids],
     )
+    attempt_ids: dict[int, int] = {}
+    for job_id in ids:
+        job = conn.execute("SELECT * FROM tts_queue WHERE id=?", (job_id,)).fetchone()
+        if job is None:
+            continue
+        identity = job["request_identity"] or request_identity(
+            job["text"], job["voice_id"], job["model_id"], job["output_format"]
+        )
+        conn.execute("UPDATE tts_queue SET request_identity=? WHERE id=?", (identity, job_id))
+        attempt_number = conn.execute(
+            "SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM tts_queue_attempts WHERE job_id=?",
+            (job_id,),
+        ).fetchone()[0]
+        attempt = conn.execute(
+            "INSERT INTO tts_queue_attempts "
+            "(job_id, attempt_number, request_identity, status, usage_state, usage_characters, started_at) "
+            "VALUES (?, ?, ?, 'STARTED', 'UNKNOWN', ?, ?)",
+            (job_id, attempt_number, identity, len(job["text"]), now),
+        )
+        attempt_ids[job_id] = int(attempt.lastrowid)
     conn.commit()
 
     claimed = conn.execute(
         f"SELECT * FROM tts_queue WHERE id IN ({placeholders})",  # nosec B608
         ids,
     ).fetchall()
-    return [dict(r) for r in claimed]
+    result = []
+    for row in claimed:
+        item = dict(row)
+        item["attempt_id"] = attempt_ids.get(item["id"])
+        result.append(item)
+    return result
+
+
+def set_attempt_usage(
+    conn: sqlite3.Connection,
+    attempt_id: int,
+    *,
+    usage_state: str,
+    usage_characters: int | None = None,
+    usage_units: float | None = None,
+    usage_json: str | None = None,
+) -> None:
+    """Persist provider-neutral usage facts and their certainty state."""
+    if usage_state not in _USAGE_STATES:
+        raise ValueError(f"usage_state must be one of {sorted(_USAGE_STATES)}")
+    attempt = conn.execute(
+        "SELECT id FROM tts_queue_attempts WHERE id=?", (attempt_id,)
+    ).fetchone()
+    if attempt is None:
+        raise ValueError(f"No tts_queue_attempts row with id={attempt_id}")
+    conn.execute(
+        "UPDATE tts_queue_attempts SET usage_state=?, usage_characters=COALESCE(?, usage_characters), "
+        "usage_units=?, usage_json=? WHERE id=?",
+        (usage_state, usage_characters, usage_units, usage_json, attempt_id),
+    )
+    conn.commit()
 
 
 def mark_done(
@@ -224,17 +386,47 @@ def mark_done(
     output_path: str,
     content_sha256: str,
 ) -> None:
-    """Mark a job as DONE with its output path and SHA-256 checksum."""
+    """Mark a job as DONE only after validating the published artifact."""
+    if not _SHA256_RE.fullmatch(content_sha256):
+        raise ValueError("content_sha256 must be a lowercase SHA-256 digest")
+    artifact = Path(output_path)
+    if not artifact.is_file():
+        raise FileNotFoundError(output_path)
+    actual_sha256 = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    if actual_sha256 != content_sha256:
+        raise ValueError("artifact checksum does not match content_sha256")
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
         UPDATE tts_queue
-        SET status='DONE', output_path=?, content_sha256=?, completed_at=?
+        SET status='DONE', output_path=?, content_sha256=?, publication_state='VERIFIED', completed_at=?
         WHERE id=?
         """,
         (output_path, content_sha256, now, job_id),
     )
+    attempt = conn.execute(
+        "SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if attempt is not None:
+        conn.execute(
+            "UPDATE tts_queue_attempts SET status='SUCCEEDED', completed_at=? WHERE id=?",
+            (now, attempt["id"]),
+        )
     conn.commit()
+
+
+def reconcile_existing_artifact(
+    conn: sqlite3.Connection, job_id: int, output_path: str, content_sha256: str
+) -> None:
+    """Complete an ambiguous job only when an existing artifact verifies."""
+    job = get_job(conn, job_id)
+    if job is None:
+        raise ValueError(f"No tts_queue row with id={job_id}")
+    if job["status"] != "AMBIGUOUS":
+        raise ValueError("only AMBIGUOUS jobs can be reconciled")
+    mark_done(conn, job_id, output_path, content_sha256)
 
 
 def mark_failed(
@@ -252,10 +444,41 @@ def mark_failed(
         """,
         (error_message, now, job_id),
     )
+    conn.execute(
+        "UPDATE tts_queue_attempts SET status='FAILED', error_message=?, completed_at=? "
+        "WHERE id=(SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1)",
+        (error_message, now, job_id),
+    )
     conn.commit()
 
 
-def increment_retry(conn: sqlite3.Connection, job_id: int) -> int:
+def requeue_after_local_failure(
+    conn: sqlite3.Connection,
+    job_id: int,
+    error_message: str,
+) -> None:
+    """Close the active attempt and requeue its job in one transaction."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "UPDATE tts_queue_attempts SET status='FAILED', error_message=?, completed_at=? "
+        "WHERE id=(SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1)",
+        (error_message, now, job_id),
+    )
+    conn.execute(
+        "UPDATE tts_queue SET status='PENDING', started_at=NULL WHERE id=? AND status='IN_PROGRESS'",
+        (job_id,),
+    )
+    conn.commit()
+
+
+def increment_retry(
+    conn: sqlite3.Connection,
+    job_id: int,
+    error_message: str = "transient retry",
+) -> int:
     """Bump retry_count by 1.
 
     If the new count is less than max_retries the status is reset to PENDING
@@ -272,15 +495,22 @@ def increment_retry(conn: sqlite3.Connection, job_id: int) -> int:
     new_count = row["retry_count"] + 1
     if new_count < row["max_retries"]:
         conn.execute(
-            "UPDATE tts_queue SET retry_count=?, status='PENDING' WHERE id=?",
-            (new_count, job_id),
+            "UPDATE tts_queue SET retry_count=?, status='PENDING', error_message=? WHERE id=?",
+            (new_count, error_message, job_id),
         )
     else:
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "UPDATE tts_queue SET retry_count=?, status='FAILED', completed_at=? WHERE id=?",
-            (new_count, now, job_id),
+            "UPDATE tts_queue SET retry_count=?, status='FAILED', error_message=?, completed_at=? WHERE id=?",
+            (new_count, error_message, now, job_id),
         )
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE tts_queue_attempts SET status='FAILED', error_message=?, completed_at=? "
+        "WHERE id=(SELECT id FROM tts_queue_attempts WHERE job_id=? AND status='STARTED' "
+        "ORDER BY id DESC LIMIT 1)",
+        (error_message, now, job_id),
+    )
     conn.commit()
     return new_count
 
@@ -328,7 +558,7 @@ def recover_stale_jobs(
     recovered_at = recovery_time.isoformat()
     for row in stale:
         conn.execute(
-            "UPDATE tts_queue SET status='PENDING', started_at=NULL, "
+            "UPDATE tts_queue SET status='AMBIGUOUS', started_at=NULL, "
             "error_message=? WHERE id=? AND status='IN_PROGRESS'",
             (reason, row["id"]),
         )
@@ -337,6 +567,12 @@ def recover_stale_jobs(
             "(job_id, recovered_at, previous_started_at, retry_count, reason) "
             "VALUES (?, ?, ?, ?, ?)",
             (row["id"], recovered_at, row["started_at"], row["retry_count"], reason),
+        )
+        conn.execute(
+            "UPDATE tts_queue_attempts SET status='AMBIGUOUS', usage_state='AMBIGUOUS', "
+            "completed_at=?, error_message=? "
+            "WHERE job_id=? AND status='STARTED'",
+            (recovered_at, reason, row["id"]),
         )
     conn.commit()
     return [row["id"] for row in stale]

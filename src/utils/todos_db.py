@@ -128,6 +128,8 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 created_at TEXT NOT NULL,
                 closed_at  TEXT,
                 closure_reason TEXT CHECK(closure_reason IN ('completed', 'cancelled', 'stale')),
+                completion_evidence TEXT,
+                artifact_reference TEXT,
                 priority   INTEGER NOT NULL DEFAULT 5,
                 fr_id      TEXT,
                 perfected_at TEXT,
@@ -350,6 +352,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE todos ADD COLUMN updated_at TEXT")
         conn.execute("UPDATE todos SET updated_at = COALESCE(updated_at, created_at)")
 
+        for _column in ("completion_evidence", "artifact_reference"):
+            if not _has_column(conn, "todos", _column):
+                conn.execute(f"ALTER TABLE todos ADD COLUMN {_quote_identifier(_column)} TEXT")
+
         _create_graph_schema(conn)
 
         conn.execute("""
@@ -423,6 +429,83 @@ def mark_done(todo_id: int, *, force: bool = False) -> bool:
         )
         conn.commit()
     return cur.rowcount == 1
+
+
+_TRUSTED_BACKEND = object()
+
+
+def close_todo_tree(
+    todo_id: int,
+    *,
+    reason: str,
+    force: bool = False,
+    trusted_backend: object | None = None,
+) -> dict[str, Any]:
+    """Atomically close an open todo and its open ``parent_id`` descendants."""
+    if reason not in {"completed", "cancelled"}:
+        raise ValueError("reason must be completed or cancelled")
+    if force and trusted_backend is not _TRUSTED_BACKEND:
+        raise PermissionError("force requires a trusted backend")
+
+    closed_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            root = conn.execute("SELECT done FROM todos WHERE id=?", (todo_id,)).fetchone()
+            if root is None:
+                raise ValueError("todo not found")
+            if root["done"]:
+                raise ValueError("todo already closed")
+
+            rows = conn.execute(
+                """
+                WITH RECURSIVE descendants(id, depth) AS (
+                    SELECT id, 0 FROM todos WHERE id=?
+                    UNION ALL
+                    SELECT child.id, descendants.depth + 1
+                    FROM todos child JOIN descendants ON child.parent_id=descendants.id
+                )
+                SELECT todos.id
+                FROM descendants JOIN todos ON todos.id=descendants.id
+                WHERE todos.done=0
+                ORDER BY descendants.depth, todos.id
+                """,
+                (todo_id,),
+            ).fetchall()
+            affected_ids = [int(row["id"]) for row in rows]
+            if not force:
+                for affected_id in affected_ids:
+                    blocking = conn.execute(
+                        """
+                        SELECT prerequisite.id
+                        FROM todo_prerequisites edge
+                        JOIN todos prerequisite ON prerequisite.id=edge.prerequisite_id
+                        WHERE edge.todo_id=?
+                          AND COALESCE(prerequisite.closure_reason, '') NOT IN (
+                              SELECT value FROM json_each(edge.allowed_terminal_states)
+                          )
+                        LIMIT 1
+                        """,
+                        (affected_id,),
+                    ).fetchone()
+                    if blocking is not None:
+                        raise ValueError("readiness check failed")
+
+            for affected_id in affected_ids:
+                conn.execute(
+                    "UPDATE todos SET done=1, closed_at=?, closure_reason=? WHERE id=? AND done=0",
+                    (closed_at, reason, affected_id),
+                )
+            conn.commit()
+            return {
+                "root_id": todo_id,
+                "reason": reason,
+                "affected_ids": affected_ids,
+                "affected_count": len(affected_ids),
+            }
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def cancel_todo(todo_id: int) -> bool:
@@ -539,6 +622,42 @@ def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> 
             if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
                 raise ValueError("todo not found")
             raise ValueError("precondition failed: todo version is stale")
+        conn.commit()
+        row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+    return dict(row)
+
+
+def complete_todo(
+    todo_id: int,
+    expected_version: str,
+    completion_evidence: str,
+    artifact_reference: str,
+) -> dict[str, Any]:
+    """Complete one open todo with version-checked evidence and an artifact reference."""
+    if not isinstance(completion_evidence, str) or not completion_evidence.strip():
+        raise ValueError("completion_evidence is required")
+    if not isinstance(artifact_reference, str) or not artifact_reference.strip():
+        raise ValueError("artifact_reference is required")
+    closed_at = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cur = conn.execute(
+            """UPDATE todos
+               SET done=1, closed_at=?, closure_reason='completed',
+                   completion_evidence=?, artifact_reference=?, updated_at=?
+               WHERE id=? AND updated_at=? AND done=0""",
+            (
+                closed_at,
+                completion_evidence,
+                artifact_reference,
+                closed_at,
+                todo_id,
+                expected_version,
+            ),
+        )
+        if cur.rowcount != 1:
+            if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
+                raise ValueError("todo not found")
+            raise ValueError("precondition failed: todo version is stale or todo is already closed")
         conn.commit()
         row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
     return dict(row)

@@ -4,6 +4,7 @@
 graph TB
     Tools[executive_audio_brief.py] --> Briefs[brief generators]
     Tools --> MCP[TTS MCP server]
+    MCP --> PlayAudio[play_audio_file MCP registration]
     Tools --> Vocal[Vocal synthesis]
     Tools --> VoiceOrchestration[voice_orchestration.py]
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
@@ -37,6 +38,17 @@ graph TB
     Reject --> RootContainment[resolved-root containment]
     RootContainment --> AtomicPublish[atomic publication]
     AtomicPublish --> AudioOut[validated audio artifacts: output/tts/*.mp3]
+    PlayAudio --> FilenameSandbox[output/tts filename sandbox]
+    FilenameSandbox --> SizeGuard{25 MiB size guard}
+    SizeGuard -->|within cap| DurationProbe[duration probe]
+    SizeGuard -->|over cap| PlaybackResult[structured result: rejected/error]
+    DurationProbe --> DurationGuard{120 second duration guard}
+    DurationGuard -->|within cap| MCI[Windows MCI: play &lt;alias&gt; wait]
+    DurationGuard -->|over cap| PlaybackResult
+    MCI --> PlaybackCleanup[finally: alias cleanup]
+    PlaybackCleanup --> PlaybackResult[structured result: played/error]
+    FilenameSandbox -->|invalid path/name| PlaybackResult
+    %% MCI command is synchronous: play <alias> wait
     AudioOut --> Portal
     Briefs --> Portal
 classDef orch fill:#1a3a52,stroke:#4a9eff,color:#fff
@@ -44,9 +56,11 @@ classDef ws fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
 classDef ext fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
 classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
 classDef state fill:#1a1a1a,stroke:#888888,color:#cccccc
-    class Tools,Briefs,MCP,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Portal,AudioOut orch
+    class Tools,Briefs,MCP,PlayAudio,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Portal,AudioOut orch
     class AvailabilityGate state
-    class AudioPolicy,Reject,RootContainment,AtomicPublish manifest
+    class AudioPolicy,Reject,RootContainment,AtomicPublish,FilenameSandbox,DurationProbe,PlaybackCleanup manifest
+    class SizeGuard,DurationGuard,PlaybackResult state
+    class MCI orch
     class Fallback state
     class WS ws
     class OpenAI,ElevenLabs ext

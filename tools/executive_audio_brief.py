@@ -32,7 +32,7 @@ from urllib.parse import parse_qs
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(r"f:\\")
+WORKSPACE_ROOT = Path("f:/")
 OUTPUT_DIR = PROJECT_ROOT / "output" / "briefs"
 REPORT_PATH = PROJECT_ROOT / "output" / "executive_brief_portal.html"
 
@@ -44,10 +44,15 @@ ROADMAP_GENERATOR_PYTHON = Path(r"C:\G\python.exe")
 ROADMAP_JSON_OUTPUT_PATH = Path(r"f:\⊕Workspace\src\data\roadmap.json")
 ROADMAP_GENERATOR_TIMEOUT_SECONDS = 30
 
-# Add workspace root to path for shared integrations
-_WORKSPACE_ROOT = Path(r"f:\⊕Workspace")
+# Add the shared Workspace checkout to path for cross-repository integrations.
+# CI checks out the paired repository under WORKSPACE_ROOT; local runs retain
+# the existing workstation default when the variable is absent.
+_WORKSPACE_ROOT = Path(os.environ.get("WORKSPACE_ROOT", "f:/⊕Workspace"))
 if str(_WORKSPACE_ROOT) not in sys.path:
     sys.path.append(str(_WORKSPACE_ROOT))
+_WORKSPACE_SRC = _WORKSPACE_ROOT / "src"
+if str(_WORKSPACE_SRC) not in sys.path:
+    sys.path.insert(0, str(_WORKSPACE_SRC))
 
 # Add project root to path for any remaining project-local imports
 if str(PROJECT_ROOT) not in sys.path:
@@ -67,10 +72,12 @@ from src.utils.roadmap_panel import (
 todos_db.use_worktree_aware_db_path(PROJECT_ROOT)
 
 from src.utils.todos_db import (
-    init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, get_todo_by_id,
+    init_db, get_open_todos, get_done_todos, mark_done, cancel_todo, close_todo_tree, get_todo_by_id,
     add_todo, update_priority, get_open_todos_by_autonomy, get_readiness,
 )
 from src.utils.priority_scorer import score_priority
+from utils.init_db import get_connection as get_workspace_connection
+from utils.todo_execution_lifecycle import ExecutionLifecycle
 
 # ---------------------------------------------------------------------------
 # Project definitions — discovery order
@@ -359,35 +366,43 @@ def _priority_badge(priority: int) -> str:
 
 
 def _todo_signal_html(todo: dict[str, Any]) -> str:
-    """Render explicit refinement and FR-link signals independently."""
+    """Render the perfected signal when present and an independent FR-link signal."""
     perfected = bool(todo.get("perfected_at"))
     linked = bool(todo.get("fr_id"))
-    perfected_label = "Refined · perfect-scoped-td" if perfected else "Not perfected"
     linked_label = "FR linked" if linked else "No FR link"
-    perfected_class = "signal-refined" if perfected else "signal-muted"
     linked_class = "signal-linked" if linked else "signal-muted"
+    perfected_html = (
+        '<span class="todo-signal" data-signal="perfected">PERFECTED</span>'
+        if perfected else ""
+    )
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
-        f'<span class="todo-signal perfected-badge">PERFECTED</span>' if perfected else
-        f'<span class="todo-id">TODO #{todo["id"]}</span>'
+        f'{perfected_html}'
     ) + (
-        f'<span class="todo-signal {perfected_class}">{perfected_label}</span>'
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
     )
 
 
+def get_todo_execution_state(todo_id: int) -> str | None:
+    """Read one TODO lifecycle state from the shared Workspace contract."""
+    try:
+        connection = get_workspace_connection()
+        try:
+            lifecycle = ExecutionLifecycle.read_only(connection)
+            return lifecycle.get(str(todo_id)).state
+        except KeyError:
+            return None
+        finally:
+            connection.close()
+    except Exception:
+        return None
+
+
 def classify_todo(todo: dict[str, Any], readiness: dict[int, bool]) -> str:
-    """Classify a TODO using execution state, closure reason, and readiness."""
-    execution_state = str(todo.get("execution_state", todo.get("state", ""))).lower()
-    if execution_state in {"claimed", "running"}:
-        return execution_state
-    if todo.get("done") or todo.get("closure_reason"):
-        return str(todo.get("closure_reason") or execution_state or "terminal").lower()
-    if execution_state == "failed" and todo.get("retry_eligible"):
-        return "retry-eligible"
-    if not readiness.get(todo["id"], todo.get("ready", True)):
-        return "blocked"
-    return "runnable"
+    """Return the canonical shared lifecycle state, defaulting missing rows to queued."""
+    del readiness
+    state = get_todo_execution_state(todo["id"])
+    return state if state in {"queued", "claimed", "running", "completed", "failed", "cancelled", "stale"} else "queued"
 
 
 def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool]) -> list[dict[str, Any]]:
@@ -421,14 +436,14 @@ def build_todo_hierarchy(rows: list[dict[str, Any]], readiness: dict[int, bool])
                 "expanded_by_default": True,
             })
             continue
-        runnable = [child for child in children if child["state"] in {"runnable", "retry-eligible"}]
-        terminal = [child for child in children if child["state"] not in {"runnable", "retry-eligible"}]
+        runnable = [child for child in children if readiness.get(child["id"], child.get("ready", True))]
+        terminal = [child for child in children if child not in runnable]
         groups.append({
             "parent": parent,
             "inline_children": runnable,
             "collapsed_children": terminal,
-            "aggregate_state": "runnable" if runnable else (children[0]["state"] if children else parent["state"]),
-            "join_status": f"{len(children)} children · {len(runnable)} runnable",
+            "aggregate_state": parent["state"],
+            "join_status": f"{len(children)} children",
             "expanded_by_default": False,
         })
     return groups
@@ -453,6 +468,7 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
             <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
               onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
             <span class="todo-text" title="{parent_text}">{parent_text}</span>
+            <span class="todo-state">{html.escape(parent.get('state', 'queued'))}</span>
             {_copy_todo_button(parent['id'], parent['text'])}
                         <span class="todo-actions"><button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
                         <button class="cancel-btn" onclick="cancelTodo({parent['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{parent['id']}">×</button></span>
@@ -474,12 +490,12 @@ def _todo_node_html(todo: dict[str, Any], sigil: str, name: str, key: str) -> st
     child_rows = "".join(
         _todo_node_html(child, sigil, name, f"{key}-{child['id']}") for child in children
     )
-    return f"""<li class="nested-todo-group" data-state="{html.escape(todo.get('state', 'runnable'))}">
+    return f"""<li class="nested-todo-group" data-state="{html.escape(todo.get('state', 'queued'))}">
             <div class="todo-primary">
                 <button class="expand-todo-btn" type="button" aria-expanded="false" aria-controls="{panel_id}"
                     onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
                 <span class="todo-text" title="{text}">{text}</span>
-                <span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+                <span class="todo-state">{html.escape(todo.get('state', 'queued'))}</span>
                 <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                     <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span>
             </div>
@@ -500,8 +516,8 @@ def _copy_todo_button(todo_id: int, text: str) -> str:
 def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
     """Render a child or standalone TODO row with its existing actions."""
     text = html.escape(todo["text"])
-    return f"""<li data-state="{html.escape(todo.get('state', 'runnable'))}" title="{text}">
-            <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', ''))}</span>
+    return f"""<li data-state="{html.escape(todo.get('state', 'queued'))}" title="{text}">
+            <div class="todo-primary"><span class="todo-text">{text}</span><span class="todo-state">{html.escape(todo.get('state', 'queued'))}</span>
                                 <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                 <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span></div>
             <div class="todo-meta"><span class="todo-project">{html.escape(sigil)}{html.escape(name)}</span>{_priority_badge(todo.get('priority', 5))}{_todo_signal_html(todo)}<span class="source-tag">{html.escape(todo.get('source', ''))}</span></div>
@@ -527,6 +543,7 @@ def _status_card_html(proj: dict, rank: int) -> str:
             f'<li>'
             f'<div class="todo-primary">'
             f'<span class="todo-text">{html.escape(t["text"])}</span>'
+            f'<span class="todo-state">{html.escape(t.get("state") or classify_todo(t, {}))}</span>'
             f'<span class="todo-actions">'
             f'<button class="done-btn" onclick="markDone({t["id"]}, this)" title="Mark done" aria-label="Mark TODO #{t["id"]} done">✓</button>'
             f'<button class="cancel-btn" onclick="cancelTodo({t["id"]}, this)" title="Cancel todo" aria-label="Cancel TODO #{t["id"]}">×</button>'
@@ -556,7 +573,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
   <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
-  <span class="priority-hint">leave blank \u2192 AI scores</span>
 </div>"""
 
     if rank == 1:
@@ -581,7 +597,6 @@ def _status_card_html(proj: dict, rank: int) -> str:
             <div class="progress-bar" style="width: {pct}%"></div>
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
-        <p class="summary">{summary}</p>
         {full_html}
         {hierarchy_html}
         {add_todo_form_html}
@@ -609,7 +624,6 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
     if not rows:
         return """<div class="offload-panel">
   <h2>⚡ Fully Offloadable</h2>
-  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
   <p style="color:var(--text-muted);font-style:italic;">No fully offloadable tasks yet.</p>
 </div>"""
 
@@ -628,7 +642,6 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
     )
     return f"""<div class="offload-panel">
   <h2>⚡ Fully Offloadable</h2>
-  <p class="offload-subtitle">These AI tasks require zero Tyler involvement — delegate freely.</p>
   <table class="offload-table">
     <thead><tr><th>Pri</th><th>Project</th><th>Task</th><th></th></tr></thead>
     <tbody>{table_rows}</tbody>
@@ -679,7 +692,7 @@ def generate_portal_html(
 
     # Lily portrait — injected as inline data-URI img tag
     # <!-- LILY_PORTRAIT --> marks the injection point in the rendered HTML
-    lily_img_tag = get_portrait_img_tag(max_width=140)
+    lily_img_tag = get_portrait_img_tag(max_width=180)
 
     # Voice selector options — Lily is default
     _lily_id = next((v["voice_id"] for v in voices if "lily" in v["name"].lower()), None)
@@ -703,9 +716,6 @@ def generate_portal_html(
                 <source src="data:audio/mpeg;base64,{audio_b64}" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
-            <div class="audio-meta">
-                Generated: {html.escape(timestamp)} | File: {html.escape(audio_path.name)}
-            </div>
         </div>
         """
     else:
@@ -747,61 +757,61 @@ def generate_portal_html(
 <title>👁 Executive Audio Brief Portal</title>
 <style>
 :root {{
-    --bg: #080c14;
-    --surface: rgba(22, 28, 40, 0.7);
-    --surface-solid: #161c28;
-    --border: rgba(99, 130, 200, 0.18);
-    --border-glow: rgba(88, 166, 255, 0.35);
-    --text: #e8eef8;
-    --text-muted: #7a8aa0;
-    --accent: #58a6ff;
-    --accent-green: #3fb950;
-    --accent-orange: #d29922;
-    --accent-red: #f85149;
-    --accent-purple: #bc8cff;
-    --music-pink: #ff6b9d;
-    --radius: 16px;
-    --blur: 18px;
+    --bg: #111827;
+    --surface: rgba(18, 28, 35, 0.84);
+    --surface-solid: #0e151b;
+    --border: rgba(218, 237, 236, 0.16);
+    --border-glow: rgba(125, 211, 252, 0.45);
+    --text: #edf3f7;
+    --text-muted: #9eabb3;
+    --accent: #7dd3fc;
+    --accent-green: #d5f36b;
+    --accent-orange: #f0b35b;
+    --accent-red: #ff8a5b;
+    --accent-purple: #9ddcf5;
+    --music-pink: #ff8a5b;
+    --radius: 0px;
+    --blur: 8px;
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: Georgia, 'Times New Roman', serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
     min-height: 100vh;
     background-image:
-        radial-gradient(ellipse at 20% 20%, rgba(88, 166, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 80%, rgba(188, 140, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 50% 50%, rgba(63, 185, 80, 0.04) 0%, transparent 60%);
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        radial-gradient(ellipse at 50% 0%, rgba(125, 211, 252, .22), transparent 34rem),
+        radial-gradient(ellipse at 70% 100%, rgba(240, 179, 91, .16), transparent 30rem);
+    background-size: 42px 42px, 42px 42px, auto, auto;
     background-attachment: fixed;
 }}
 .container {{
-    max-width: 1100px;
+    max-width: 1120px;
     margin: 0 auto;
-    padding: 2rem;
+    padding: 2.4rem 1.5rem 7rem;
 }}
 header {{
-    text-align: center;
-    margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 1.6rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+    padding: 1.5rem 0;
     border-bottom: 1px solid var(--border);
 }}
 .lily-portrait {{
     position: relative;
     display: inline-block;
-    margin-bottom: 1rem;
+    margin-bottom: 0;
 }}
 header h1 {{
-    font-size: 2rem;
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.5rem;
-}}
-header .subtitle {{
-    color: var(--text-muted);
-    font-size: 0.95rem;
+    font-size: clamp(2.1rem, 5vw, 4.6rem);
+    line-height: .94;
+    font-weight: 400;
+    margin-bottom: .5rem;
 }}
 .timestamp {{
     color: var(--text-muted);
@@ -828,65 +838,9 @@ header .subtitle {{
     margin: 0 auto;
     display: block;
 }}
-.audio-meta {{
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    margin-top: 0.75rem;
-}}
 .no-audio {{
     color: var(--text-muted);
     font-style: italic;
-}}
-
-/* Controls */
-.controls {{
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-    padding: 1rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-}}
-.serve-hint {{
-    text-align: center;
-    font-size: 0.85rem;
-    color: #c0a060;
-    background: #2a2010;
-    border: 1px solid #604020;
-    border-radius: var(--radius);
-    padding: 0.6rem 1.2rem;
-    margin-bottom: 1.5rem;
-}}
-.controls select, .controls button {{
-    font-size: 0.9rem;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    cursor: pointer;
-}}
-.controls button {{
-    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
-    border: none;
-    font-weight: 600;
-    color: #fff;
-    transition: opacity 0.2s;
-}}
-.controls button:hover {{
-    opacity: 0.85;
-}}
-.controls button:disabled {{
-    opacity: 0.5;
-    cursor: wait;
-}}
-.controls label {{
-    color: var(--text-muted);
-    font-size: 0.85rem;
 }}
 
 /* Status Cards */
@@ -949,7 +903,7 @@ header .subtitle {{
 }}
 .progress-bar {{
     height: 100%;
-    background: linear-gradient(90deg, var(--accent-green), var(--accent));
+    background: linear-gradient(90deg, #879d5c, #5797ad);
     border-radius: 6px;
     transition: width 0.5s ease;
 }}
@@ -962,11 +916,6 @@ header .subtitle {{
     font-weight: 600;
     color: var(--text);
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-}}
-.summary {{
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 0.5rem;
 }}
 .todo-list {{
     list-style: none;
@@ -1047,16 +996,20 @@ header .subtitle {{
     font-weight: 700;
     text-transform: uppercase;
 }}
-[data-state="runnable"] {{ border-left: 3px solid var(--accent); }}
-[data-state="runnable"] .todo-state {{ color: var(--accent); }}
-[data-state="blocked"] {{ border-left: 3px solid var(--accent-red); }}
-[data-state="blocked"] .todo-state {{ color: var(--accent-red); }}
+[data-state="queued"] {{ border-left: 3px solid var(--accent); }}
+[data-state="queued"] .todo-state {{ color: var(--accent); }}
 [data-state="claimed"] {{ border-left: 3px solid #56d4dd; }}
 [data-state="claimed"] .todo-state {{ color: #56d4dd; }}
 [data-state="running"] {{ border-left: 3px solid var(--accent-green); }}
 [data-state="running"] .todo-state {{ color: var(--accent-green); }}
-[data-state="retry-eligible"] {{ border-left: 3px solid var(--accent-orange); }}
-[data-state="retry-eligible"] .todo-state {{ color: var(--accent-orange); }}
+[data-state="completed"] {{ border-left: 3px solid #8fc36a; }}
+[data-state="completed"] .todo-state {{ color: #8fc36a; }}
+[data-state="failed"] {{ border-left: 3px solid var(--accent-red); }}
+[data-state="failed"] .todo-state {{ color: var(--accent-red); }}
+[data-state="cancelled"] {{ border-left: 3px solid var(--accent-orange); }}
+[data-state="cancelled"] .todo-state {{ color: var(--accent-orange); }}
+[data-state="stale"] {{ border-left: 3px solid #c58e4a; }}
+[data-state="stale"] .todo-state {{ color: #c58e4a; }}
 .todo-children {{
     list-style: none;
     margin: 0.25rem 0 0 1.9rem;
@@ -1083,7 +1036,7 @@ header .subtitle {{
     white-space: nowrap;
 }}
 .todo-id {{
-    color: var(--accent-orange);
+    color: #c58e4a;
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
@@ -1098,14 +1051,10 @@ header .subtitle {{
     font-weight: 700;
     white-space: nowrap;
 }}
-.signal-refined {{
+.todo-signal[data-signal="perfected"] {{
     color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.12);
-}}
-.perfected-badge {{
-    color: #ffffff;
-    background: var(--accent-green);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(213, 243, 107, 0.14);
+    border: 1px solid rgba(213, 243, 107, 0.35);
 }}
 .signal-linked {{
     color: var(--accent);
@@ -1199,6 +1148,7 @@ header .subtitle {{
     border-radius: var(--radius);
     padding: 1.25rem;
     margin-bottom: 2rem;
+    overflow-x: auto;
 }}
 .all-projects h3 {{
     margin-bottom: 0.75rem;
@@ -1290,7 +1240,6 @@ footer {{
     transition: opacity 0.2s;
 }}
 .add-todo-btn:hover {{ opacity: 0.85; }}
-.priority-hint {{ font-size: 0.72rem; color: var(--text-muted); }}
 .priority-badge-inline {{
     font-size: 0.7rem;
     font-weight: 700;
@@ -1460,11 +1409,6 @@ footer {{
     color: #d29922;
     margin-bottom: 0.3rem;
 }}
-.offload-subtitle {{
-    color: var(--text-muted);
-    font-size: 0.88rem;
-    margin-bottom: 1rem;
-}}
 .offload-table {{
     width: 100%;
     border-collapse: collapse;
@@ -1495,7 +1439,11 @@ footer {{
 }}
 
 @media (max-width: 700px) {{
-    .container {{ padding: 1rem; }}
+    .container {{ padding: 1rem 0.75rem 6rem; }}
+    header {{ grid-template-columns: 92px 1fr; gap: 0.9rem; padding-top: 0.75rem; }}
+    .lily-portrait {{ width: 92px; }}
+    header h1 {{ font-size: 2.4rem; }}
+    .cards-grid {{ grid-template-columns: minmax(0, 1fr); }}
     .todo-list li {{
         grid-template-areas:
             "primary"
@@ -1540,9 +1488,6 @@ footer {{
               onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='0.35'">✏</button>
         </div>
         <h1>👁 Executive Audio Brief Portal</h1>
-        <div class="subtitle">
-            Cross-project status intelligence · ElevenLabs voice synthesis
-        </div>
         <div class="timestamp">
             <span class="status-dot status-live"></span>
             Last generated: {html.escape(timestamp)}
@@ -1551,23 +1496,7 @@ footer {{
 
     {audio_section}
 
-    <div class="controls" id="controls">
-        <label for="voiceSelect">Voice:</label>
-        <select id="voiceSelect">
-            {voice_options}
-        </select>
-        <button id="generateBtn" onclick="generateBrief()">
-            🔄 Regenerate
-        </button>
-        <button id="refreshBtn" onclick="refreshStatus()">
-            🔄 Refresh Status
-        </button>
-    </div>
-    <div id="serveHint" class="serve-hint" style="display:none;">
-        ⚠️ Live generation requires server mode.
-        Run: <code>python tools/executive_audio_brief.py --serve</code>
-    </div>
-
+    <div id="refreshable-status">
     {tab_nav_html}
 
     <div id="tab-overview" class="tab-panel active">
@@ -1577,11 +1506,6 @@ footer {{
     <h2 style="margin-bottom:1rem;">Project Priorities</h2>
     <div class="cards-grid">
         {cards_html}
-    </div>
-
-    <div class="script-section" id="scriptSection" onclick="this.classList.toggle('open')">
-        <h3>📝 Brief Script</h3>
-        <div class="script-text">{script_escaped}</div>
     </div>
 
     <div class="all-projects">
@@ -1607,6 +1531,7 @@ footer {{
     <div id="tab-roadmap" class="tab-panel">
         {roadmap_tab_html}
     </div>
+    </div>
 
     <footer>
         👁 AI-Manifest · Executive Audio Brief Portal · Powered by ElevenLabs<br>
@@ -1615,20 +1540,19 @@ footer {{
 </div>
 
 <script>
-// Detect static file:// mode — API endpoints only exist in --serve mode
+// Detect static file:// mode. API endpoints only exist in --serve mode.
 const IS_STATIC = window.location.protocol === 'file:';
-if (IS_STATIC) {{ document.getElementById('serveHint').style.display = 'block'; }}
-
-function _showServeHint() {{
-    document.getElementById('serveHint').style.display = 'block';
-}}
+function _showServeHint() {{}}
 
 async function generateBrief() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('generateBtn');
-    const voiceId = document.getElementById('voiceSelect').value;
-    btn.disabled = true;
-    btn.textContent = '⏳ Generating...';
+    const voiceSelect = document.getElementById('voiceSelect');
+    const voiceId = voiceSelect ? voiceSelect.value : '';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Generating...';
+    }}
     try {{
         const resp = await fetch('/api/generate', {{
             method: 'POST',
@@ -1644,8 +1568,10 @@ async function generateBrief() {{
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Regenerate';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Regenerate';
+        }}
     }}
 }}
 
@@ -1708,6 +1634,17 @@ function _updateProgressBar(card) {{
     if (label) label.textContent = done + '/' + total + ' tasks (' + pct + '%)';
 }}
 
+function _removeAffectedTodoRows(affectedIds) {{
+    for (const affectedId of affectedIds) {{
+        const buttons = Array.from(document.querySelectorAll('button.done-btn, button.cancel-btn'))
+            .filter(button => (button.getAttribute('onclick') || '').includes('(' + affectedId + ', '));
+        for (const button of buttons) {{
+            const row = button.closest('li') || button.closest('tr');
+            if (row) row.remove();
+        }}
+    }}
+}}
+
 async function markDone(todoId, btnEl) {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     btnEl.disabled = true;
@@ -1717,17 +1654,13 @@ async function markDone(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
+        const data = resp.ok ? await resp.json() : null;
         const row = btnEl.closest('li') || btnEl.closest('tr');
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
-            if (row) {{
-                row.style.transition = 'opacity 0.3s';
-                row.style.opacity = '0';
-                setTimeout(() => {{
-                    row.remove();
-                    _updateProgressBar(card);
-                }}, 300);
-            }}
+            _removeAffectedTodoRows(data.affected_ids || [todoId]);
+            _updateProgressBar(card);
+            setTimeout(() => refreshStatus(), 350);
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Already done', 'var(--accent-green)');
@@ -1752,17 +1685,13 @@ async function cancelTodo(todoId, btnEl) {{
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: todoId}})
         }});
+        const data = resp.ok ? await resp.json() : null;
         const row = btnEl.closest('li') || btnEl.closest('tr');
         const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
-            if (row) {{
-                row.style.transition = 'opacity 0.3s';
-                row.style.opacity = '0';
-                setTimeout(() => {{
-                    row.remove();
-                    _updateProgressBar(card);
-                }}, 300);
-            }}
+            _removeAffectedTodoRows(data.affected_ids || [todoId]);
+            _updateProgressBar(card);
+            setTimeout(() => refreshStatus(), 350);
         }} else if (resp.status === 409) {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Already closed', 'var(--accent-green)');
@@ -1780,22 +1709,36 @@ async function cancelTodo(todoId, btnEl) {{
 async function refreshStatus() {{
     if (IS_STATIC) {{ _showServeHint(); return; }}
     const btn = document.getElementById('refreshBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Refreshing...';
+    if (btn) {{
+        btn.disabled = true;
+        btn.textContent = '⏳ Refreshing...';
+    }}
     try {{
-        const resp = await fetch('/api/refresh', {{ method: 'POST' }});
-        if (resp.ok) {{
-            _preserveEditableStateBeforeReload();
-            window.location.reload();
-        }} else {{
-            alert('Refresh failed');
-        }}
+        await _refreshStatusInPlace();
     }} catch(e) {{
         alert('Request failed: ' + e.message);
     }} finally {{
-        btn.disabled = false;
-        btn.textContent = '🔄 Refresh Status';
+        if (btn) {{
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh Status';
+        }}
     }}
+}}
+
+async function _refreshStatusInPlace() {{
+    const editableState = _captureEditableState();
+    const response = await fetch('/api/refresh', {{ method: 'POST' }});
+    if (!response.ok) throw new Error('Refresh failed (' + response.status + ')');
+    const data = await response.json();
+    if (!data.html) throw new Error('Refresh response did not include portal HTML');
+
+    const parsed = new DOMParser().parseFromString(data.html, 'text/html');
+    const current = document.getElementById('refreshable-status');
+    const replacement = parsed.getElementById('refreshable-status');
+    if (!current || !replacement) throw new Error('Refresh response was missing status content');
+    current.replaceWith(replacement);
+    restoreActiveTab();
+    _restoreEditableState(editableState);
 }}
 
 async function addTodo(btn) {{
@@ -1894,12 +1837,16 @@ function _editableControls() {{
 }}
 
 function _editableControlKey(element, index) {{
-    return element.id || element.name || `${{element.tagName.toLowerCase()}}:${{index}}`;
+    if (element.id || element.name) return element.id || element.name;
+    const project = element.closest('.add-todo-form')?.querySelector('.add-todo-input')?.dataset.project;
+    if (project) return `todo:${{project}}:${{element.className}}`;
+    return `${{element.tagName.toLowerCase()}}:${{index}}`;
 }}
 
-function _preserveEditableStateBeforeReload() {{
+function _captureEditableState() {{
     const controls = _editableControls();
-    const state = {{
+    const focusedIndex = controls.indexOf(document.activeElement);
+    return {{
         controls: controls.map((element, index) => {{
             const entry = {{
                 key: _editableControlKey(element, index),
@@ -1919,8 +1866,15 @@ function _preserveEditableStateBeforeReload() {{
             }}
             return entry;
         }}),
-        focusedIndex: controls.indexOf(document.activeElement),
+        focusedIndex,
+        focusedKey: focusedIndex >= 0
+            ? _editableControlKey(document.activeElement, focusedIndex)
+            : null,
     }};
+}}
+
+function _preserveEditableStateBeforeReload() {{
+    const state = _captureEditableState();
     try {{
         sessionStorage.setItem(EDITABLE_STATE_KEY, JSON.stringify(state));
     }} catch (e) {{
@@ -1928,17 +1882,7 @@ function _preserveEditableStateBeforeReload() {{
     }}
 }}
 
-function _restoreEditableStateAfterReload() {{
-    let state;
-    try {{
-        const stored = sessionStorage.getItem(EDITABLE_STATE_KEY);
-        if (!stored) return;
-        state = JSON.parse(stored);
-        sessionStorage.removeItem(EDITABLE_STATE_KEY);
-    }} catch (e) {{
-        return;
-    }}
-
+function _restoreEditableState(state) {{
     const controls = _editableControls();
     const controlsByKey = new Map(controls.map((element, index) => [
         _editableControlKey(element, index), element,
@@ -1966,9 +1910,22 @@ function _restoreEditableStateAfterReload() {{
         }}
     }}
 
-    const focused = state.focusedIndex >= 0 ? controls[state.focusedIndex] : null;
+    const focused = state.focusedKey
+        ? controlsByKey.get(state.focusedKey)
+        : state.focusedIndex >= 0 ? controls[state.focusedIndex] : null;
     if (focused && !focused.disabled) {{
         try {{ focused.focus({{preventScroll: true}}); }} catch (e) {{ focused.focus(); }}
+    }}
+}}
+
+function _restoreEditableStateAfterReload() {{
+    try {{
+        const stored = sessionStorage.getItem(EDITABLE_STATE_KEY);
+        if (!stored) return;
+        sessionStorage.removeItem(EDITABLE_STATE_KEY);
+        _restoreEditableState(JSON.parse(stored));
+    }} catch (e) {{
+        return;
     }}
 }}
 
@@ -1979,8 +1936,7 @@ function _restoreEditableStateAfterReload() {{
         var audio = document.getElementById('briefAudio');
         var playing = audio && !audio.paused && !audio.ended && audio.readyState > 2;
         if (!playing) {{
-            _preserveEditableStateBeforeReload();
-            window.location.reload();
+            _refreshStatusInPlace().catch(error => console.error('Automatic refresh failed:', error));
         }}
     }}, REFRESH_INTERVAL);
 }})();
@@ -2126,7 +2082,7 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"ok": true}')
+            self.wfile.write(json.dumps({"ok": True, "html": result["html"]}).encode("utf-8"))
         except Exception as e:
             msg = str(e).encode("utf-8")
             self.send_response(500)
@@ -2156,14 +2112,14 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"ok": false, "error": "already done"}')
                 return
 
-            success = mark_done(todo_id, force=True)
-            if success:
-                self._serve_json({"ok": True})
-            else:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "not found or already done"}')
+            result = close_todo_tree(todo_id, reason="completed")
+            self._serve_json({"ok": True, **result})
+        except ValueError as e:
+            status = 409 if "readiness" in str(e) else 400
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")
@@ -2192,13 +2148,14 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"ok": false, "error": "already closed"}')
                 return
 
-            if cancel_todo(todo_id):
-                self._serve_json({"ok": True})
-            else:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "not found or already closed"}')
+            result = close_todo_tree(todo_id, reason="cancelled")
+            self._serve_json({"ok": True, **result})
+        except ValueError as e:
+            status = 409 if "readiness" in str(e) else 400
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
         except Exception as e:
             self.send_response(400)
             self.send_header("Content-Type", "text/plain")
