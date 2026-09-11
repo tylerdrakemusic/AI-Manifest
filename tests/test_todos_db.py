@@ -52,6 +52,33 @@ def test_identifier_quoting_rejects_sql_control_characters() -> None:
         todos_db._quote_identifier('todos"; DROP TABLE todos; --')
 
 
+def test_schema_migrations_validate_interpolated_identifiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.utils.todos_db as todos_db
+
+    calls: list[str] = []
+    real_quote_identifier = todos_db._quote_identifier
+
+    def recording_quote_identifier(identifier: str) -> str:
+        calls.append(identifier)
+        return real_quote_identifier(identifier)
+
+    monkeypatch.setattr(todos_db, "DB_PATH", tmp_path / "schema.db")
+    monkeypatch.setattr(todos_db, "_quote_identifier", recording_quote_identifier)
+
+    todos_db.init_db()
+
+    assert {"todo_decision_metadata", "todo_decision_assessments"}.issubset(calls)
+    assert {
+        "rationale",
+        "implementation_hints",
+        "context_snapshot",
+        "estimated_effort",
+        "dependencies",
+    }.issubset(calls)
+
+
 def test_init_db_adds_nullable_perfected_at_without_losing_existing_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import src.utils.todos_db as todos_db
 
