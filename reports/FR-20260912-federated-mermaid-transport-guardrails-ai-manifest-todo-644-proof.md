@@ -39,6 +39,16 @@ manifest corrections.
 - Updated manifest metadata to the measured fallback risk and current derived
   view set.
 
+## Scoped Repair
+
+- Removed the over-scoped local production/helper/verification additions that
+  landed after commit 6c8080733243b9e0842b11a106f2856729791b20.
+- Kept the TODO 644 diagram and manifest changes intact.
+- Replaced the cross-repo production import with a tests-only helper at
+  tests/diagram_budget_helpers.py so the diagram tests still validate local
+  source bytes, nodes, edges, category budgets, split metadata, and reciprocal
+  lineage without any runtime-module addition.
+
 ## Validation
 
 Focused tests:
@@ -49,6 +59,23 @@ $env:PYTHONUTF8='1'
 C:\G\python.exe -m pytest tests/test_diagram_manifest.py tests/test_mermaid_diagram_rendering_budget.py -q
 # 4 passed
 ```
+
+Exact runner in workflow env:
+
+```powershell
+Set-Location 'F:\👁AI-Manifest\.worktrees\fix-FR-20260912-federated-mermaid-transport-guardrails'
+Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
+$env:WORKSPACE_ROOT='F:\⊕Workspace'
+$env:WORKSPACE_BACKUP_ENGINE_PATH='F:\⊕Workspace\src\utils\database_backup.py'
+C:\G\python.exe tools\run_tests.py --parallel --junitxml=tmp\pytest-junit.xml
+```
+
+Runner result:
+
+- `pytest-xdist` loaded after clearing the stray shell override.
+- The run still terminated with `KeyboardInterrupt` after worker startup and
+  before test execution completed.
+- JUnit output was written to tmp/pytest-junit.xml and remains uncommitted.
 
 Measured post-repair budget results:
 

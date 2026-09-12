@@ -3,13 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.utils.diagram_budgets import (
+from tests.diagram_budget_helpers import (
+    BUDGETS,
     DiagramCategory,
-    DiagramMetrics,
     DiagramSpec,
-    Finding,
     Traceability,
-    ValidationResult,
     measure_source,
     validate_diagram,
 )
@@ -63,6 +61,7 @@ def test_manifest_declares_all_local_sources_and_derived_lineage() -> None:
 
 def test_manifest_paths_resolve_to_local_mermaid_sources() -> None:
     payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    records = {record["path"]: record for record in payload["diagrams"]}
 
     for record in payload["diagrams"]:
         source_path = MANIFEST_PATH.parents[1] / record["path"]
@@ -83,4 +82,18 @@ def test_manifest_paths_resolve_to_local_mermaid_sources() -> None:
                 is_derived_view=record["kind"] == "derived-view",
             )
         )
+        budget = BUDGETS[KIND_TO_CATEGORY[record["kind"]]]
+        assert metrics.utf8_characters <= budget.max_utf8_characters
+        assert metrics.utf8_bytes <= budget.max_utf8_bytes
+        assert metrics.nodes > 0
+        assert metrics.nodes <= budget.max_nodes
+        assert metrics.edges <= budget.max_edges
         assert record["split_required"] is result.split_required
+        assert result.findings == ()
+
+        lineage = record["lineage"]
+        if lineage["parent"] is None:
+            for child_path in lineage["derived_views"]:
+                assert records[child_path]["lineage"]["parent"] == record["path"]
+        else:
+            assert record["path"] in records[lineage["parent"]]["lineage"]["derived_views"]

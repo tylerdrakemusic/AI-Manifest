@@ -1,13 +1,11 @@
 import json
 from pathlib import Path
 
-from src.utils.diagram_budgets import (
+from tests.diagram_budget_helpers import (
+    BUDGETS,
     DiagramCategory,
-    DiagramMetrics,
     DiagramSpec,
-    Finding,
     Traceability,
-    ValidationResult,
     measure_source,
     validate_diagram,
 )
@@ -76,4 +74,12 @@ def test_manifest_diagrams_satisfy_shared_budget_contract() -> None:
             )
         )
 
+        budget = BUDGETS[KIND_TO_CATEGORY[record["kind"]]]
+        assert metrics.utf8_characters <= budget.max_utf8_characters
+        assert metrics.utf8_bytes <= MAX_RENDERING_BYTES
+        assert metrics.nodes > 0
+        assert metrics.nodes <= budget.max_nodes
+        assert metrics.edges <= budget.max_edges
+        assert record["kind"] in {"architecture", "db-schema", "derived-view", "tech-stack"}
+        assert record["split_required"] is result.split_required
         assert result.findings == (), f"{record['path']} findings={result.findings}"
