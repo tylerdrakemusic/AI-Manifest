@@ -3,11 +3,13 @@ from __future__ import annotations
 import threading
 import time
 import logging
+import sys
+import types
 from unittest.mock import Mock
 
 import pytest
 
-from src.services.streaming_tts import StreamingTtsService
+from src.services.streaming_tts import StreamingTtsService, _AudioSink
 
 
 def test_start_rejects_empty_and_overlong_text() -> None:
@@ -57,11 +59,26 @@ def test_completed_session_reports_pcm_telemetry_and_retains_snapshot() -> None:
     assert snapshot["first_audible_latency_ms"] is not None
     assert snapshot["target_met"] is True
     client.text_to_speech_stream.assert_called_once_with(
-        "hello", "voice", model_id="model", output_format="pcm_44100"
+        "hello", "voice", model_id="model", output_format="pcm_22050"
     )
     assert sink.write.call_count == 2
     sink.stop.assert_called_once()
     sink.close.assert_called_once()
+
+
+def test_audio_sink_uses_mono_int16_pcm_at_22050_hz(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = Mock()
+    sounddevice = types.SimpleNamespace(RawOutputStream=Mock(return_value=stream))
+    monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)
+
+    _AudioSink()
+
+    sounddevice.RawOutputStream.assert_called_once_with(
+        samplerate=22050,
+        channels=1,
+        dtype="int16",
+        blocksize=0,
+    )
 
 
 def test_cancel_closes_provider_aborts_audio_and_flushes_pending_pcm() -> None:
