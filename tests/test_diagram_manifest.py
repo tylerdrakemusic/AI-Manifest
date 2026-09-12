@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.diagram_budget_helpers import (
+from .diagram_budget_helpers import (
     BUDGETS,
     DiagramCategory,
     DiagramSpec,
