@@ -12,7 +12,7 @@ graph TB
     StreamingStatus --> StreamingService
     StreamingCancel --> StreamingService
     StreamingService --> PCMQueue[bounded PCM queue]
-    PCMQueue --> Sounddevice[Windows sounddevice<br/>PCM 44.1 kHz]
+    PCMQueue --> Sounddevice[Windows sounddevice<br/>PCM pcm_22050 / 22050 Hz]
     StreamingService --> StreamDeadline{120 second deadline}
     StreamingService --> StreamRetention[10 minute terminal snapshot retention]
     StreamingService --> StreamCleanup[provider close, playback abort,<br/>queue flush, resource close]
