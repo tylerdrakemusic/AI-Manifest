@@ -1,0 +1,30 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
+%% is_derived_view=true
+%% Traceability.parent: diagrams/manifest-architecture.mmd
+graph TB
+    Tools[AI-Manifest tools] --> Portal[Executive Audio Brief Portal<br/>brief + image + audio delivery]
+    Portal -.->|read-only state projection| TodoExecutionLifecycle[(⊕ todo_execution_lifecycle<br/>canonical execution state)]
+    Tools --> Lily[src/utils/lily_portrait.py]
+    Lily --> DallE3[DallE3Client]
+    Lily --> HFImage[HuggingFaceImageClient]
+    Lily --> HFSpaces[HF Spaces FLUX]
+    Lily --> Pollinations[Pollinations.AI]
+    Lily --> Fallback[SVG silhouette fallback]
+    DallE3 -.-> WS[⊕ Workspace integrations]
+    HFImage -.-> WS
+    HFSpaces -.-> WS
+    Pollinations -.-> WS
+    DallE3 --> Images[output/images]
+    HFImage --> Images
+    Fallback --> Images
+    Images --> Portal
+    Briefs[brief generators] --> Portal
+    AudioOut[validated audio artifacts: output/tts/*.mp3] --> Portal
+classDef orch fill:#1a3a52,stroke:#4a9eff,color:#fff
+classDef ws fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
+classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
+classDef state fill:#1a1a1a,stroke:#888888,color:#cccccc
+    class Tools,Portal,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Briefs,AudioOut orch
+    class TodoExecutionLifecycle state
+    class Fallback state
+    class WS ws
