@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, r"F:\⊕Workspace")
-
-from src.utils.diagram_budgets import DiagramCategory, DiagramSpec, Traceability, measure_source, validate_diagram
+from src.utils.diagram_budgets import DiagramCategory
 
 
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "diagrams" / "diagram-manifest.json"
