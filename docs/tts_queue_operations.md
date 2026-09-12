@@ -80,23 +80,39 @@ returns the queue result as JSON-compatible fields and does not create audio,
 perform provider calls, or mutate decision state. Use the queue CLI below to
 inspect or recover jobs when status is healthy but delivery is delayed.
 
-## Bounded streaming playback
+## Governed approval-notification streaming
 
-The MCP server exposes `start_streaming_tts`, `streaming_tts_status`, and
-`cancel_streaming_tts` as a separate, non-durable local playback capability.
-`start_streaming_tts` accepts direct text, voice, and model inputs, rejects
-empty text and text longer than 5000 characters, and returns an opaque session
-ID immediately. Only one session may be active at a time.
+For a blocking approval decision, the normal text request remains authoritative;
+the optional voice notification is an additional, fail-open channel. Call the
+AI-Manifest MCP tools in this order:
 
-The session requests ElevenLabs `pcm_44100`, writes progressively to a local
-Windows `sounddevice` PCM stream at 44.1 kHz, and uses a bounded in-memory
-queue. It has a 120-second wall-clock deadline, no retries, and a ten-minute
-retention window for the latest terminal snapshot. Cancellation closes provider
-iteration, aborts playback, drains queued PCM, and closes the audio resource.
-Server exit cancels active work through the stdio shutdown hook. Structured
-terminal telemetry includes character, chunk, and byte counts, first-byte and
-first-audible latency, total elapsed time, target status, state, and a
-sanitized reason. No temporary audio file is used.
+1. Call `start_streaming_tts` with the concise approval text, approved
+  `voice_id`, and `model_id`. The call returns an opaque `session_id`
+  immediately and requests the governed `pcm_22050` stream. Do not call the
+  ElevenLabs provider directly.
+2. Poll `streaming_tts_status(session_id)` with a bounded polling budget until
+  the session reaches a terminal state or the caller's approval-notification
+  deadline is reached. The server itself bounds active work at 120 seconds and
+  retains the latest terminal snapshot for ten minutes.
+3. If the session is still active at the caller deadline, or the workflow is
+  interrupted, call `cancel_streaming_tts(session_id)` and treat its response
+  as cleanup telemetry. Cancellation closes provider iteration, aborts
+  playback, drains queued PCM, and closes the audio resource.
+
+The stream is progressive local PCM playback with a bounded in-memory queue. It
+does not create a temporary audio file, retry provider work, or share the
+durable queue lifecycle. `pcm_22050` is the compatibility contract for this
+MCP-facing path; callers must not change the already-merged audio format.
+
+Any start, status, cancellation, provider, or playback failure is diagnostic
+only. Fail open: preserve the text request, approval workflow result, and
+decision state, and do not wait indefinitely for voice. This path does not fall back
+to `submit_repository_voice`, the durable TTS queue, or `play_audio_file`. The
+durable queue remains available for its existing authorized asynchronous
+repository-voice consumers.
+
+For the general non-approval streaming capability, the MCP server exposes the
+same three tools as a separate, non-durable local playback capability.
 
 This capability is intentionally independent from the durable
 `submit_repository_voice` queue and from the synchronous `play_audio_file`

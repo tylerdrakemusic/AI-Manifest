@@ -26,6 +26,20 @@ Discover dynamically: scan `.github/agents/👁ai-manifest-*.agent.md`. Read eac
 - Client: `src/integrations/elevenlabs/client.py`; MCP server: `src/integrations/elevenlabs/mcp_server.py`; Config: `src/config/elevenlabs_settings.py`; Token: `ELEVENLABS_API_KEY` system environment variable
 - Test: `C:\G\python.exe -m src.integrations.elevenlabs.client --test`
 
+**Blocking approval notifications:**
+- Use the governed MCP sequence `start_streaming_tts` → bounded
+	`streaming_tts_status` polling → `cancel_streaming_tts` cleanup when the
+	session is still active at the caller deadline or the workflow is
+	interrupted.
+- Use the merged `pcm_22050` compatibility contract. Never call ElevenLabs
+	directly, create an ad hoc audio file, or change the stream format.
+- Voice is optional and fail-open: keep the normal text request, workflow
+	result, and decision state authoritative when any voice operation fails.
+- Do not fall back to `submit_repository_voice` or its durable TTS queue for
+	this approval-notification path. Preserve that queue for its existing
+	authorized consumers.
+- See `docs/tts_queue_operations.md` for the complete MCP-facing contract.
+
 **Adding Integrations:** new integrations → `src/integrations/<service_name>/`; config → `src/config/`; token loading → `src/utils/tokens.py`
 
 ## Flask App / Portal Registration
