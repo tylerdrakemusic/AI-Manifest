@@ -5,6 +5,17 @@ graph TB
     Tools[executive_audio_brief.py] --> Briefs[brief generators]
     Tools --> MCP[TTS MCP server]
     MCP --> PlayAudio[play_audio_file MCP registration]
+    MCP --> StreamingStart[start_streaming_tts MCP registration]
+    MCP --> StreamingStatus[streaming_tts_status MCP registration]
+    MCP --> StreamingCancel[cancel_streaming_tts MCP registration]
+    StreamingStart --> StreamingService[bounded streaming TTS session service]
+    StreamingStatus --> StreamingService
+    StreamingCancel --> StreamingService
+    StreamingService --> PCMQueue[bounded PCM queue]
+    PCMQueue --> Sounddevice[Windows sounddevice<br/>PCM 44.1 kHz]
+    StreamingService --> StreamDeadline{120 second deadline}
+    StreamingService --> StreamRetention[10 minute terminal snapshot retention]
+    StreamingService --> StreamCleanup[provider close, playback abort,<br/>queue flush, resource close]
     Tools --> Vocal[Vocal synthesis]
     Tools --> VoiceOrchestration[voice_orchestration.py]
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
@@ -56,10 +67,10 @@ classDef ws fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
 classDef ext fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
 classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
 classDef state fill:#1a1a1a,stroke:#888888,color:#cccccc
-    class Tools,Briefs,MCP,PlayAudio,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Portal,AudioOut orch
+    class Tools,Briefs,MCP,PlayAudio,StreamingStart,StreamingStatus,StreamingCancel,StreamingService,Sounddevice,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,Lily,DallE3,HFImage,HFSpaces,Pollinations,Images,Portal,AudioOut orch
     class AvailabilityGate state
-    class AudioPolicy,Reject,RootContainment,AtomicPublish,FilenameSandbox,DurationProbe,PlaybackCleanup manifest
-    class SizeGuard,DurationGuard,PlaybackResult state
+    class AudioPolicy,Reject,RootContainment,AtomicPublish,FilenameSandbox,DurationProbe,PlaybackCleanup,PCMQueue,StreamRetention,StreamCleanup manifest
+    class SizeGuard,DurationGuard,PlaybackResult,StreamDeadline state
     class MCI orch
     class Fallback state
     class WS ws

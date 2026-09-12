@@ -102,6 +102,19 @@ class TestTextToSpeechStream:
             assert chunks == [b"part1", b"part2"]
             mock_stream_func.assert_called_once()
 
+    def test_stream_iterator_close_closes_provider_response(self, client: ElevenLabsClient) -> None:
+        mock_stream = MagicMock()
+        mock_stream.__enter__.return_value = mock_stream
+        mock_stream.__exit__.return_value = None
+        mock_stream.iter_bytes.return_value = iter([b"part1"])
+        mock_stream.raise_for_status = MagicMock()
+
+        with patch(f"{_PATCH_PREFIX}.stream", return_value=mock_stream):
+            iterator = client.text_to_speech_stream("Hello", "voice123")
+            iterator.close()  # type: ignore[attr-defined]
+
+        mock_stream.close.assert_called_once()
+
 
 class TestSaveSpeech:
     def test_saves_to_file(self, client: ElevenLabsClient, tmp_path) -> None:
