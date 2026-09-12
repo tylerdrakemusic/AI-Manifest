@@ -8,6 +8,7 @@ API key: set ELEVENLABS_API_KEY in Windows System Environment Variables.
 from __future__ import annotations
 
 import base64
+import atexit
 import ctypes
 from dataclasses import asdict
 import hashlib
@@ -26,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.utils.audio_output_policy import atomic_write_bytes, resolve_audio_output_path
 from src.services import governed_repository_voice
+from src.services.streaming_tts import StreamingTtsService
 
 # ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
 # No hardcoded path fallback — use Windows System Environment Variables.
@@ -86,10 +88,21 @@ mcp = FastMCP(
         "ElevenLabs voice synthesis server. Use text_to_speech to generate an "
         "audio artifact, play_audio_file to synchronously play one governed MP3 "
         "from output/tts, and submit_repository_voice to enqueue an authorized "
-        "repository voice notification. Use list_voices to discover voice IDs "
+        "repository voice notification. Use start_streaming_tts for bounded local "
+        "PCM playback, streaming_tts_status for telemetry, and "
+        "cancel_streaming_tts to stop it. Use list_voices to discover voice IDs "
         "and get_subscription_info to check usage quota."
     ),
 )
+STREAMING_TTS_SERVICE = StreamingTtsService()
+
+
+def _shutdown_streaming_tts() -> None:
+    """Cancel local streaming work when the stdio server exits."""
+    STREAMING_TTS_SERVICE.shutdown()
+
+
+atexit.register(_shutdown_streaming_tts)
 
 
 def _playback_alias(path: Path) -> str:
@@ -248,6 +261,28 @@ def repository_voice_status() -> dict[str, object]:
 
 
 @mcp.tool()
+def start_streaming_tts(
+    text: str,
+    voice_id: str,
+    model_id: str = DEFAULT_MODEL_ID,
+) -> dict[str, object]:
+    """Start bounded local PCM playback and return an opaque session ID."""
+    return STREAMING_TTS_SERVICE.start(text, voice_id, model_id)
+
+
+@mcp.tool()
+def streaming_tts_status(session_id: str) -> dict[str, object]:
+    """Return current or retained terminal telemetry for a streaming session."""
+    return STREAMING_TTS_SERVICE.status(session_id)
+
+
+@mcp.tool()
+def cancel_streaming_tts(session_id: str) -> dict[str, object]:
+    """Cancel a streaming session and abort local playback."""
+    return STREAMING_TTS_SERVICE.cancel(session_id)
+
+
+@mcp.tool()
 def list_voices() -> str:
     """List all available ElevenLabs voices.
 
@@ -397,4 +432,7 @@ def get_subscription_info() -> str:
 # ── Entry point ──────────────────────────────────────────────────
 if __name__ == "__main__":
     log.info("Starting ElevenLabs MCP server (stdio)")
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        _shutdown_streaming_tts()

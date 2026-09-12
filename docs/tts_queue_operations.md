@@ -80,6 +80,29 @@ returns the queue result as JSON-compatible fields and does not create audio,
 perform provider calls, or mutate decision state. Use the queue CLI below to
 inspect or recover jobs when status is healthy but delivery is delayed.
 
+## Bounded streaming playback
+
+The MCP server exposes `start_streaming_tts`, `streaming_tts_status`, and
+`cancel_streaming_tts` as a separate, non-durable local playback capability.
+`start_streaming_tts` accepts direct text, voice, and model inputs, rejects
+empty text and text longer than 5000 characters, and returns an opaque session
+ID immediately. Only one session may be active at a time.
+
+The session requests ElevenLabs `pcm_44100`, writes progressively to a local
+Windows `sounddevice` PCM stream at 44.1 kHz, and uses a bounded in-memory
+queue. It has a 120-second wall-clock deadline, no retries, and a ten-minute
+retention window for the latest terminal snapshot. Cancellation closes provider
+iteration, aborts playback, drains queued PCM, and closes the audio resource.
+Server exit cancels active work through the stdio shutdown hook. Structured
+terminal telemetry includes character, chunk, and byte counts, first-byte and
+first-audible latency, total elapsed time, target status, state, and a
+sanitized reason. No temporary audio file is used.
+
+This capability is intentionally independent from the durable
+`submit_repository_voice` queue and from the synchronous `play_audio_file`
+artifact playback path. The separate synchronous-audio FR may coordinate on
+the public playback contract, but it must not share this session lifecycle.
+
 Provider synthesis remains asynchronous through `TtsQueueWorker`. The
 `playback` callback is the injected local-capability boundary, so tests and
 deployments can provide their own playback implementation without changing

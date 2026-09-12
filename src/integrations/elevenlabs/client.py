@@ -29,6 +29,35 @@ STREAM_CHUNK_SIZE = 4096
 BASE_URL = "https://api.elevenlabs.io/v1"
 
 
+class _CloseableStreamIterator:
+    def __init__(self, context: object, response: object, chunks: Iterator[bytes]) -> None:
+        self._context = context
+        self._response = response
+        self._chunks = chunks
+        self._closed = False
+
+    def __iter__(self) -> _CloseableStreamIterator:
+        return self
+
+    def __next__(self) -> bytes:
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        close_response = getattr(self._response, "close", None)
+        if callable(close_response):
+            close_response()
+        exit_context = getattr(self._context, "__exit__", None)
+        if callable(exit_context):
+            exit_context(None, None, None)
+
+
 class ElevenLabsClient:
     """Thin wrapper around the ElevenLabs REST API.
 
@@ -112,16 +141,21 @@ class ElevenLabsClient:
             "model_id": model_id,
             "voice_settings": voice_settings or DEFAULT_VOICE_SETTINGS,
         }
-        with httpx.stream(
+        stream_context = httpx.stream(
             "POST",
             f"{BASE_URL}/text-to-speech/{voice_id}/stream",
             headers=self._headers,
             json=payload,
             params={"output_format": output_format},
             timeout=60,
-        ) as resp:
-            resp.raise_for_status()
-            yield from resp.iter_bytes(chunk_size=STREAM_CHUNK_SIZE)
+        )
+        response = stream_context.__enter__()
+        response.raise_for_status()
+        return _CloseableStreamIterator(
+            stream_context,
+            response,
+            iter(response.iter_bytes(chunk_size=STREAM_CHUNK_SIZE)),
+        )
 
     def save_speech(
         self, text: str, voice_id: str, output_path: str | Path, **kwargs
