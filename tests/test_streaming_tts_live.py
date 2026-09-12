@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from src.services.streaming_tts import StreamingTtsService
+from src.services.streaming_tts import PCM_OUTPUT_FORMAT, StreamingTtsService
 
 
 @pytest.mark.live
@@ -14,6 +14,7 @@ from src.services.streaming_tts import StreamingTtsService
     reason="set ELEVENLABS_LIVE_SMOKE=1 on Windows to run the live smoke test",
 )
 def test_windows_live_streaming_tts_smoke() -> None:
+    assert PCM_OUTPUT_FORMAT == "pcm_22050"
     service = StreamingTtsService()
     started = service.start("Live streaming smoke test.", "21m00Tcm4TlvDq8ikWAM")
     deadline = time.monotonic() + 125
