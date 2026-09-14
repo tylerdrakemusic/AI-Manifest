@@ -104,6 +104,16 @@ does not create a temporary audio file, retry provider work, or share the
 durable queue lifecycle. `pcm_22050` is the compatibility contract for this
 MCP-facing path; callers must not change the already-merged audio format.
 
+Provider dispatch paths configured with the shared TTS dispatch coordinator use
+one admission policy. The coordinator admits
+the requested character count only from a fresh, well-formed subscription
+quota snapshot, and rejects dispatch when quota is unavailable, stale,
+malformed, or exhausted. Reservations are held through the provider call and
+released on success, cancellation, or failure. Actual local playback also
+holds a process-wide lease for the complete playback lifetime, including
+stream sink cleanup, so durable, streaming, and synchronous playback cannot
+overlap.
+
 Any start, status, cancellation, provider, or playback failure is diagnostic
 only. Fail open: preserve the text request, approval workflow result, and
 decision state, and do not wait indefinitely for voice. This path does not fall back

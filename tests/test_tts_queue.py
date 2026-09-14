@@ -37,6 +37,97 @@ from src.services.tts_queue_worker import (
     classify_http_error,
     compute_backoff_delay,
 )
+from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
+import src.services.tts_queue_worker as tts_queue_worker_module
+
+
+def test_default_worker_uses_shared_coordinator_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    shared_coordinator = object()
+    stop = MagicMock()
+    monkeypatch.setattr(
+        tts_queue_worker_module,
+        "get_shared_tts_dispatch_coordinator",
+        lambda: shared_coordinator,
+        raising=False,
+    )
+    monkeypatch.setattr(tts_queue_worker_module.TtsQueueWorker, "start", lambda self: None)
+    monkeypatch.setattr(tts_queue_worker_module.TtsQueueWorker, "stop", stop)
+
+    worker = tts_queue_worker_module.TtsQueueWorker()
+
+    assert worker._coordinator is shared_coordinator
+    assert tts_queue_worker_module.TtsQueueWorker(coordinator=None)._coordinator is None
+
+    tts_queue_worker_module.start_default_worker()
+    assert tts_queue_worker_module._default_worker is not None
+    assert tts_queue_worker_module._default_worker._coordinator is shared_coordinator
+
+    tts_queue_worker_module.stop_default_worker()
+    stop.assert_called_once()
+    assert tts_queue_worker_module._default_worker is None
+
+
+def test_worker_admits_quota_before_provider_call() -> None:
+    provider = MagicMock(return_value=b"audio")
+    coordinator = TtsDispatchCoordinator(quota_reader=lambda: None)
+    worker = TtsQueueWorker(
+        provider=provider,
+        coordinator=coordinator,
+        failure_injector=lambda _event, _job: None,
+    )
+
+    with pytest.raises(RuntimeError, match="quota"):
+        worker._process_job(
+            {
+                "id": 1,
+                "text": "must be admitted",
+                "voice_id": "voice",
+                "model_id": "model",
+                "output_format": "mp3_44100_128",
+                "retry_count": 0,
+            }
+        )
+
+    provider.assert_not_called()
+
+
+def test_injected_provider_does_not_resolve_live_quota_coordinator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Injected providers use local test boundaries without live quota access."""
+    quota_reader = MagicMock(side_effect=AssertionError("live quota access"))
+    monkeypatch.setattr(
+        tts_queue_worker_module,
+        "get_shared_tts_dispatch_coordinator",
+        lambda: TtsDispatchCoordinator(quota_reader=quota_reader),
+    )
+    db_path = tmp_path / "worker.db"
+    conn = _file_conn(db_path)
+    row_id = _enqueue_mem(conn, "injected", "voice")
+    conn.execute("UPDATE tts_queue SET decision_id='decision-test' WHERE id=?", (row_id,))
+    conn.commit()
+    job = get_job(conn, row_id)
+    conn.close()
+    assert job is not None
+    assert job["decision_id"] == "decision-test"
+
+    played: list[Path] = []
+    worker = TtsQueueWorker(
+        output_dir=tmp_path / "tts",
+        provider=lambda **_: b"injected-audio",
+        playback=played.append,
+    )
+    monkeypatch.setattr(
+        tts_queue_worker_module,
+        "get_connection",
+        lambda: _file_conn(db_path),
+    )
+    worker._process_job({**job, "status": "IN_PROGRESS"})
+
+    assert (tmp_path / "tts" / f"{row_id}.mp3").is_file()
+    assert played == [tmp_path / "tts" / f"{row_id}.mp3"]
+    assert quota_reader.call_count == 0
 
 
 # ---------------------------------------------------------------------------

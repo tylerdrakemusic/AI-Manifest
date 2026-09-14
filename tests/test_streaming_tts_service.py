@@ -10,6 +10,27 @@ from unittest.mock import Mock
 import pytest
 
 from src.services.streaming_tts import StreamingTtsService, _AudioSink
+from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
+
+
+def test_streaming_admits_quota_before_opening_provider_stream() -> None:
+    client = Mock()
+    coordinator = TtsDispatchCoordinator(quota_reader=lambda: None)
+    service = StreamingTtsService(
+        client_factory=lambda: client,
+        audio_factory=Mock,
+        coordinator=coordinator,
+    )
+
+    started = service.start("hello", "voice")
+    deadline = time.monotonic() + 2
+    snapshot = service.status(started["session_id"])
+    while snapshot["state"] in {"starting", "running"}:
+        assert time.monotonic() < deadline
+        snapshot = service.status(started["session_id"])
+
+    assert snapshot["state"] == "failed"
+    client.text_to_speech_stream.assert_not_called()
 
 
 def test_start_rejects_empty_and_overlong_text() -> None:
@@ -24,7 +45,7 @@ def test_start_rejects_empty_and_overlong_text() -> None:
 
 def test_only_one_streaming_session_can_be_active() -> None:
     client = Mock()
-    service = StreamingTtsService(client_factory=lambda: client)
+    service = StreamingTtsService(client_factory=lambda: client, audio_factory=Mock)
     client.text_to_speech_stream.return_value = iter(())
 
     first = service.start("hello", "voice")
@@ -32,7 +53,7 @@ def test_only_one_streaming_session_can_be_active() -> None:
     with pytest.raises(RuntimeError, match="active"):
         service.start("again", "voice")
 
-    service.cancel(first["session_id"])
+    service.shutdown()
 
 
 def test_completed_session_reports_pcm_telemetry_and_retains_snapshot() -> None:
@@ -108,6 +129,69 @@ def test_cancel_closes_provider_aborts_audio_and_flushes_pending_pcm() -> None:
     assert provider_closed.is_set()
     sink.abort.assert_called()
     sink.close.assert_called_once()
+
+
+def test_shutdown_serializes_native_sink_teardown_and_waits_for_worker() -> None:
+    client = Mock()
+    provider_started = threading.Event()
+    abort_started = threading.Event()
+    release_abort = threading.Event()
+    close_started = threading.Event()
+    release_close = threading.Event()
+    state_lock = threading.Lock()
+    sink_state = {"active": False, "overlap": False}
+
+    def provider() -> object:
+        provider_started.set()
+        while True:
+            yield b"\x00\x00"
+
+    client.text_to_speech_stream.return_value = provider()
+
+    class NativeSink:
+        def start(self) -> None:
+            return None
+
+        def write(self, chunk: bytes) -> None:
+            return None
+
+        def abort(self) -> None:
+            with state_lock:
+                if sink_state["active"]:
+                    sink_state["overlap"] = True
+                sink_state["active"] = True
+            abort_started.set()
+            release_abort.wait(timeout=2)
+            with state_lock:
+                sink_state["active"] = False
+
+        def close(self) -> None:
+            close_started.set()
+            release_close.wait(timeout=2)
+
+    sink = NativeSink()
+    service = StreamingTtsService(
+        client_factory=lambda: client,
+        audio_factory=lambda: sink,
+    )
+
+    started = service.start("hello", "voice")
+    assert provider_started.wait(timeout=2)
+
+    shutdown_thread = threading.Thread(target=service.shutdown)
+    shutdown_thread.start()
+    assert abort_started.wait(timeout=2)
+    assert shutdown_thread.is_alive()
+    release_abort.set()
+    assert close_started.wait(timeout=2)
+    assert shutdown_thread.is_alive()
+    release_close.set()
+    shutdown_thread.join(timeout=2)
+
+    snapshot = service.status(started["session_id"])
+    assert not shutdown_thread.is_alive()
+    assert snapshot["state"] == "cancelled"
+    assert sink_state["overlap"] is False
 
 
 def test_deadline_terminates_session_and_logs_secret_free_terminal_telemetry(

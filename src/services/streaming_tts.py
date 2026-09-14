@@ -12,12 +12,14 @@ from typing import Callable, Iterator
 from uuid import uuid4
 
 from src.integrations.elevenlabs.client import ElevenLabsClient
+from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
 
 MAX_TEXT_CHARS = 5000
 PCM_SAMPLE_RATE = 22050
 PCM_OUTPUT_FORMAT = "pcm_22050"
 SESSION_DEADLINE_SECONDS = 120.0
 SESSION_RETENTION_SECONDS = 600.0
+SHUTDOWN_JOIN_SECONDS = 5.0
 TARGET_FIRST_AUDIBLE_SECONDS = 2.0
 PCM_QUEUE_SIZE = 8
 logger = logging.getLogger(__name__)
@@ -61,6 +63,7 @@ class _Session:
     provider_iterator: Iterator[bytes] | None = None
     audio_sink: object | None = None
     thread: threading.Thread | None = None
+    teardown_lock: threading.Lock = field(default_factory=threading.Lock)
     snapshot: dict[str, object] = field(default_factory=dict)
 
 
@@ -75,12 +78,14 @@ class StreamingTtsService:
         clock: Callable[[], float] = time.monotonic,
         deadline_seconds: float = SESSION_DEADLINE_SECONDS,
         retention_seconds: float = SESSION_RETENTION_SECONDS,
+        coordinator: TtsDispatchCoordinator | None = None,
     ) -> None:
         self._client_factory = client_factory
         self._audio_factory = audio_factory
         self._clock = clock
         self._deadline_seconds = deadline_seconds
         self._retention_seconds = retention_seconds
+        self._coordinator = coordinator
         self._lock = threading.RLock()
         self._active: _Session | None = None
         self._snapshots: dict[str, tuple[float, dict[str, object]]] = {}
@@ -139,11 +144,13 @@ class StreamingTtsService:
             return dict(session.snapshot)
 
     def shutdown(self) -> None:
-        """Cancel active work during server shutdown without waiting on I/O."""
+        """Cancel active work and wait briefly for native cleanup."""
         with self._lock:
             active = self._active
         if active is not None:
             self.cancel(active.session_id, reason="shutdown")
+            if active.thread is not None:
+                active.thread.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
     def _run(self, session: _Session) -> None:
         started = session.created_at
@@ -155,6 +162,8 @@ class StreamingTtsService:
         pcm_queue: Queue[bytes | None] = Queue(maxsize=PCM_QUEUE_SIZE)
         producer_error: list[BaseException] = []
         producer_done = threading.Event()
+        quota_lease = None
+        playback_lease = None
 
         def produce() -> None:
             try:
@@ -189,6 +198,9 @@ class StreamingTtsService:
                 producer_done.set()
 
         try:
+            if self._coordinator is not None:
+                quota_lease = self._coordinator.reserve_quota(len(session.text))
+                playback_lease = self._coordinator.acquire_playback()
             audio_sink = self._audio_factory()
             with self._lock:
                 session.audio_sink = audio_sink
@@ -232,17 +244,22 @@ class StreamingTtsService:
                 except Empty:
                     break
             if audio_sink is not None:
-                try:
-                    if terminal_state == "cancelled":
-                        audio_sink.abort()  # type: ignore[attr-defined]
-                    else:
-                        audio_sink.stop()  # type: ignore[attr-defined]
-                except (OSError, RuntimeError):
-                    pass
-                try:
-                    audio_sink.close()  # type: ignore[attr-defined]
-                except (OSError, RuntimeError):
-                    pass
+                with session.teardown_lock:
+                    try:
+                        if terminal_state == "cancelled":
+                            audio_sink.abort()  # type: ignore[attr-defined]
+                        else:
+                            audio_sink.stop()  # type: ignore[attr-defined]
+                    except (OSError, RuntimeError):
+                        pass
+                    try:
+                        audio_sink.close()  # type: ignore[attr-defined]
+                    except (OSError, RuntimeError):
+                        pass
+            if playback_lease is not None:
+                playback_lease.release()
+            if quota_lease is not None:
+                quota_lease.release()
             total_elapsed = self._clock() - started
             snapshot = {
                 "session_id": session.session_id,
@@ -288,7 +305,11 @@ class StreamingTtsService:
                 pass
         sink = session.audio_sink
         if sink is not None and hasattr(sink, "abort"):
-            sink.abort()
+            with session.teardown_lock:
+                try:
+                    sink.abort()
+                except (OSError, RuntimeError):
+                    pass
 
     def _purge_expired(self) -> None:
         now = self._clock()

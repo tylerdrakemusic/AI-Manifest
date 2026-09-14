@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.utils.audio_output_policy import atomic_write_bytes, resolve_audio_output_path
 from src.services import governed_repository_voice
 from src.services.streaming_tts import StreamingTtsService
+from src.services.tts_dispatch_coordinator import (
+    QuotaSnapshot,
+    get_shared_tts_dispatch_coordinator,
+)
 
 # ── Load env (key expected in Windows system env via ELEVENLABS_API_KEY) ────
 # No hardcoded path fallback — use Windows System Environment Variables.
@@ -58,6 +63,17 @@ DEFAULT_VOICE_SETTINGS = {
 }
 
 REPOSITORY_VOICE_CAPABILITY = "repository_voice"
+
+
+def _read_quota() -> QuotaSnapshot:
+    from src.integrations.elevenlabs.client import ElevenLabsClient
+
+    data = ElevenLabsClient().get_subscription_info()
+    used = data.get("character_count")
+    limit = data.get("character_limit")
+    if type(used) is not int or type(limit) is not int:
+        raise ValueError("malformed quota response")
+    return QuotaSnapshot(used, limit, time.monotonic())
 
 # ── API Key ──────────────────────────────────────────────────────
 
@@ -94,7 +110,8 @@ mcp = FastMCP(
         "and get_subscription_info to check usage quota."
     ),
 )
-STREAMING_TTS_SERVICE = StreamingTtsService()
+TTS_DISPATCH_COORDINATOR = get_shared_tts_dispatch_coordinator()
+STREAMING_TTS_SERVICE = StreamingTtsService(coordinator=TTS_DISPATCH_COORDINATOR)
 
 
 def _shutdown_streaming_tts() -> None:
@@ -197,7 +214,11 @@ def play_audio_file(filename: str) -> dict[str, object]:
         raise ValueError(
             f"audio duration exceeds {MAX_AUDIO_DURATION_SECONDS:g} seconds"
         )
-    play_audio_path(audio_path)
+    playback_lease = TTS_DISPATCH_COORDINATOR.acquire_playback()
+    try:
+        play_audio_path(audio_path)
+    finally:
+        playback_lease.release()
     return {
         "status": "completed",
         "filename": filename,
@@ -338,16 +359,19 @@ def text_to_speech(
         "model_id": model_id,
         "voice_settings": DEFAULT_VOICE_SETTINGS,
     }
-    resp = httpx.post(
-        f"{BASE_URL}/text-to-speech/{voice_id}",
-        headers=_headers(),
-        json=payload,
-        params={"output_format": DEFAULT_OUTPUT_FORMAT},
-        timeout=60,
-    )
-    resp.raise_for_status()
-
-    atomic_write_bytes(output_path, resp.content)
+    quota_lease = TTS_DISPATCH_COORDINATOR.reserve_quota(len(text))
+    try:
+        resp = httpx.post(
+            f"{BASE_URL}/text-to-speech/{voice_id}",
+            headers=_headers(),
+            json=payload,
+            params={"output_format": DEFAULT_OUTPUT_FORMAT},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        atomic_write_bytes(output_path, resp.content)
+    finally:
+        quota_lease.release()
 
     return json.dumps({
         "status": "ok",
@@ -387,16 +411,19 @@ def text_to_speech_base64(
         "model_id": model_id,
         "voice_settings": DEFAULT_VOICE_SETTINGS,
     }
-    resp = httpx.post(
-        f"{BASE_URL}/text-to-speech/{voice_id}",
-        headers=_headers(),
-        json=payload,
-        params={"output_format": DEFAULT_OUTPUT_FORMAT},
-        timeout=60,
-    )
-    resp.raise_for_status()
-
-    audio_b64 = base64.b64encode(resp.content).decode("ascii")
+    quota_lease = TTS_DISPATCH_COORDINATOR.reserve_quota(len(text))
+    try:
+        resp = httpx.post(
+            f"{BASE_URL}/text-to-speech/{voice_id}",
+            headers=_headers(),
+            json=payload,
+            params={"output_format": DEFAULT_OUTPUT_FORMAT},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        audio_b64 = base64.b64encode(resp.content).decode("ascii")
+    finally:
+        quota_lease.release()
     return json.dumps({
         "status": "ok",
         "audio_base64": audio_b64,
