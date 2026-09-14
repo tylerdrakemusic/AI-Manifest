@@ -524,8 +524,9 @@ def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
         </li>"""
 
 
-def _status_card_html(proj: dict) -> str:
+def _status_card_html(proj: dict, rank: int | None = None) -> str:
     """Generate an HTML card for a project status."""
+    del rank
     sigil = html.escape(proj["sigil"])
     name = html.escape(proj["name"])
     summary = html.escape(proj["summary"])
