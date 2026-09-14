@@ -53,6 +53,146 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 _USE_SHARED_COORDINATOR = object()
+_MCI_PLAYBACK_TIMEOUT_SECONDS = 120.0
+
+
+class PlaybackCompletion:
+    """Represent the terminal state of an asynchronous local playback."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._state: str | None = None
+
+    def complete(self) -> bool:
+        """Mark playback complete and return whether this call won the race."""
+        return self._finish("completed")
+
+    def fail(self) -> bool:
+        """Mark playback failed and return whether this call won the race."""
+        return self._finish("failed")
+
+    def timeout(self) -> bool:
+        """Mark playback timed out and return whether this call won the race."""
+        return self._finish("timeout")
+
+    def cancel(self) -> bool:
+        """Mark playback cancelled and return whether this call won the race."""
+        return self._finish("cancelled")
+
+    def wait(self) -> str:
+        """Wait for and return the terminal playback state."""
+        with self._condition:
+            self._condition.wait_for(lambda: self._state is not None)
+            assert self._state is not None
+            return self._state
+
+    def _finish(self, state: str) -> bool:
+        with self._condition:
+            if self._state is not None:
+                return False
+            self._state = state
+            self._condition.notify_all()
+            return True
+
+
+class _MciPlaybackCompletion(PlaybackCompletion):
+    """Watch one asynchronous MCI operation and close its native alias once."""
+
+    def __init__(
+        self,
+        winmm: object,
+        alias: str,
+        command_buffer: ctypes.Array[ctypes.c_wchar],
+        *,
+        timeout_seconds: float = _MCI_PLAYBACK_TIMEOUT_SECONDS,
+    ) -> None:
+        super().__init__()
+        self._winmm = winmm
+        self._alias = alias
+        self._command_buffer = command_buffer
+        self._timeout_seconds = timeout_seconds
+        self._native_lock = threading.Lock()
+        self._native_closed = False
+        watcher = threading.Thread(target=self._watch, name=f"mci-playback-{alias}", daemon=True)
+        watcher.start()
+
+    def cancel(self) -> bool:
+        """Stop playback and close the native alias when cancellation wins."""
+        return self._terminate("cancelled", stop=True)
+
+    def complete(self) -> bool:
+        """Close the native alias after successful playback completion."""
+        return self._terminate("completed")
+
+    def fail(self) -> bool:
+        """Stop playback and close the native alias after native failure."""
+        return self._terminate("failed", stop=True)
+
+    def timeout(self) -> bool:
+        """Stop playback and close the native alias after a bounded timeout."""
+        return self._terminate("timeout", stop=True)
+
+    def _watch(self) -> None:
+        deadline = time.monotonic() + self._timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                error = self._send(f"status {self._alias} mode")
+            except Exception:
+                self._terminate("failed", stop=True)
+                return
+            if error:
+                self._terminate("failed", stop=True)
+                return
+            status = _mci_buffer_text(self._command_buffer)
+            if not status:
+                self._terminate("failed", stop=True)
+                return
+            if status.lower() == "stopped":
+                self.complete()
+                return
+            threading.Event().wait(0.05)
+        self.timeout()
+
+    def _send(self, command: str) -> int:
+        with self._native_lock:
+            return self._winmm.mciSendStringW(  # type: ignore[attr-defined]
+                command,
+                self._command_buffer,
+                len(self._command_buffer),
+                0,
+            )
+
+    def _terminate(self, state: str, *, stop: bool = False) -> bool:
+        if not self._finish(state):
+            return False
+        with self._native_lock:
+            if self._native_closed:
+                return True
+            if stop:
+                self._winmm.mciSendStringW(  # type: ignore[attr-defined]
+                    f"stop {self._alias}",
+                    self._command_buffer,
+                    len(self._command_buffer),
+                    0,
+                )
+            self._winmm.mciSendStringW(  # type: ignore[attr-defined]
+                f"close {self._alias}",
+                self._command_buffer,
+                len(self._command_buffer),
+                0,
+            )
+            self._native_closed = True
+        return True
+
+
+def _mci_buffer_text(command_buffer: object) -> str:
+    """Read native MCI text from ctypes buffers and deterministic test doubles."""
+    value = getattr(command_buffer, "value", None)
+    if value is not None:
+        return str(value).strip()
+    if isinstance(command_buffer, list):
+        return "".join(str(item) for item in command_buffer).strip("\0 ")
+    return ""
 
 
 def _default_provider(**kwargs: object) -> bytes:
@@ -61,7 +201,7 @@ def _default_provider(**kwargs: object) -> bytes:
     return client.text_to_speech(**kwargs)  # type: ignore[arg-type]
 
 
-def windows_playback(path: Path) -> None:
+def windows_playback(path: Path) -> PlaybackCompletion:
     """Play an MP3 through Windows multimedia APIs without launching an app."""
     if not IS_WINDOWS_PLATFORM:
         raise OSError("Windows playback is only available on Windows")
@@ -81,15 +221,11 @@ def windows_playback(path: Path) -> None:
         winmm.mciSendStringW(f"close {alias}", command_buffer, len(command_buffer), 0)
         raise OSError(f"Windows multimedia play failed: {error}")
 
-    # MCI playback is asynchronous. Close the native handle later so this call
-    # remains bounded without stopping the audio immediately.
-    cleanup = threading.Timer(
-        120.0,
-        winmm.mciSendStringW,
-        args=(f"close {alias}", command_buffer, len(command_buffer), 0),
+    return _MciPlaybackCompletion(
+        winmm,
+        alias,
+        command_buffer,
     )
-    cleanup.daemon = True
-    cleanup.start()
 
 
 def classify_http_error(error: httpx.HTTPStatusError) -> str:
@@ -123,7 +259,7 @@ class TtsQueueWorker:
         backoff_base_seconds: float = 2.0,
         backoff_max_seconds: float = 60.0,
         output_dir: Path | str | None = None,
-        playback: Callable[[Path], None] | None = None,
+        playback: Callable[[Path], object | None] | None = None,
         provider: Callable[..., bytes] | None = None,
         coordinator: TtsDispatchCoordinator | None | object = _USE_SHARED_COORDINATOR,
         failure_injector: Callable[[str, dict[str, Any]], None] | None = None,
@@ -146,6 +282,8 @@ class TtsQueueWorker:
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
+        self._active_playbacks: set[PlaybackCompletion] = set()
+        self._active_playbacks_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -183,6 +321,10 @@ class TtsQueueWorker:
     def stop(self) -> None:
         """Signal all threads to stop and wait for them to finish."""
         self._stop_event.set()
+        with self._active_playbacks_lock:
+            active_playbacks = tuple(self._active_playbacks)
+        for playback in active_playbacks:
+            playback.cancel()
         # Unblock worker threads waiting on the queue
         for _ in range(self._workers):
             try:
@@ -324,10 +466,22 @@ class TtsQueueWorker:
 
         if job.get("decision_id") and self._playback is not None:
             playback_lease = None
+            completion: PlaybackCompletion | None = None
             try:
                 if self._coordinator is not None:
                     playback_lease = self._coordinator.acquire_playback()
-                self._playback(output_path)
+                playback_result = self._playback(output_path)
+                if isinstance(playback_result, PlaybackCompletion):
+                    completion = playback_result
+                if isinstance(completion, PlaybackCompletion):
+                    with self._active_playbacks_lock:
+                        self._active_playbacks.add(completion)
+                        stopping = self._stop_event.is_set()
+                    if stopping:
+                        completion.cancel()
+                    playback_state = completion.wait()
+                    if playback_state != "completed":
+                        raise RuntimeError(f"playback {playback_state}")
             except Exception as exc:
                 logger.exception("Playback failed for queue job %s", job_id)
                 self._log_lifecycle(
@@ -335,6 +489,9 @@ class TtsQueueWorker:
                     characters=len(job["text"]), provider_error=f"playback failed: {exc}",
                 )
             finally:
+                if completion is not None:
+                    with self._active_playbacks_lock:
+                        self._active_playbacks.discard(completion)
                 if playback_lease is not None:
                     playback_lease.release()
 
