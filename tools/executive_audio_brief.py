@@ -524,7 +524,7 @@ def _todo_row_html(todo: dict[str, Any], sigil: str, name: str) -> str:
         </li>"""
 
 
-def _status_card_html(proj: dict, rank: int) -> str:
+def _status_card_html(proj: dict) -> str:
     """Generate an HTML card for a project status."""
     sigil = html.escape(proj["sigil"])
     name = html.escape(proj["name"])
@@ -575,21 +575,9 @@ def _status_card_html(proj: dict, rank: int) -> str:
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
 </div>"""
 
-    if rank == 1:
-        badge_class = "badge-1"
-    elif rank == 2:
-        badge_class = "badge-2"
-    elif rank == 3:
-        badge_class = "badge-3"
-    else:
-        badge_class = "badge-secondary"
-
-    card_extra_class = " rank-secondary" if rank > 3 else ""
-
     return f"""
-    <div class="status-card{card_extra_class}">
+    <div class="status-card">
         <div class="card-header">
-            <span class="priority-badge {badge_class}">#{rank}</span>
             <span class="project-sigil">{sigil}</span>
             <h3>{name}</h3>
         </div>
@@ -680,11 +668,11 @@ def generate_portal_html(
     timestamp: str,
 ) -> str:
     """Generate the full interactive portal HTML covering all 5 projects."""
-    all_ranked = sorted(all_statuses, key=lambda s: s.get("score", 0), reverse=True)
+    ranked_statuses = sorted(all_statuses, key=lambda s: s.get("score", 0), reverse=True)
     cards_html = "\n".join(
-        _status_card_html(p, i) for i, p in enumerate(all_ranked, 1)
+        _status_card_html(project) for project in all_statuses
     )
-    top3_keys = {s["key"] for s in all_ranked[:3]}
+    top3_keys = {s["key"] for s in ranked_statuses[:3]}
     offload_panel = _offload_panel_html(all_statuses)
     tab_nav_html = render_tab_nav_html()
     _regenerate_roadmap_data()
