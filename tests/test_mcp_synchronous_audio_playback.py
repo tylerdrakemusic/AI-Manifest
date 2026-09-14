@@ -6,6 +6,19 @@ from unittest.mock import Mock, patch
 import pytest
 
 from src.integrations.elevenlabs import mcp_server
+from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
+
+
+def test_text_to_speech_admits_quota_before_provider_call(tmp_path: Path) -> None:
+    coordinator = TtsDispatchCoordinator(quota_reader=lambda: None)
+
+    with patch.object(mcp_server, "OUTPUT_DIR", tmp_path), patch.object(
+        mcp_server, "TTS_DISPATCH_COORDINATOR", coordinator
+    ), patch.object(mcp_server.httpx, "post") as provider:
+        with pytest.raises(RuntimeError, match="quota"):
+            mcp_server.text_to_speech("hello", output_filename="brief.mp3")
+
+    provider.assert_not_called()
 
 
 def test_play_audio_file_plays_governed_mp3_synchronously(tmp_path: Path) -> None:

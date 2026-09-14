@@ -41,6 +41,10 @@ from src.utils.tts_queue_db import (
     requeue_after_local_failure,
 )
 from src.utils.audio_output_policy import atomic_write_bytes
+from src.services.tts_dispatch_coordinator import (
+    TtsDispatchCoordinator,
+    get_shared_tts_dispatch_coordinator,
+)
 
 logger = logging.getLogger(__name__)
 IS_WINDOWS_PLATFORM = os.name == "nt"
@@ -48,6 +52,7 @@ IS_WINDOWS_PLATFORM = os.name == "nt"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "output" / "tts"
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+_USE_SHARED_COORDINATOR = object()
 
 
 def _default_provider(**kwargs: object) -> bytes:
@@ -120,6 +125,7 @@ class TtsQueueWorker:
         output_dir: Path | str | None = None,
         playback: Callable[[Path], None] | None = None,
         provider: Callable[..., bytes] | None = None,
+        coordinator: TtsDispatchCoordinator | None | object = _USE_SHARED_COORDINATOR,
         failure_injector: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self._workers = workers
@@ -131,6 +137,11 @@ class TtsQueueWorker:
         self._output_dir = Path(output_dir) if output_dir is not None else _DEFAULT_OUTPUT_DIR
         self._playback = playback if playback is not None else windows_playback
         self._provider = provider or _default_provider
+        self._coordinator = (
+            get_shared_tts_dispatch_coordinator()
+            if provider is None
+            else None
+        ) if coordinator is _USE_SHARED_COORDINATOR else coordinator
         self._failure_injector = failure_injector
         self._job_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=workers * 4)
         self._stop_event = threading.Event()
@@ -247,7 +258,7 @@ class TtsQueueWorker:
         )
 
         try:
-            audio_bytes: bytes = self._provider(
+            audio_bytes: bytes = self._invoke_provider(
                 text=job["text"],
                 voice_id=job["voice_id"],
                 model_id=job["model_id"],
@@ -312,7 +323,10 @@ class TtsQueueWorker:
             conn.close()
 
         if job.get("decision_id") and self._playback is not None:
+            playback_lease = None
             try:
+                if self._coordinator is not None:
+                    playback_lease = self._coordinator.acquire_playback()
                 self._playback(output_path)
             except Exception as exc:
                 logger.exception("Playback failed for queue job %s", job_id)
@@ -320,12 +334,28 @@ class TtsQueueWorker:
                     "PLAYBACK_FAILED", job_id=job_id, retry_count=job["retry_count"],
                     characters=len(job["text"]), provider_error=f"playback failed: {exc}",
                 )
+            finally:
+                if playback_lease is not None:
+                    playback_lease.release()
 
         self._log_lifecycle(
             "DONE", job_id=job_id, retry_count=job["retry_count"],
             characters=len(job["text"]), latency_ms=round((time.perf_counter() - started) * 1000, 2),
             output_size=len(audio_bytes), output_path=str(output_path),
         )
+
+    def _invoke_provider(self, **kwargs: object) -> bytes:
+        quota_lease = None
+        try:
+            if self._coordinator is not None:
+                text = kwargs.get("text")
+                if not isinstance(text, str):
+                    raise ValueError("provider text must be a string")
+                quota_lease = self._coordinator.reserve_quota(len(text))
+            return self._provider(**kwargs)
+        finally:
+            if quota_lease is not None:
+                quota_lease.release()
 
     def _handle_transient_error(self, job: dict[str, Any], exc: Exception) -> None:
         """Retry a transient provider failure with bounded backoff."""

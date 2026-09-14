@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.integrations.elevenlabs import mcp_server
+from src.services.tts_dispatch_coordinator import QuotaSnapshot, TtsDispatchCoordinator
 
 
 @pytest.mark.parametrize(
@@ -44,16 +46,27 @@ def test_mcp_writes_valid_mp3_inside_output_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("ELEVENLABS_API_KEY", "fake-key")
+    quota_reader = MagicMock(
+        return_value=QuotaSnapshot(
+            used_characters=0,
+            character_limit=100,
+            observed_at=time.monotonic(),
+        )
+    )
+    coordinator = TtsDispatchCoordinator(quota_reader=quota_reader)
     response = MagicMock(content=b"ID3fake-audio")
     response.raise_for_status.return_value = None
 
     with patch.object(mcp_server, "OUTPUT_DIR", tmp_path), patch.object(
-        mcp_server.httpx, "post", return_value=response
-    ):
+        mcp_server, "TTS_DISPATCH_COORDINATOR", coordinator
+    ), patch.object(
+        mcp_server, "_read_quota", side_effect=AssertionError("live quota access")
+    ), patch.object(mcp_server.httpx, "post", return_value=response):
         result = json.loads(
             mcp_server.text_to_speech("hello", output_filename="session_take.mp3")
         )
 
+    quota_reader.assert_called_once_with()
     output_path = Path(result["path"]).resolve()
     assert output_path == (tmp_path / "session_take.mp3").resolve()
     assert output_path.is_relative_to(tmp_path.resolve())

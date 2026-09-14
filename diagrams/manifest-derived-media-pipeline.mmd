@@ -16,6 +16,7 @@ graph TB
     StreamingService --> StreamDeadline{120 second deadline}
     StreamingService --> StreamRetention[10 minute terminal snapshot retention]
     StreamingService --> StreamCleanup[provider close, playback abort,<br/>queue flush, resource close]
+    StreamingService --> TtsCoordinator[Shared TTS dispatch coordinator<br/>quota admission · playback lease]
     Tools --> Vocal[Vocal synthesis]
     Tools --> VoiceOrchestration[voice_orchestration.py]
     VoiceOrchestration --> VoiceRegistry[VoicePresetRegistry<br/>immutable versioned presets]
@@ -36,6 +37,7 @@ graph TB
     RootContainment --> AtomicPublish[atomic publication]
     AtomicPublish --> AudioOut[validated audio artifacts: output/tts/*.mp3]
     PlayAudio --> FilenameSandbox[output/tts filename sandbox]
+    PlayAudio --> TtsCoordinator
     FilenameSandbox --> SizeGuard{25 MiB size guard}
     SizeGuard -->|within cap| DurationProbe[duration probe]
     SizeGuard -->|over cap| PlaybackResult[structured result: rejected/error]
