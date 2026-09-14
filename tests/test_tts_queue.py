@@ -11,6 +11,8 @@ import hashlib
 import logging
 import queue
 import sqlite3
+import subprocess
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +41,28 @@ from src.services.tts_queue_worker import (
 )
 from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
 import src.services.tts_queue_worker as tts_queue_worker_module
+
+
+def test_default_worker_constructs_promptly_after_worker_first_import() -> None:
+    probe = (
+        "from src.services.tts_queue_worker import TtsQueueWorker\n"
+        "from src.services.tts_dispatch_coordinator import "
+        "get_shared_tts_dispatch_coordinator\n"
+        "worker = TtsQueueWorker()\n"
+        "assert worker._coordinator is get_shared_tts_dispatch_coordinator()\n"
+        "print('READY', flush=True)\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "READY"
 
 
 def test_default_worker_uses_shared_coordinator_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:

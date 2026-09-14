@@ -93,13 +93,16 @@ _shared_coordinator_lock = threading.Lock()
 def get_shared_tts_dispatch_coordinator() -> TtsDispatchCoordinator:
     """Return the process-wide coordinator shared by all TTS dispatch paths."""
     global _shared_coordinator
-    if _shared_coordinator is None:
-        with _shared_coordinator_lock:
-            if _shared_coordinator is None:
-                from src.integrations.elevenlabs.mcp_server import _read_quota
+    coordinator = _shared_coordinator
+    if coordinator is not None:
+        return coordinator
 
-                _shared_coordinator = TtsDispatchCoordinator(quota_reader=_read_quota)
-    return _shared_coordinator
+    from src.integrations.elevenlabs.mcp_server import _read_quota
+
+    with _shared_coordinator_lock:
+        if _shared_coordinator is None:
+            _shared_coordinator = TtsDispatchCoordinator(quota_reader=_read_quota)
+        return _shared_coordinator
 
 
 __all__ = [
