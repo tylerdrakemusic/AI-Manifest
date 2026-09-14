@@ -85,19 +85,20 @@ class TestPortalLoads:
 
 class TestStatusCards:
     def test_all_project_status_cards_rendered(self, page) -> None:
-        """All six project status cards should be present; top-three ranking is separate."""
+        """All six project status cards should be present in canonical order."""
         page.goto(PORTAL_URL)
         cards = page.locator(".status-card")
-        # The generator emits every project card and uses rank styling for the top three.
         assert cards.count() == 6
-
-    def test_priority_badges_visible(self, page) -> None:
-        """Priority badges #1, #2, #3 should all be rendered."""
-        page.goto(PORTAL_URL)
-        for rank in range(1, 4):
-            badge = page.locator(f".priority-badge.badge-{rank}")
-            assert badge.count() == 1, f"Badge #{rank} not found"
-            assert badge.is_visible()
+        assert cards.locator("h3").all_text_contents() == [
+            "Music",
+            "Life",
+            "Capital",
+            "Quantum",
+            "AI-Manifest",
+            "Workspace",
+        ]
+        assert cards.locator(".card-header .priority-badge").count() == 0
+        assert cards.locator(".rank-secondary").count() == 0
 
     def test_music_project_always_present(self, page) -> None:
         """❤Music must always appear in the top 3 (always_include=True)."""

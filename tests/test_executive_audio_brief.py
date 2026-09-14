@@ -388,7 +388,22 @@ def test_status_card_renders_ids_and_independent_provenance_signals_without_chan
     assert "priority-hint" not in out
     assert "leave blank" not in out
     assert 'onclick="markDone(227, this)"' in out
-    assert 'onclick="markDone(228, this)"' in out
+
+
+def test_status_card_accepts_legacy_rank_without_rendering_rank_markup() -> None:
+    from tools.executive_audio_brief import _status_card_html
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
+        "active_tasks": 0, "completed_tasks": 0, "full_todos": [],
+        "supervised_todos": [], "human_todos": [],
+    }
+
+    out = _status_card_html(status, 1)
+
+    assert '<div class="status-card">' in out
+    assert "priority-badge" not in out
+    assert "rank-secondary" not in out
 
 
 def test_status_card_layout_keeps_todo_text_readable_alongside_signal_rail() -> None:
