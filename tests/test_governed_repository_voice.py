@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.services.governed_repository_voice import submit_repository_voice
 from src.services.governed_voice_alerts import submit_alert
 from src.services import tts_queue_worker
+from src.services.tts_dispatch_coordinator import QuotaSnapshot, TtsDispatchCoordinator
 from src.services.tts_queue_worker import TtsQueueWorker
 from src.utils.tts_queue_db import get_job, init_tts_queue
 
@@ -21,6 +23,17 @@ def _connection_factory(db_path: Path, *, initialize: bool = True) -> sqlite3.Co
     if initialize:
         init_tts_queue(conn)
     return conn
+
+
+def _deterministic_coordinator() -> tuple[TtsDispatchCoordinator, MagicMock]:
+    quota_reader = MagicMock(
+        return_value=QuotaSnapshot(
+            used_characters=0,
+            character_limit=10_000,
+            observed_at=time.monotonic(),
+        )
+    )
+    return TtsDispatchCoordinator(quota_reader=quota_reader), quota_reader
 
 
 def test_concurrent_submissions_for_one_decision_create_one_queue_job(
@@ -92,6 +105,7 @@ def test_worker_plays_successful_audio_through_injected_boundary(tmp_path: Path)
     conn.close()
     assert job is not None
     played: list[Path] = []
+    coordinator, quota_reader = _deterministic_coordinator()
 
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as client, patch(
         "src.services.tts_queue_worker.get_connection",
@@ -102,9 +116,11 @@ def test_worker_plays_successful_audio_through_injected_boundary(tmp_path: Path)
             workers=1,
             output_dir=tmp_path / "tts",
             playback=lambda path: played.append(path),
+            coordinator=coordinator,
         )
         worker._process_job({**job, "status": "IN_PROGRESS"})
 
+    assert quota_reader.call_count == 1
     assert played == [tmp_path / "tts" / f"{result.job_id}.mp3"]
     conn = _connection_factory(db_path)
     try:
@@ -129,14 +145,22 @@ def test_worker_reports_playback_failure_without_changing_completed_queue_result
     def fail_playback(_: Path) -> None:
         raise OSError("speaker unavailable")
 
+    coordinator, quota_reader = _deterministic_coordinator()
+
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as client, patch(
         "src.services.tts_queue_worker.get_connection",
         side_effect=lambda: _connection_factory(db_path),
     ):
         client.return_value.text_to_speech.return_value = b"MP3"
-        worker = TtsQueueWorker(workers=1, output_dir=tmp_path / "tts", playback=fail_playback)
+        worker = TtsQueueWorker(
+            workers=1,
+            output_dir=tmp_path / "tts",
+            playback=fail_playback,
+            coordinator=coordinator,
+        )
         worker._process_job({**job, "status": "IN_PROGRESS"})
 
+    assert quota_reader.call_count == 1
     conn = _connection_factory(db_path)
     try:
         failed_job = get_job(conn, result.job_id)
@@ -198,14 +222,22 @@ def test_worker_keeps_completed_job_done_when_background_playback_fails(tmp_path
     def fail_playback(_: Path) -> None:
         raise OSError("speaker unavailable")
 
+    coordinator, quota_reader = _deterministic_coordinator()
+
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as client, patch(
         "src.services.tts_queue_worker.get_connection",
         side_effect=lambda: _connection_factory(db_path),
     ):
         client.return_value.text_to_speech.return_value = b"MP3"
-        worker = TtsQueueWorker(workers=1, output_dir=tmp_path / "tts", playback=fail_playback)
+        worker = TtsQueueWorker(
+            workers=1,
+            output_dir=tmp_path / "tts",
+            playback=fail_playback,
+            coordinator=coordinator,
+        )
         worker._process_job({**job, "status": "IN_PROGRESS"})
 
+    assert quota_reader.call_count == 1
     conn = _connection_factory(db_path)
     try:
         completed_job = get_job(conn, result.job_id)

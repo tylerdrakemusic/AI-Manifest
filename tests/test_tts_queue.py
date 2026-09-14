@@ -39,7 +39,10 @@ from src.services.tts_queue_worker import (
     classify_http_error,
     compute_backoff_delay,
 )
-from src.services.tts_dispatch_coordinator import TtsDispatchCoordinator
+from src.services.tts_dispatch_coordinator import (
+    QuotaSnapshot,
+    TtsDispatchCoordinator,
+)
 import src.services.tts_queue_worker as tts_queue_worker_module
 
 
@@ -113,6 +116,17 @@ def test_worker_admits_quota_before_provider_call() -> None:
         )
 
     provider.assert_not_called()
+
+
+def _deterministic_coordinator() -> tuple[TtsDispatchCoordinator, MagicMock]:
+    quota_reader = MagicMock(
+        return_value=QuotaSnapshot(
+            used_characters=0,
+            character_limit=10_000,
+            observed_at=time.monotonic(),
+        )
+    )
+    return TtsDispatchCoordinator(quota_reader=quota_reader), quota_reader
 
 
 def test_injected_provider_does_not_resolve_live_quota_coordinator(
@@ -637,12 +651,18 @@ def test_worker_publishes_deterministic_output_atomically(
     row_id = _enqueue_mem(conn, "atomic", "voice")
     conn.close()
     conn_factory = _make_conn_factory(db_path)
+    coordinator, quota_reader = _deterministic_coordinator()
 
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as mock_client, \
          patch("src.services.tts_queue_worker.get_connection", side_effect=conn_factory):
         mock_client.return_value.text_to_speech.return_value = fake_audio
         from src.services.tts_queue_worker import TtsQueueWorker
-        worker = TtsQueueWorker(workers=1, poll_interval=0.05, output_dir=tmp_path / "tts")
+        worker = TtsQueueWorker(
+            workers=1,
+            poll_interval=0.05,
+            output_dir=tmp_path / "tts",
+            coordinator=coordinator,
+        )
         worker.start()
         deadline = time.time() + 3
         while time.time() < deadline:
@@ -654,6 +674,7 @@ def test_worker_publishes_deterministic_output_atomically(
             time.sleep(0.05)
         worker.stop()
 
+    assert quota_reader.call_count == 1
     assert (tmp_path / "tts" / f"{row_id}.mp3").read_bytes() == fake_audio
     assert not list((tmp_path / "tts").glob("*.tmp"))
     lifecycle = [record.message for record in caplog.records if "tts_queue" in record.message]
@@ -694,6 +715,7 @@ def test_worker_processes_job(tmp_path: Path) -> None:
 
     conn_factory = _make_conn_factory(db_path)
     mp3_dir = tmp_path / "tts"
+    coordinator, quota_reader = _deterministic_coordinator()
 
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as MockClient, \
          patch("src.services.tts_queue_worker.get_connection", side_effect=conn_factory), \
@@ -702,7 +724,12 @@ def test_worker_processes_job(tmp_path: Path) -> None:
         MockClient.return_value.text_to_speech.return_value = fake_audio
 
         from src.services.tts_queue_worker import TtsQueueWorker
-        worker = TtsQueueWorker(workers=1, poll_interval=0.2, output_dir=mp3_dir)
+        worker = TtsQueueWorker(
+            workers=1,
+            poll_interval=0.2,
+            output_dir=mp3_dir,
+            coordinator=coordinator,
+        )
         worker.start()
         # Wait until the job is processed or timeout
         deadline = time.time() + 5
@@ -715,6 +742,7 @@ def test_worker_processes_job(tmp_path: Path) -> None:
             time.sleep(0.1)
         worker.stop()
 
+    assert quota_reader.call_count >= 1
     final_conn = _file_conn(db_path)
     job_after = get_job(final_conn, row_id)
     final_conn.close()
@@ -748,6 +776,7 @@ def test_worker_retries_on_429(tmp_path: Path) -> None:
 
     conn_factory = _make_conn_factory(db_path)
     mp3_dir = tmp_path / "tts2"
+    coordinator, quota_reader = _deterministic_coordinator()
 
     with patch("src.services.tts_queue_worker.ElevenLabsClient") as MockClient, \
          patch("src.services.tts_queue_worker.get_connection", side_effect=conn_factory), \
@@ -757,7 +786,12 @@ def test_worker_retries_on_429(tmp_path: Path) -> None:
         MockClient.return_value.text_to_speech.side_effect = _side_effect
 
         from src.services.tts_queue_worker import TtsQueueWorker
-        worker = TtsQueueWorker(workers=1, poll_interval=0.2, output_dir=mp3_dir)
+        worker = TtsQueueWorker(
+            workers=1,
+            poll_interval=0.2,
+            output_dir=mp3_dir,
+            coordinator=coordinator,
+        )
         worker.start()
         deadline = time.time() + 5
         while time.time() < deadline:
@@ -769,6 +803,7 @@ def test_worker_retries_on_429(tmp_path: Path) -> None:
             time.sleep(0.1)
         worker.stop()
 
+    assert quota_reader.call_count >= 2
     assert call_count["n"] >= 2, "ElevenLabsClient should have been called at least twice"
 
 
