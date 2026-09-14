@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import threading
+import sys
 import time
+import types
 
 import pytest
 
+import src.services.tts_dispatch_coordinator as coordinator_module
 from src.services.tts_dispatch_coordinator import (
     QuotaSnapshot,
     TtsDispatchCoordinator,
@@ -74,3 +78,44 @@ def test_playback_lease_serializes_complete_playback_lifetime() -> None:
 
     assert first_started is True
     assert second_started is True
+
+
+def test_shared_coordinator_is_singleton_during_concurrent_first_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent first callers must all receive one process-wide coordinator."""
+    first_constructor_started = threading.Event()
+    release_first_constructor = threading.Event()
+    real_coordinator = coordinator_module.TtsDispatchCoordinator
+
+    def delayed_constructor(*, quota_reader):
+        first_constructor_started.set()
+        release_first_constructor.wait(timeout=1)
+        return real_coordinator(quota_reader=quota_reader)
+
+    monkeypatch.setattr(coordinator_module, "_shared_coordinator", None)
+    monkeypatch.setattr(coordinator_module, "TtsDispatchCoordinator", delayed_constructor)
+    monkeypatch.setitem(
+        sys.modules,
+        "src.integrations.elevenlabs.mcp_server",
+        types.SimpleNamespace(_read_quota=lambda: None),
+    )
+
+    barrier = threading.Barrier(16)
+    instances: list[object] = []
+
+    def get_coordinator() -> None:
+        barrier.wait()
+        instances.append(coordinator_module.get_shared_tts_dispatch_coordinator())
+
+    threads = [threading.Thread(target=get_coordinator) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+
+    assert first_constructor_started.wait(timeout=1)
+    release_first_constructor.set()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert len(instances) == len(threads)
+    assert len({id(instance) for instance in instances}) == 1
