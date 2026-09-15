@@ -13,6 +13,7 @@ import queue
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ from src.utils.tts_queue_db import (
     set_attempt_usage,
 )
 from src.services.tts_queue_worker import (
+    _MciPlaybackCompletion,
+    PlaybackCompletion,
     TtsQueueWorker,
     classify_http_error,
     compute_backoff_delay,
@@ -166,6 +169,143 @@ def test_injected_provider_does_not_resolve_live_quota_coordinator(
     assert (tmp_path / "tts" / f"{row_id}.mp3").is_file()
     assert played == [tmp_path / "tts" / f"{row_id}.mp3"]
     assert quota_reader.call_count == 0
+
+
+def test_durable_playback_holds_lease_until_async_completion(tmp_path: Path) -> None:
+    coordinator, _ = _deterministic_coordinator()
+    playback_started = threading.Event()
+    playback_completed = threading.Event()
+    playback = PlaybackCompletion()
+
+    def start_playback(_path: Path) -> PlaybackCompletion:
+        playback_started.set()
+        return playback
+
+    worker = TtsQueueWorker(
+        output_dir=tmp_path / "tts",
+        provider=lambda **_: b"audio",
+        playback=start_playback,
+        coordinator=coordinator,
+    )
+    job = {
+        "id": 1,
+        "text": "durable",
+        "voice_id": "voice",
+        "model_id": "model",
+        "output_format": "mp3_44100_128",
+        "retry_count": 0,
+        "decision_id": "decision-test",
+    }
+
+    process = threading.Thread(target=worker._process_job, args=(job,))
+    process.start()
+    assert playback_started.wait(timeout=1)
+
+    def acquire_contender() -> None:
+        lease = coordinator.acquire_playback()
+        lease.release()
+        playback_completed.set()
+
+    contender = threading.Thread(target=acquire_contender)
+    contender.start()
+    assert not playback_completed.wait(timeout=0.05)
+
+    playback.complete()
+    process.join(timeout=1)
+    contender.join(timeout=1)
+
+    assert not process.is_alive()
+    assert playback_completed.is_set()
+
+
+@pytest.mark.parametrize("terminal_method", ["complete", "fail", "timeout", "cancel"])
+def test_durable_playback_releases_lease_once_for_each_terminal_state(
+    tmp_path: Path, terminal_method: str
+) -> None:
+    coordinator, _ = _deterministic_coordinator()
+    playback = PlaybackCompletion()
+    playback_started = threading.Event()
+    worker = TtsQueueWorker(
+        output_dir=tmp_path / "tts",
+        provider=lambda **_: b"audio",
+        playback=lambda _path: (playback_started.set() or playback),
+        coordinator=coordinator,
+    )
+    job = {
+        "id": 1,
+        "text": "durable",
+        "voice_id": "voice",
+        "model_id": "model",
+        "output_format": "mp3_44100_128",
+        "retry_count": 0,
+        "decision_id": "decision-test",
+    }
+    process = threading.Thread(target=worker._process_job, args=(job,))
+    process.start()
+    assert playback_started.wait(timeout=1)
+
+    assert getattr(playback, terminal_method)() is True
+    assert getattr(playback, terminal_method)() is False
+    process.join(timeout=1)
+
+    assert not process.is_alive()
+    lease = coordinator.acquire_playback()
+    lease.release()
+
+
+def test_worker_shutdown_cancels_active_durable_playback(tmp_path: Path) -> None:
+    playback = PlaybackCompletion()
+    playback_started = threading.Event()
+    coordinator, _ = _deterministic_coordinator()
+    worker = TtsQueueWorker(
+        workers=1,
+        output_dir=tmp_path / "tts",
+        provider=lambda **_: b"audio",
+        playback=lambda _path: (playback_started.set() or playback),
+        coordinator=coordinator,
+    )
+    job = {
+        "id": 1,
+        "text": "durable",
+        "voice_id": "voice",
+        "model_id": "model",
+        "output_format": "mp3_44100_128",
+        "retry_count": 0,
+        "decision_id": "decision-test",
+    }
+    process = threading.Thread(target=worker._process_job, args=(job,))
+    process.start()
+    assert playback_started.wait(timeout=1)
+
+    worker.stop()
+    process.join(timeout=1)
+
+    assert not process.is_alive()
+    assert playback.wait() == "cancelled"
+
+
+def test_mci_completion_closes_alias_once_after_native_completion() -> None:
+    commands: list[str] = []
+    allow_completion = threading.Event()
+
+    def fake_mci(command: str, buffer: Any, *_args: object) -> int:
+        commands.append(command)
+        if command.startswith("status "):
+            buffer.value = "stopped" if allow_completion.is_set() else "playing"
+        return 0
+
+    winmm = MagicMock(mciSendStringW=fake_mci)
+    handle = _MciPlaybackCompletion(
+        winmm,
+        "test_alias",
+        tts_queue_worker_module.ctypes.create_unicode_buffer(256),
+        timeout_seconds=1,
+    )
+
+    assert not any(command.startswith("close ") for command in commands)
+    allow_completion.set()
+    assert handle.wait() == "completed"
+    assert sum(command.startswith("close ") for command in commands) == 1
 
 
 # ---------------------------------------------------------------------------

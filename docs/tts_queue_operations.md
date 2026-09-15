@@ -138,10 +138,13 @@ MCI: it opens the published MP3 as `mpegvideo` and issues a background `play`
 command. It does not call `os.startfile`, open the Windows-associated player,
 or launch a visible application.
 
-MCI playback is asynchronous. `windows_playback` schedules a daemon cleanup
-timer to close the native MCI alias after 120 seconds, which keeps the
-operation bounded without stopping audio immediately. The cleanup is best
-effort; a playback diagnostic must not hold the queue worker open indefinitely.
+MCI playback is asynchronous. `windows_playback` returns a durable completion
+handle, and the queue worker retains the shared playback lease until MCI
+reports `stopped`, native playback fails, the bounded 120-second timeout fires,
+or the worker is shut down and cancels the operation. Every terminal path
+stops when necessary and closes the native MCI alias exactly once. The watcher
+is daemonized and bounded, so a playback diagnostic must not hold the process
+open indefinitely.
 
 Playback is decision-scoped: the worker invokes the injected capability only
 when the queue job contains a stable, non-empty persisted `decision_id`.
