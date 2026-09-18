@@ -24,11 +24,15 @@ graph TB
     VoiceRegistry --> AvailabilityGate{provider available?}
     AvailabilityGate -->|approved and available| OrderedVoices[ordered multi-voice orchestration]
     OrderedVoices --> ElevenLabsClient[existing ElevenLabsClient]
+    ReadinessAdapter[provider_health.py<br/>bounded non-generative readiness adapter]
+    ReadinessContract[provider-neutral ReadinessResult<br/>in-memory · live freshness · safe diagnostics]
     Briefs --> OpenAI[OpenAI]
     Briefs --> ElevenLabs[ElevenLabs]
     MCP --> ElevenLabs
     Vocal --> ElevenLabs
     ElevenLabsClient --> ElevenLabs
+    ReadinessAdapter --> ElevenLabs
+    ReadinessAdapter --> ReadinessContract
     VoiceOrchestration --> AudioPolicy
     MCP --> AudioPolicy[audio_output_policy.py]
     Vocal --> AudioPolicy
@@ -53,9 +57,10 @@ classDef ws fill:#1a3a30,stroke:#6ad4b4,color:#d0f8ee
 classDef ext fill:#3a2020,stroke:#ff7a7a,color:#ffd0d0
 classDef manifest fill:#3a2e1a,stroke:#d4a96a,color:#f8ead0
 classDef state fill:#1a1a1a,stroke:#888888,color:#cccccc
-    class Tools,Briefs,MCP,PlayAudio,StreamingStart,StreamingStatus,StreamingCancel,StreamingService,Sounddevice,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,AudioOut orch
+    class Tools,Briefs,MCP,PlayAudio,StreamingStart,StreamingStatus,StreamingCancel,StreamingService,Sounddevice,Vocal,VoiceOrchestration,VoiceRegistry,PresetApproval,OrderedVoices,ElevenLabsClient,ReadinessAdapter,AudioOut orch
     class AvailabilityGate state
     class AudioPolicy,Reject,RootContainment,AtomicPublish,FilenameSandbox,DurationProbe,PlaybackCleanup,PCMQueue,StreamRetention,StreamCleanup manifest
     class SizeGuard,DurationGuard,PlaybackResult,StreamDeadline state
     class MCI orch
     class OpenAI,ElevenLabs ext
+    class ReadinessContract ws
