@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Iterator
 
 import httpx
+
+from src.integrations.provider_health import Quota, ReadinessResult, readiness_result
 
 DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
@@ -178,6 +181,91 @@ class ElevenLabsClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def check_readiness(self) -> ReadinessResult:
+        """Perform one authenticated, non-generative readiness check."""
+        if not self._api_key:
+            return readiness_result(
+                state="unavailable",
+                latency_ms=None,
+                quota=None,
+                diagnostic_code="missing_credentials",
+            )
+
+        attempts = 0
+        started = time.monotonic()
+        while attempts < 2:
+            attempts += 1
+            try:
+                response = httpx.get(
+                    f"{BASE_URL}/user",
+                    headers=self._headers,
+                    timeout=8,
+                )
+                latency_ms = round((time.monotonic() - started) * 1000, 1)
+                if response.status_code in {429, 500, 502, 503, 504} and attempts < 2:
+                    continue
+                if response.status_code in {401, 403}:
+                    return readiness_result(
+                        state="unavailable",
+                        latency_ms=latency_ms,
+                        quota=None,
+                        diagnostic_code="authentication_failed",
+                    )
+                if response.status_code in {429, 500, 502, 503, 504}:
+                    return readiness_result(
+                        state="degraded",
+                        latency_ms=latency_ms,
+                        quota=None,
+                        diagnostic_code="provider_unavailable",
+                    )
+                if response.status_code >= 400:
+                    return readiness_result(
+                        state="degraded",
+                        latency_ms=latency_ms,
+                        quota=None,
+                        diagnostic_code="provider_error",
+                    )
+                payload = response.json()
+                subscription = payload.get("subscription", payload)
+                used = subscription.get("character_count")
+                limit = subscription.get("character_limit")
+                quota: Quota | None = None
+                if isinstance(used, int) and isinstance(limit, int) and used >= 0 and limit >= 0:
+                    quota = {"used": used, "limit": limit}
+                if quota is None:
+                    return readiness_result(
+                        state="degraded",
+                        latency_ms=latency_ms,
+                        quota=None,
+                        diagnostic_code="quota_malformed",
+                    )
+                return readiness_result(
+                    state="ready",
+                    latency_ms=latency_ms,
+                    quota=quota,
+                    diagnostic_code=None,
+                )
+            except (httpx.TransportError, ValueError, TypeError):
+                if attempts < 2:
+                    continue
+                return readiness_result(
+                    state="unknown",
+                    latency_ms=round((time.monotonic() - started) * 1000, 1),
+                    quota=None,
+                    diagnostic_code="transport_error",
+                )
+            except Exception:
+                return readiness_result(
+                    state="unknown",
+                    latency_ms=round((time.monotonic() - started) * 1000, 1),
+                    quota=None,
+                    diagnostic_code="unexpected_error",
+                )
+
+        return readiness_result(
+            state="unknown", latency_ms=None, quota=None, diagnostic_code="unknown"
+        )
 
 
 # ------------------------------------------------------------------

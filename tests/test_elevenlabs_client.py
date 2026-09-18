@@ -39,6 +39,37 @@ def test_resolves_api_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> N
     assert client._headers["xi-api-key"] == "env-key"
 
 
+def test_readiness_retries_one_transient_failure_and_reports_quota(
+    client: ElevenLabsClient,
+) -> None:
+    first = MagicMock(status_code=503)
+    second = MagicMock(status_code=200)
+    second.json.return_value = {
+        "subscription": {"character_count": 120, "character_limit": 1000}
+    }
+
+    with patch(f"{_PATCH_PREFIX}.get", side_effect=[first, second]) as mock_get:
+        result = client.check_readiness()
+
+    assert result["state"] == "ready"
+    assert result["quota"] == {"used": 120, "limit": 1000}
+    assert result["diagnostic_code"] is None
+    assert mock_get.call_count == 2
+
+
+def test_readiness_marks_exhausted_transient_failure_degraded(
+    client: ElevenLabsClient,
+) -> None:
+    response = MagicMock(status_code=503)
+
+    with patch(f"{_PATCH_PREFIX}.get", return_value=response) as mock_get:
+        result = client.check_readiness()
+
+    assert result["state"] == "degraded"
+    assert result["diagnostic_code"] == "provider_unavailable"
+    assert mock_get.call_count == 2
+
+
 class TestListVoices:
     def test_returns_voice_list(self, client: ElevenLabsClient) -> None:
         mock_resp = MagicMock()
