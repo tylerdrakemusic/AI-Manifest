@@ -29,6 +29,7 @@ graph TB
     AvailabilityGate --> OrderedVoices[ordered multi-voice orchestration]
     OrderedVoices --> ElevenLabsClient[existing ElevenLabsClient]
     ElevenLabsClient --> ElevenLabs
+    ProviderHealth[provider_health.py → ElevenLabs /v1/user<br/>provider-neutral ReadinessResult<br/>non-generative · non-persistent · safe diagnostics · live freshness]
     VoiceOrchestration --> AudioPolicy
     Briefs --> OpenAI[OpenAI]
     Briefs --> ElevenLabs[ElevenLabs]
@@ -49,7 +50,7 @@ graph TB
     Tools -.->|parent details| Media[manifest-derived-media-pipeline]
     Tools -.->|parent details| PortalMedia[manifest-derived-portal-and-image]
     Tools -.->|parent details| Todo[manifest-derived-todo-and-backup]
-    class Triggers,Tools,Briefs,Roadmap,VoiceOrchestration,VoiceRegistry,PresetApproval,AvailabilityGate,OrderedVoices,ElevenLabsClient orch
+    class Triggers,Tools,Briefs,Roadmap,VoiceOrchestration,VoiceRegistry,PresetApproval,AvailabilityGate,OrderedVoices,ElevenLabsClient,ProviderHealth orch
     class TodoDB db
     class CurrentMetadata,AssessmentHistory db
     class AudioPolicy,AudioBoundary,DecisionMetadata,GovernedRepositoryVoice,Playback manifest
