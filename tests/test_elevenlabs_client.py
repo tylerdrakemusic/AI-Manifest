@@ -70,6 +70,27 @@ def test_readiness_marks_exhausted_transient_failure_degraded(
     assert mock_get.call_count == 2
 
 
+def test_readiness_marks_authentication_failure_unavailable(
+    client: ElevenLabsClient,
+) -> None:
+    with patch(f"{_PATCH_PREFIX}.get", return_value=MagicMock(status_code=401)):
+        result = client.check_readiness()
+
+    assert result["state"] == "unavailable"
+    assert result["diagnostic_code"] == "authentication_failed"
+
+
+def test_readiness_marks_malformed_quota_degraded(client: ElevenLabsClient) -> None:
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"character_count": "120", "character_limit": 1000}
+
+    with patch(f"{_PATCH_PREFIX}.get", return_value=response):
+        result = client.check_readiness()
+
+    assert result["state"] == "degraded"
+    assert result["diagnostic_code"] == "quota_malformed"
+
+
 class TestListVoices:
     def test_returns_voice_list(self, client: ElevenLabsClient) -> None:
         mock_resp = MagicMock()
