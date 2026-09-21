@@ -44,6 +44,27 @@ def test_init_db_idempotent(tmp_db: Path) -> None:
     todos_db.init_db()
 
 
+def test_related_projects_are_validated_persisted_and_exposed_in_response(tmp_db: Path) -> None:
+    import src.utils.todos_db as todos_db
+
+    todo_id = todos_db.add_todo(
+        "ai_manifest",
+        "Coordinate related project signal",
+        related_projects=["workspace", "quantum"],
+    )
+
+    todo = todos_db.get_todo_by_id(todo_id)
+    response = todos_db.get_todo_response(todo_id)
+
+    assert todo["related_projects"] == ["workspace", "quantum"]
+    assert response["related_projects"] == ["workspace", "quantum"]
+    assert response["refinement"]["related_projects"] == ["workspace", "quantum"]
+
+    for invalid in (["workspace", "workspace"], ["unknown"], ["ai_manifest"]):
+        with pytest.raises(ValueError, match="related_projects"):
+            todos_db.add_todo("ai_manifest", "Invalid related project", related_projects=invalid)
+
+
 def test_identifier_quoting_rejects_sql_control_characters() -> None:
     import src.utils.todos_db as todos_db
 

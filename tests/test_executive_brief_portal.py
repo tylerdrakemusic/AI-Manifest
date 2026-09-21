@@ -434,6 +434,50 @@ class TestCheckmarkLiveServer:
     - No uncaught JS errors occur in either case.
     """
 
+    def test_related_project_signal_is_accessible_and_has_no_mobile_overflow(
+        self, live_server, page, monkeypatch
+    ) -> None:
+        """Related project names remain readable and contained on a narrow viewport."""
+        from tools import executive_audio_brief
+        from tools.executive_audio_brief import BriefRequestHandler, generate_portal_html
+
+        status = {
+            "sigil": "👁",
+            "name": "AI-Manifest",
+            "key": "ai_manifest",
+            "summary": "AI-Manifest summary.",
+            "active_tasks": 1,
+            "completed_tasks": 0,
+            "score": 1,
+            "full_todos": [],
+            "supervised_todos": [{
+                "id": 771,
+                "text": "Executive brief related signal",
+                "priority": 8,
+                "source": "AI",
+                "fr_id": None,
+                "perfected_at": None,
+                "related_projects": ["workspace", "quantum"],
+            }],
+            "human_todos": [],
+            "todo_hierarchy": [],
+        }
+        monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+        portal_html = generate_portal_html(
+            [status], "Brief script", None, [], "2026-09-20 00:00:00"
+        )
+        monkeypatch.setattr(BriefRequestHandler, "_build_fresh_portal_html", lambda self: portal_html)
+        console_errors: list[str] = []
+        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+        page.set_viewport_size({"width": 375, "height": 800})
+        page.goto(live_server[0])
+
+        signal = page.locator(".todo-related-projects").first
+        assert signal.get_attribute("aria-label") == "Related projects: Workspace, Quantum"
+        assert "Workspace, Quantum" in signal.inner_text()
+        assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        assert console_errors == []
+
     def _insert_temp_todo(self, db_file: Path, project: str = "workspace", text: str = "BFX temp todo", autonomy_level: str = "supervised") -> int:
         import src.utils.todos_db as todos_db
         import src.utils.todos_db as _m

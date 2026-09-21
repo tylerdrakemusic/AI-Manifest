@@ -358,6 +358,55 @@ def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
     assert "Execution queue" not in output
 
 
+def test_related_project_signal_renders_on_standalone_nested_and_offload_rows() -> None:
+    from tools.executive_audio_brief import (
+        _offload_panel_html,
+        _todo_node_html,
+        _todo_row_html,
+    )
+
+    related = ["workspace", "quantum"]
+    standalone = _todo_row_html(
+        {"id": 1, "text": "Standalone", "state": "queued", "related_projects": related},
+        "👁",
+        "AI-Manifest",
+    )
+    nested = _todo_node_html(
+        {
+            "id": 2,
+            "text": "Nested parent",
+            "state": "queued",
+            "related_projects": related,
+            "children": [{
+                "id": 4,
+                "text": "Nested child",
+                "state": "queued",
+                "related_projects": [],
+            }],
+        },
+        "👁",
+        "AI-Manifest",
+        "nested",
+    )
+    offload = _offload_panel_html([{
+        "sigil": "👁",
+        "name": "AI-Manifest",
+        "full_todos": [{
+            "id": 3,
+            "text": "Offloadable",
+            "priority": 8,
+            "source": "AI",
+            "related_projects": related,
+        }],
+    }])
+
+    for output in (standalone, nested, offload):
+        assert "Related projects" in output
+        assert "Workspace" in output
+        assert "Quantum" in output
+    assert 'class="todo-related-projects"' in nested
+
+
 def test_status_card_renders_ids_and_independent_provenance_signals_without_changing_done_target() -> None:
     from tools.executive_audio_brief import _status_card_html
 

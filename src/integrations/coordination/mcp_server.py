@@ -54,7 +54,7 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.create": {
             "project", "text", "priority", "source", "autonomy_level",
             "rationale", "implementation_hints", "context_snapshot",
-            "estimated_effort", "dependencies", "parent_id", "confirmed",
+            "estimated_effort", "dependencies", "related_projects", "parent_id", "confirmed",
         },
         "todo.read": {"todo_id"},
         "todo.draft_scope": {"todo_id", "scope"},
@@ -66,7 +66,7 @@ def invoke_todo_operation(operation: str, payload: Mapping[str, Any]) -> Any:
         "todo.update": {
             "todo_id", "expected_version", "authenticated", "text", "priority",
             "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
-            "estimated_effort", "dependencies", "perfected_at",
+            "estimated_effort", "dependencies", "related_projects", "perfected_at",
         },
         "todo.complete": {
             "todo_id", "expected_version", "authenticated", "confirmed",
@@ -237,6 +237,7 @@ def create_todo(
     context_snapshot: str | None = None,
     estimated_effort: str | None = None,
     dependencies: str | None = None,
+    related_projects: list[str] | None = None,
     parent_id: int | None = None,
 ) -> int:
     """Create a manifest todo, requiring confirmation for explicit priority."""
@@ -259,6 +260,7 @@ def create_todo(
         "context_snapshot": context_snapshot,
         "estimated_effort": estimated_effort,
         "dependencies": dependencies,
+        "related_projects": related_projects,
     }.items():
         if value is not None:
             payload[key] = value
@@ -339,6 +341,7 @@ def update_todo(
     context_snapshot: str | None = None,
     estimated_effort: str | None = None,
     dependencies: str | None = None,
+    related_projects: list[str] | None = None,
     perfected_at: str | None = None,
 ) -> dict[str, Any]:
     """Update mutable todo fields through the authenticated public contract."""
@@ -355,6 +358,7 @@ def update_todo(
         "context_snapshot": context_snapshot,
         "estimated_effort": estimated_effort,
         "dependencies": dependencies,
+        "related_projects": related_projects,
         "perfected_at": perfected_at,
     }.items():
         if value is not None:
