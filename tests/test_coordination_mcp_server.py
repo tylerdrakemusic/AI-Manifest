@@ -446,6 +446,38 @@ def test_authenticated_rich_update_requires_version_and_preserves_protected_fiel
         )
 
 
+def test_authenticated_update_exposes_related_projects_refinement(tmp_db):
+    from src.integrations.coordination import mcp_server
+    from src.utils import todos_db
+
+    todo_id = todos_db.add_todo("ai_manifest", "Related project signal")
+    original = todos_db.get_todo_by_id(todo_id)
+
+    updated = mcp_server.invoke_todo_operation(
+        "todo.update",
+        {
+            "todo_id": todo_id,
+            "related_projects": ["workspace", "music"],
+            "expected_version": original["updated_at"],
+            "authenticated": True,
+        },
+    )
+
+    assert updated["related_projects"] == ["workspace", "music"]
+    assert updated["refinement"]["related_projects"] == ["workspace", "music"]
+
+    with pytest.raises(ValueError, match="related_projects"):
+        mcp_server.invoke_todo_operation(
+            "todo.update",
+            {
+                "todo_id": todo_id,
+                "related_projects": ["ai_manifest"],
+                "expected_version": updated["updated_at"],
+                "authenticated": True,
+            },
+        )
+
+
 def test_authenticated_rich_update_rejects_priority_as_protected_field(tmp_db):
     from src.integrations.coordination import mcp_server
     from src.utils import todos_db

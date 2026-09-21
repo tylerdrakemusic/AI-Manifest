@@ -88,11 +88,29 @@ _SIGIL_TO_KEY: dict[str, str] = {
     "ΣCapital":      "capital",
     "⊕Workspace":   "workspace",
 }
+CANONICAL_PROJECT_KEYS = frozenset(_SIGIL_TO_KEY.values())
 
 
 def _normalize_project(project: str) -> str:
     """Return the canonical lowercase DB key for a project name."""
     return _SIGIL_TO_KEY.get(project, project)
+
+
+def _validate_related_projects(project: str, related_projects: Any) -> list[str]:
+    """Validate related project keys without inferring relationships."""
+    if not isinstance(related_projects, list) or not all(
+        isinstance(key, str) for key in related_projects
+    ):
+        raise ValueError("related_projects must be a list of strings")
+    if len(set(related_projects)) != len(related_projects):
+        raise ValueError("related_projects must not contain duplicates")
+    home_project = _normalize_project(project)
+    unknown = set(related_projects) - CANONICAL_PROJECT_KEYS
+    if unknown:
+        raise ValueError(f"related_projects contains unknown project keys: {sorted(unknown)!r}")
+    if home_project in related_projects:
+        raise ValueError("related_projects must not include the todo home project")
+    return list(related_projects)
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -116,6 +134,7 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
     closure_reason_expression = "closure_reason" if _has_column(conn, "todos", "closure_reason") else "NULL"
     parent_expression = "parent_id" if _has_column(conn, "todos", "parent_id") else "NULL"
     dependencies_expression = "dependencies" if _has_column(conn, "todos", "dependencies") else "NULL"
+    related_projects_expression = "related_projects" if _has_column(conn, "todos", "related_projects") else "'[]'"
     conn.execute("BEGIN")
     try:
         conn.execute("""
@@ -134,19 +153,21 @@ def _migrate_todos_for_scan_source(conn: sqlite3.Connection) -> None:
                 fr_id      TEXT,
                 perfected_at TEXT,
                 parent_id INTEGER,
-                dependencies TEXT
+                dependencies TEXT,
+                related_projects TEXT NOT NULL DEFAULT '[]'
             )
         """)
         conn.execute(
             """
-            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at, parent_id, dependencies)
-            SELECT id, project, source, text, done, created_at, {closed_at_expression}, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}
+            INSERT INTO todos_new (id, project, source, text, done, created_at, closed_at, closure_reason, priority, fr_id, perfected_at, parent_id, dependencies, related_projects)
+            SELECT id, project, source, text, done, created_at, {closed_at_expression}, {closure_reason_expression}, priority, fr_id, perfected_at, {parent_expression}, {dependencies_expression}, {related_projects_expression}
             FROM todos
         """.format(
             closed_at_expression=closed_at_expression,
             closure_reason_expression=closure_reason_expression,
             parent_expression=parent_expression,
             dependencies_expression=dependencies_expression,
+            related_projects_expression=related_projects_expression,
         ))
         conn.execute("DROP TABLE todos")
         conn.execute("ALTER TABLE todos_new RENAME TO todos")
@@ -345,6 +366,11 @@ def init_db() -> None:
                     f"{_quote_identifier(_col)} TEXT"
                 )
 
+        if not _has_column(conn, "todos", "related_projects"):
+            conn.execute(
+                "ALTER TABLE todos ADD COLUMN related_projects TEXT NOT NULL DEFAULT '[]'"
+            )
+
         if not _has_column(conn, "todos", "parent_id"):
             conn.execute("ALTER TABLE todos ADD COLUMN parent_id INTEGER")
 
@@ -396,7 +422,7 @@ def get_open_todos(project: str | None = None) -> list[dict[str, Any]]:
             rows = conn.execute(
                 "SELECT * FROM todos WHERE done=0 ORDER BY project, source, priority DESC, id ASC"
             ).fetchall()
-    return [dict(r) for r in rows]
+    return [_decode_todo_row(r) for r in rows]
 
 
 def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
@@ -413,7 +439,7 @@ def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
             rows = conn.execute(
                 "SELECT * FROM todos WHERE done=1 ORDER BY closed_at DESC"
             ).fetchall()
-    return [dict(r) for r in rows]
+    return [_decode_todo_row(r) for r in rows]
 
 
 def mark_done(todo_id: int, *, force: bool = False) -> bool:
@@ -533,9 +559,13 @@ def add_todo(
     estimated_effort: str | None = None,
     dependencies: str | None = None,
     parent_id: int | None = None,
+    related_projects: list[str] | None = None,
 ) -> int:
     """Insert a new todo and return its id. Raises ValueError for invalid priority."""
     project = _normalize_project(project)
+    related_projects = _validate_related_projects(
+        project, [] if related_projects is None else related_projects
+    )
     if priority not in range(1, 11):
         raise ValueError(f"priority must be 1-10, got {priority!r}")
     if source not in ALLOWED_SOURCES:
@@ -551,12 +581,12 @@ def add_todo(
         cur = conn.execute(
             "INSERT INTO todos"
             " (project, source, text, done, created_at, updated_at, priority, autonomy_level,"
-            "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  rationale, implementation_hints, context_snapshot, estimated_effort, dependencies, parent_id, related_projects)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 project, source, text, created_at, created_at, priority, autonomy_level,
                 rationale, implementation_hints, context_snapshot,
-                estimated_effort, dependencies, parent_id,
+                estimated_effort, dependencies, parent_id, json.dumps(related_projects),
             ),
         )
         conn.commit()
@@ -601,7 +631,7 @@ def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> 
     """Update mutable todo fields only when the stored version still matches."""
     mutable = {
         "text", "autonomy_level", "rationale", "implementation_hints", "context_snapshot",
-        "estimated_effort", "dependencies", "perfected_at",
+        "estimated_effort", "dependencies", "perfected_at", "related_projects",
     }
     unknown = set(fields) - mutable
     if unknown:
@@ -610,6 +640,14 @@ def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> 
         raise ValueError("at least one mutable field is required")
     if "autonomy_level" in fields and fields["autonomy_level"] not in ALLOWED_AUTONOMY_LEVELS:
         raise ValueError(f"autonomy_level must be one of {ALLOWED_AUTONOMY_LEVELS!r}")
+    existing = get_todo_by_id(todo_id)
+    if existing is None:
+        raise ValueError("todo not found")
+    if "related_projects" in fields:
+        fields = dict(fields)
+        fields["related_projects"] = json.dumps(
+            _validate_related_projects(existing["project"], fields["related_projects"])
+        )
     updated_at = datetime.now(timezone.utc).isoformat()
     assignments = ", ".join(f"{field}=?" for field in fields) + ", updated_at=?"
     values = [fields[field] for field in fields] + [updated_at, todo_id, expected_version]
@@ -624,7 +662,7 @@ def update_todo(todo_id: int, expected_version: str, fields: dict[str, Any]) -> 
             raise ValueError("precondition failed: todo version is stale")
         conn.commit()
         row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
-    return dict(row)
+    return _decode_todo_row(row)
 
 
 def complete_todo(
@@ -775,7 +813,18 @@ def get_todo_by_id(todo_id: int) -> dict[str, Any] | None:
         row = conn.execute(
             "SELECT * FROM todos WHERE id=?", (todo_id,)
         ).fetchone()
-    return dict(row) if row else None
+    return _decode_todo_row(row) if row else None
+
+
+def _decode_todo_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    """Return a public TODO row with related project keys decoded."""
+    result = dict(row)
+    raw_related = result.get("related_projects")
+    if raw_related is None:
+        result["related_projects"] = []
+    elif isinstance(raw_related, str):
+        result["related_projects"] = json.loads(raw_related)
+    return result
 
 
 def get_todo_response(todo_id: int) -> dict[str, Any]:
@@ -786,7 +835,7 @@ def get_todo_response(todo_id: int) -> dict[str, Any]:
         field: todo[field]
         for field in (
             "rationale", "implementation_hints", "context_snapshot",
-            "estimated_effort", "dependencies",
+            "estimated_effort", "dependencies", "related_projects",
         )
     }
     return {
@@ -930,17 +979,18 @@ def get_todo_graph(todo_id: int) -> dict[str, Any]:
             "SELECT * FROM priority_history WHERE todo_id=? ORDER BY id", (todo_id,)
         )]
         conn.commit()
+    decoded_todo = _decode_todo_row(todo_row)
     refinement = {
-        field: todo_row[field]
+        field: decoded_todo[field]
         for field in (
             "rationale", "implementation_hints", "context_snapshot",
-            "estimated_effort", "dependencies",
+            "estimated_effort", "dependencies", "related_projects",
         )
     }
     return {
-        "todo": dict(todo_row),
-        "parent": dict(parent_row) if parent_row else None,
-        "children": children,
+        "todo": decoded_todo,
+        "parent": _decode_todo_row(parent_row) if parent_row else None,
+        "children": [_decode_todo_row(row) for row in children],
         "edges": edges,
         "metadata": get_decision_metadata(todo_id),
         "assessments": get_decision_assessments(todo_id),

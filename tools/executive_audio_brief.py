@@ -132,6 +132,7 @@ PROJECTS = [
         "priority_weight": 1,
     },
 ]
+PROJECT_NAMES = {project["key"]: project["name"] for project in PROJECTS}
 
 # ---------------------------------------------------------------------------
 # Status collection
@@ -375,11 +376,21 @@ def _todo_signal_html(todo: dict[str, Any]) -> str:
         '<span class="todo-signal" data-signal="perfected">PERFECTED</span>'
         if perfected else ""
     )
+    related_projects = todo.get("related_projects") or []
+    related_names = [PROJECT_NAMES[key] for key in related_projects if key in PROJECT_NAMES]
+    related_html = ""
+    if related_names:
+        related_label = "Related projects: " + ", ".join(related_names)
+        related_html = (
+            f'<span class="todo-related-projects" aria-label="{html.escape(related_label, quote=True)}" '
+            f'title="{html.escape(related_label, quote=True)}">↗ {html.escape(", ".join(related_names))}</span>'
+        )
     return (
         f'<span class="todo-id">TODO #{todo["id"]}</span>'
         f'{perfected_html}'
     ) + (
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
+        f'{related_html}'
     )
 
 
@@ -469,6 +480,7 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
               onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
             <span class="todo-text" title="{parent_text}">{parent_text}</span>
             <span class="todo-state">{html.escape(parent.get('state', 'queued'))}</span>
+            {_todo_signal_html(parent)}
             {_copy_todo_button(parent['id'], parent['text'])}
                         <span class="todo-actions"><button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
                         <button class="cancel-btn" onclick="cancelTodo({parent['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{parent['id']}">×</button></span>
@@ -496,6 +508,7 @@ def _todo_node_html(todo: dict[str, Any], sigil: str, name: str, key: str) -> st
                     onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
                 <span class="todo-text" title="{text}">{text}</span>
                 <span class="todo-state">{html.escape(todo.get('state', 'queued'))}</span>
+                {_todo_signal_html(todo)}
                 <span class="todo-actions">{_copy_todo_button(todo['id'], todo['text'])}<button class="done-btn" onclick="markDone({todo['id']}, this)" title="Mark done" aria-label="Mark TODO #{todo['id']} done">✓</button>
                     <button class="cancel-btn" onclick="cancelTodo({todo['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{todo['id']}">×</button></span>
             </div>
@@ -607,6 +620,7 @@ def _offload_panel_html(all_statuses: list[dict]) -> str:
                 "source": t.get("source", ""),
                 "fr_id": t.get("fr_id"),
                 "perfected_at": t.get("perfected_at"),
+                "related_projects": t.get("related_projects", []),
             })
     rows.sort(key=lambda r: r["priority"], reverse=True)
 
@@ -1052,6 +1066,13 @@ header h1 {{
 .signal-muted {{
     color: var(--text-muted);
     background: rgba(122, 138, 160, 0.12);
+}}
+.todo-related-projects {{
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    max-width: 100%;
+    overflow-wrap: anywhere;
 }}
 .done-btn {{
     flex-shrink: 0;
