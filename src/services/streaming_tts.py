@@ -273,12 +273,12 @@ class StreamingTtsService:
                 "total_elapsed_ms": round(total_elapsed * 1000, 3),
                 "target_met": first_audible is not None and first_audible - started < TARGET_FIRST_AUDIBLE_SECONDS,
             }
+            logger.info("streaming_tts_terminal %s", json.dumps(snapshot, sort_keys=True))
             with self._lock:
                 session.snapshot = snapshot
                 self._snapshots[session.session_id] = (self._clock(), dict(snapshot))
                 if self._active is session:
                     self._active = None
-            logger.info("streaming_tts_terminal %s", json.dumps(snapshot, sort_keys=True))
 
     def _new_snapshot(self, session: _Session) -> dict[str, object]:
         return {
