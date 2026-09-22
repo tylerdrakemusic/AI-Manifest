@@ -1068,7 +1068,13 @@ header h1 {{
     background: rgba(122, 138, 160, 0.12);
 }}
 .todo-related-projects {{
-    color: var(--text-muted);
+    color: var(--accent);
+    background: rgba(125, 211, 252, 0.12);
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.35rem;
     font-size: 0.72rem;
     font-weight: 600;
     max-width: 100%;
@@ -1460,6 +1466,7 @@ footer {{
             "meta";
     }}
     .todo-meta {{ align-items: flex-start; }}
+    .todo-related-projects {{ flex-basis: 100%; }}
     .todo-list li > .todo-signal {{
         min-width: 0;
         white-space: normal;
