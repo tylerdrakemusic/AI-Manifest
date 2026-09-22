@@ -456,7 +456,7 @@ class TestCheckmarkLiveServer:
                 "priority": 8,
                 "source": "AI",
                 "fr_id": None,
-                "perfected_at": None,
+                "perfected_at": "2026-09-21T00:00:00+00:00",
                 "related_projects": ["workspace", "quantum"],
             }],
             "human_todos": [],
@@ -469,13 +469,22 @@ class TestCheckmarkLiveServer:
         monkeypatch.setattr(BriefRequestHandler, "_build_fresh_portal_html", lambda self: portal_html)
         console_errors: list[str] = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
-        page.set_viewport_size({"width": 375, "height": 800})
+        page.set_viewport_size({"width": 390, "height": 800})
         page.goto(live_server[0])
 
         signal = page.locator(".todo-related-projects").first
+        perfected = page.locator('[data-signal="perfected"]').first
         assert signal.get_attribute("aria-label") == "Related projects: Workspace, Quantum"
         assert "Workspace, Quantum" in signal.inner_text()
         assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        viewport = page.evaluate("() => document.documentElement.clientWidth")
+        for element in (perfected, signal):
+            box = element.bounding_box()
+            assert box is not None
+            assert box["x"] >= 0 and box["x"] + box["width"] <= viewport
+        assert signal.evaluate(
+            "element => getComputedStyle(element).color !== getComputedStyle(document.querySelector('.todo-project')).color"
+        )
         assert console_errors == []
 
     def _insert_temp_todo(self, db_file: Path, project: str = "workspace", text: str = "BFX temp todo", autonomy_level: str = "supervised") -> int:
