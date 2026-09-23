@@ -358,6 +358,40 @@ def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
     assert "Execution queue" not in output
 
 
+def test_parent_row_has_one_identity_and_a_dedicated_signal_rail() -> None:
+    from tools.executive_audio_brief import _todo_hierarchy_html
+
+    hierarchy = [{
+        "parent": {
+            "id": 666,
+            "text": "A parent title that remains readable at narrow widths",
+            "priority": 9,
+            "source": "TYLER",
+            "fr_id": "FR-20260922-ai-manifest-status-card-responsive",
+            "perfected_at": "2026-09-22T00:00:00+00:00",
+            "state": "queued",
+        },
+        "inline_children": [],
+        "collapsed_children": [{
+            "id": 667,
+            "text": "Child TODO",
+            "priority": 5,
+            "source": "AI",
+            "state": "queued",
+        }],
+        "aggregate_state": "queued",
+        "join_status": "1 child · 1 queued",
+    }]
+
+    output = _todo_hierarchy_html(hierarchy, "👁", "AI-Manifest")
+
+    assert output.count('<span class="todo-id">TODO #666</span>') == 1
+    assert '<span class="todo-signal-rail">' in output
+    assert 'class="todo-signal" data-signal="perfected"' in output
+    assert 'class="todo-signal signal-linked"' in output
+    assert '<div class="todo-meta"><span class="source-tag">TYLER</span></div>' in output
+
+
 def test_related_project_signal_renders_on_standalone_nested_and_offload_rows() -> None:
     from tools.executive_audio_brief import (
         _offload_panel_html,
@@ -562,6 +596,24 @@ def test_status_card_todo_rows_have_stable_non_overlapping_spacing() -> None:
     assert 'grid-template-areas:\n        "primary"\n        "meta";' in out
     assert "min-width: 0;" in out
     assert "overflow-wrap: anywhere;" in out
+
+
+def test_status_card_parent_lane_has_responsive_signal_and_control_rails() -> None:
+    from tools.executive_audio_brief import generate_portal_html
+
+    out = generate_portal_html([], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
+
+    assert ".parent-todo-primary > .todo-text { grid-area: text; }" in out
+    assert ".parent-todo-primary > .todo-id { grid-area: identity; }" in out
+    assert ".parent-todo-primary > .todo-signal-rail { grid-area: signals; }" in out
+    assert ".parent-todo-primary > .todo-actions { grid-area: actions; }" in out
+    assert ".parent-todo-primary > .todo-join-status { grid-area: join; }" in out
+    assert 'grid-template-areas:\n        "toggle text text"\n        "toggle state state"\n        "toggle identity signals"\n        "toggle actions join";' in out
+    assert ".parent-todo-primary .todo-signal-rail {" in out
+    assert "min-width: 0;" in out
+    assert "max-width: 100%;" in out
+    assert "overflow-wrap: anywhere;" in out
+    assert "flex-wrap: wrap;" in out
 
 
 def test_generate_brief_script_covers_all_5_projects() -> None:

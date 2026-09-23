@@ -366,7 +366,7 @@ def _priority_badge(priority: int) -> str:
     return f'<span class="priority-badge-inline {cls}">P{priority}</span>'
 
 
-def _todo_signal_html(todo: dict[str, Any]) -> str:
+def _todo_signal_html(todo: dict[str, Any], include_id: bool = True) -> str:
     """Render the perfected signal when present and an independent FR-link signal."""
     perfected = bool(todo.get("perfected_at"))
     linked = bool(todo.get("fr_id"))
@@ -385,10 +385,8 @@ def _todo_signal_html(todo: dict[str, Any]) -> str:
             f'<span class="todo-related-projects" aria-label="{html.escape(related_label, quote=True)}" '
             f'title="{html.escape(related_label, quote=True)}">↗ {html.escape(", ".join(related_names))}</span>'
         )
-    return (
-        f'<span class="todo-id">TODO #{todo["id"]}</span>'
-        f'{perfected_html}'
-    ) + (
+    identity_html = f'<span class="todo-id">TODO #{todo["id"]}</span>' if include_id else ""
+    return identity_html + perfected_html + (
         f'<span class="todo-signal {linked_class}">{linked_label}</span>'
         f'{related_html}'
     )
@@ -480,13 +478,13 @@ def _todo_hierarchy_html(hierarchy: list[dict[str, Any]], sigil: str, name: str)
               onclick="toggleTodoChildren(this)" title="Show child TODOs">▸</button>
             <span class="todo-text" title="{parent_text}">{parent_text}</span>
             <span class="todo-state">{html.escape(parent.get('state', 'queued'))}</span>
-            {_todo_signal_html(parent)}
-            {_copy_todo_button(parent['id'], parent['text'])}
-                        <span class="todo-actions"><button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
+            <span class="todo-id">TODO #{parent['id']}</span>
+            <span class="todo-signal-rail">{_todo_signal_html(parent, include_id=False)}</span>
+                        <span class="todo-actions">{_copy_todo_button(parent['id'], parent['text'])}<button class="done-btn" onclick="markDone({parent['id']}, this)" title="Mark done" aria-label="Mark TODO #{parent['id']} done">✓</button>
                         <button class="cancel-btn" onclick="cancelTodo({parent['id']}, this)" title="Cancel todo" aria-label="Cancel TODO #{parent['id']}">×</button></span>
             <span class="todo-join-status">{html.escape(group['join_status'])}</span>
           </div>
-          <div class="todo-meta"><span class="todo-id">TODO #{parent['id']}</span><span class="source-tag">{html.escape(parent.get('source', ''))}</span></div>
+          <div class="todo-meta"><span class="source-tag">{html.escape(parent.get('source', ''))}</span></div>
           <div id="{panel_id}" class="todo-collapsed-children" hidden><ul class="todo-children">{child_rows}</ul></div>
         </li>""")
     return "".join(fragments)
@@ -969,11 +967,42 @@ header h1 {{
 }}
 .parent-todo-primary {{
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
+    grid-template-areas:
+        "toggle text text"
+        "toggle state state"
+        "toggle identity signals"
+        "toggle actions join";
     align-items: center;
     gap: 0.45rem;
     min-width: 0;
     max-width: 100%;
+    width: 100%;
+}}
+.parent-todo-primary > .expand-todo-btn {{ grid-area: toggle; }}
+.parent-todo-primary > .todo-text {{ grid-area: text; }}
+.parent-todo-primary > .todo-state {{ grid-area: state; }}
+.parent-todo-primary > .todo-id {{ grid-area: identity; }}
+.parent-todo-primary > .todo-signal-rail {{ grid-area: signals; }}
+.parent-todo-primary > .todo-actions {{ grid-area: actions; }}
+.parent-todo-primary > .todo-join-status {{ grid-area: join; }}
+.parent-todo-primary .todo-signal-rail {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    max-width: 100%;
+}}
+.parent-todo-primary .todo-signal {{
+    min-width: 0;
+    white-space: nowrap;
+}}
+.parent-todo-primary .todo-actions {{
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
 }}
 .expand-todo-btn, .copy-todo-btn {{
     flex: 0 0 1.7rem;
@@ -1048,6 +1077,7 @@ header h1 {{
     display: inline-flex;
     align-items: center;
     min-width: 7.5rem;
+    max-width: 100%;
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.68rem;
@@ -1470,6 +1500,22 @@ footer {{
     .todo-list li > .todo-signal {{
         min-width: 0;
         white-space: normal;
+    }}
+    .todo-meta .todo-signal,
+    .parent-todo-primary {{
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas:
+            "toggle text"
+            "toggle state"
+            "toggle identity"
+            "toggle signals"
+            "toggle actions"
+            "toggle join";
+        align-items: start;
+    }}
+    .parent-todo-primary .todo-signal-rail {{
+        min-width: 0;
+        width: 100%;
     }}
     .todo-primary {{ grid-template-columns: minmax(0, 1fr) auto; }}
     .todo-text {{ max-width: none; }}

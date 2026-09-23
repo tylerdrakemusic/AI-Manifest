@@ -293,13 +293,15 @@ def signal_rail_server(tmp_path_factory, monkeypatch_class):
             """
             INSERT INTO todos
                 (id, project, source, text, done, created_at, priority,
-                 autonomy_level, fr_id, perfected_at)
-            VALUES (?, 'workspace', 'AI', ?, 0, ?, 9, 'supervised', ?, ?)
+                 autonomy_level, fr_id, perfected_at, parent_id)
+            VALUES (?, 'workspace', 'AI', ?, 0, ?, 9, 'supervised', ?, ?, ?)
             """,
             [
-                (927, "Signal rail perfected only", "2026-08-10T00:00:00+00:00", None, "2026-08-10T01:00:00+00:00"),
-                (928, "Signal rail FR-linked only", "2026-08-10T00:01:00+00:00", "FR-20260809-todo-provenance-signal-rail", None),
-                (929, "Signal rail perfected and FR-linked", "2026-08-10T00:02:00+00:00", "FR-20260809-todo-provenance-signal-rail", "2026-08-10T02:00:00+00:00"),
+                (927, "Signal rail perfected only", "2026-08-10T00:00:00+00:00", None, "2026-08-10T01:00:00+00:00", None),
+                (928, "Signal rail FR-linked only", "2026-08-10T00:01:00+00:00", "FR-20260809-todo-provenance-signal-rail", None, None),
+                (929, "Signal rail perfected and FR-linked", "2026-08-10T00:02:00+00:00", "FR-20260809-todo-provenance-signal-rail", "2026-08-10T02:00:00+00:00", None),
+                (666, "Responsive parent title with independent signals", "2026-08-10T00:03:00+00:00", "FR-20260922-ai-manifest-status-card-responsive", "2026-08-10T03:00:00+00:00", None),
+                (667, "Responsive child stays collapsed", "2026-08-10T00:04:00+00:00", None, None, 666),
             ],
         )
         conn.commit()
@@ -377,6 +379,59 @@ class TestProvenanceSignalRail:
                     path=str(proof_dir / f"FR-20260809-todo-provenance-signal-rail-{viewport_name}.png"),
                     full_page=True,
                 )
+        finally:
+            page.close()
+
+
+    def test_parent_card_layout_is_contained_at_desktop_and_mobile(self, browser, signal_rail_server) -> None:
+        """The parent lane keeps identity, signals, controls, and child count usable."""
+        proof_dir = Path(__file__).resolve().parent.parent / "proof/screenshots"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        page = browser.new_page()
+        try:
+            for viewport_name, viewport in (("desktop", (1280, 900)), ("mobile", (390, 844))):
+                page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+                response = page.goto(f"{signal_rail_server}/")
+                assert response is not None and response.status == 200
+                page.wait_for_load_state("domcontentloaded")
+
+                row = page.locator(".parent-todo-row").filter(has_text="Responsive parent title")
+                assert row.count() == 1
+                primary = row.locator(":scope > .parent-todo-primary")
+                assert primary.count() == 1
+                assert primary.locator(":scope > .todo-id").all_text_contents() == ["TODO #666"]
+                assert row.locator(":scope > .todo-meta .todo-id").count() == 0
+                assert primary.locator(":scope > .todo-text").is_visible()
+                assert primary.locator(":scope > .todo-state").is_visible()
+                assert primary.locator(":scope > .todo-actions button").count() == 3
+                assert primary.locator(":scope > .todo-join-status").is_visible()
+                assert primary.locator(":scope > .todo-text").get_attribute("title") == (
+                    "Responsive parent title with independent signals"
+                )
+
+                geometry = primary.locator(":scope > .todo-signal-rail").evaluate(
+                    "rail => {"
+                    "const railBox = rail.getBoundingClientRect();"
+                    "const signals = [...rail.querySelectorAll('.todo-signal')].map(signal => {"
+                    "const box = signal.getBoundingClientRect();"
+                    "return {left: box.left, right: box.right, top: box.top, bottom: box.bottom};"
+                    "});"
+                    "return {rail: {left: railBox.left, right: railBox.right, top: railBox.top, bottom: railBox.bottom}, signals};"
+                    "}"
+                )
+                assert len(geometry["signals"]) == 2
+                rail_box = geometry["rail"]
+                for signal_box in geometry["signals"]:
+                    assert rail_box["left"] <= signal_box["left"] <= signal_box["right"] <= rail_box["right"]
+                    assert rail_box["top"] <= signal_box["top"] <= signal_box["bottom"] <= rail_box["bottom"]
+                first, second = geometry["signals"]
+                assert first["right"] <= second["left"] or second["right"] <= first["left"] or (
+                    first["bottom"] <= second["top"] or second["bottom"] <= first["top"]
+                )
+
+                assert primary.evaluate("element => element.scrollWidth <= element.clientWidth")
+                assert row.evaluate("element => element.scrollWidth <= element.clientWidth")
+                page.screenshot(path=str(proof_dir / f"FR-20260922-parent-card-{viewport_name}.png"), full_page=True)
         finally:
             page.close()
 
