@@ -154,7 +154,7 @@ def _approved_entry() -> dict[str, object]:
 
 def _prepared_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
     monkeypatch.setenv("WORKSPACE_BACKUP_MANIFEST_KEY", "manifest-test-key")
-    database_key = "manifest-database-test-key"
+    database_key = "manifest-database-test-key'with-quote"
     monkeypatch.setenv("MANIFEST_TODOS_DB_KEY", database_key)
     project_root = tmp_path / "AI-Manifest"
     source = project_root / "src" / "data" / "manifest_todos.db"
@@ -203,7 +203,7 @@ def test_backup_publishes_authenticated_generation_with_exact_source_identity(
     metadata = validate_backup(result.manifest_path)
     backup_file = result.manifest_path.parent / "ai_manifest" / "coordination-store"
     assert metadata["source_sha256"] == hashlib.sha256(backup_file.read_bytes()).hexdigest()
-    assert _read_fixture_value(backup_file, "manifest-database-test-key") == "backup-fixture"
+    assert _read_fixture_value(backup_file, "manifest-database-test-key'with-quote") == "backup-fixture"
     assert metadata["manifest_auth"]["algorithm"] == "HMAC-SHA256"
     assert "manifest-test-key" not in result.manifest_path.read_text(encoding="utf-8")
 
@@ -238,7 +238,7 @@ def test_restore_requires_approval_and_preserves_database_identity_in_isolated_r
 
     DatabaseBackup.restore(result.manifest_path, destination, restore_root, True, "trusted-volume")
     restored = restore_root / "ai_manifest" / "coordination-store"
-    assert _read_fixture_value(restored, "manifest-database-test-key") == "backup-fixture"
+    assert _read_fixture_value(restored, "manifest-database-test-key'with-quote") == "backup-fixture"
     audit = (destination_root / "backup-audit.jsonl").read_text(encoding="utf-8")
     assert str(restore_root) not in audit
     assert str(source) not in audit
@@ -360,7 +360,7 @@ def test_operator_restore_entry_point_validates_sqlcipher_after_copy(
 
     assert validation_calls == [(restore_root, validate_backup(result.manifest_path))]
     assert _read_fixture_value(
-        restore_root / "ai_manifest" / "coordination-store", "manifest-database-test-key"
+        restore_root / "ai_manifest" / "coordination-store", "manifest-database-test-key'with-quote"
     ) == "backup-fixture"
 
 
@@ -384,7 +384,7 @@ def test_restored_sqlcipher_generation_reopens_with_environment_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import sqlcipher3
-    key = "sqlcipher-test-key"
+    key = "sqlcipher-test-key'with-quote"
     monkeypatch.setenv("WORKSPACE_BACKUP_MANIFEST_KEY", "manifest-test-key")
     monkeypatch.setenv("MANIFEST_TODOS_DB_KEY", key)
     project_root = tmp_path / "AI-Manifest"
@@ -392,7 +392,8 @@ def test_restored_sqlcipher_generation_reopens_with_environment_key(
     source.parent.mkdir(parents=True)
     connection = sqlcipher3.connect(str(source))
     try:
-        connection.execute(f"PRAGMA key='{key}'")
+        safe_key = key.replace("'", "''")
+        connection.execute(f"PRAGMA key='{safe_key}'")
         connection.execute("CREATE TABLE contract (value TEXT NOT NULL)")
         connection.execute("INSERT INTO contract VALUES ('restored')")
         connection.commit()
