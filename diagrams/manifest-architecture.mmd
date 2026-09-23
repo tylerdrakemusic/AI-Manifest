@@ -3,7 +3,7 @@
 %% Traceability.derived_views: diagrams/manifest-derived-media-pipeline.mmd, diagrams/manifest-derived-portal-and-image.mmd, diagrams/manifest-derived-todo-and-backup.mmd
 graph TB
     Triggers[Task Scheduler, CLI, Manual] --> Tools[AI-Manifest tools]
-    Tools --> Briefs[brief generators]
+    Tools[AI-Manifest tools<br/>CapabilityRegistry: versioned offline manifests<br/>read-only capability MCP tools] --> Briefs[brief generators]
     Tools --> AudioPolicy[audio_output_policy.py]
     AudioPolicy --> AudioBoundary[Audio-output policy boundary<br/>strict rejection · resolved-root containment · atomic publication]
     Tools --> VoiceOrchestration[voice_orchestration.py]
