@@ -8,6 +8,7 @@ AI integration platform for Tyler James Drake. Centralized hub for external AI s
 - [Project profile](PROJECT_PROFILE.json)
 - [Vocal synthesis contract](docs/vocal_synthesis_contract.md)
 - [TTS queue operations](docs/tts_queue_operations.md)
+- [Capability registry contract](docs/capability_registry.md)
 
 ## Quick Start
 
