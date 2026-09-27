@@ -485,7 +485,7 @@ class TestCheckmarkLiveServer:
 
     Regression suite for BFX-20260522-executive-checkmark:
     - Clicking ✓ on a card-list item (inside <li>) removes the row.
-    - Clicking ✓ on an offload-panel item (inside <tr>) removes the row.
+    - Fully autonomous TODOs remain actionable on their project card.
     - No uncaught JS errors occur in either case.
     """
 
@@ -635,35 +635,28 @@ class TestCheckmarkLiveServer:
         assert self._is_done(db_file, parent)
         assert self._is_done(db_file, child)
 
-    def test_checkmark_no_js_error_on_offload_panel_row(self, live_server, live_page) -> None:
-        """Clicking ✓ on an offload-panel <tr> todo produces no uncaught JS TypeError.
-
-        Regression for BFX root cause: btnEl.closest('li') returned null for
-        table rows, causing null.closest('.status-card') to throw.
-        """
+    def test_full_autonomy_todo_is_actionable_on_status_card(self, live_server, live_page) -> None:
+        """A full-autonomy TODO renders in its project card and persists completion."""
         base_url, db_file = live_server
         errors: list[str] = []
         live_page.on("pageerror", lambda err: errors.append(str(err)))
 
-        # 'full' autonomy → rendered in offload-panel table (<td>/<tr>)
         todo_id = self._insert_temp_todo(
-            db_file, project="workspace", text="BFX offload panel item", autonomy_level="full"
+            db_file, project="workspace", text="BFX full autonomy card item", autonomy_level="full"
         )
         live_page.goto(base_url)
         live_page.wait_for_load_state("domcontentloaded")
 
-        # Scope to .offload-panel to specifically exercise the <tr>/<td> code path
-        btn = live_page.locator(f".offload-panel button.done-btn[onclick*='markDone({todo_id},']").first
-        assert btn.count() >= 0, f"offload-panel done-btn for todo {todo_id} not found"
+        card = live_page.locator(".status-card").filter(has_text="BFX full autonomy card item")
+        assert card.count() == 1, f"Full-autonomy TODO {todo_id} not rendered in a status card"
+        btn = card.locator(f"button.done-btn[onclick*='markDone({todo_id},']").first
+        assert btn.count() == 1, f"Status-card done-btn for TODO {todo_id} not found"
         btn.click()
         live_page.wait_for_timeout(800)
 
-        assert errors == [], f"Uncaught JS TypeError in offload panel checkmark: {errors}"
-        # Only assert the offload-panel row is gone; the card <li> may still exist
-        remaining_in_offload = live_page.locator(
-            f".offload-panel button.done-btn[onclick*='markDone({todo_id},']"
-        ).count()
-        assert remaining_in_offload == 0, f"Offload panel row for todo {todo_id} not removed from DOM"
+        assert errors == [], f"Uncaught JS error in status-card checkmark: {errors}"
+        assert card.locator(f"button.done-btn[onclick*='markDone({todo_id},']").count() == 0
+        assert self._is_done(db_file, todo_id), f"Todo {todo_id} not marked done in DB"
 
     def test_cancel_card_requires_confirmation_and_removes_row(self, live_server, live_page) -> None:
         """Accepting card cancellation removes the row and persists cancelled."""
@@ -700,20 +693,22 @@ class TestCheckmarkLiveServer:
         assert live_page.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 1
         assert not self._is_done(db_file, todo_id)
 
-    def test_cancel_offload_row_removes_table_row(self, live_server, live_page) -> None:
-        """Accepting offload-table cancellation removes the table row and persists cancelled."""
+    def test_cancel_full_autonomy_card_row_persists_cancelled(self, live_server, live_page) -> None:
+        """Accepting full-autonomy card cancellation removes the row and persists cancelled."""
         base_url, db_file = live_server
         todo_id = self._insert_temp_todo(
-            db_file, project="workspace", text="Cancel offload item", autonomy_level="full"
+            db_file, project="workspace", text="Cancel full autonomy item", autonomy_level="full"
         )
         live_page.goto(base_url)
         live_page.wait_for_load_state("domcontentloaded")
 
-        btn = live_page.locator(f".offload-panel button.cancel-btn[onclick*='cancelTodo({todo_id},']").first
+        card = live_page.locator(".status-card").filter(has_text="Cancel full autonomy item")
+        assert card.count() == 1
+        btn = card.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").first
         assert btn.get_attribute("aria-label") == f"Cancel TODO #{todo_id}"
         live_page.once("dialog", lambda dialog: dialog.accept())
         btn.click()
         live_page.wait_for_timeout(600)
 
-        assert live_page.locator(f".offload-panel button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
+        assert card.locator(f"button.cancel-btn[onclick*='cancelTodo({todo_id},']").count() == 0
         assert self._closure_reason(db_file, todo_id) == "cancelled"

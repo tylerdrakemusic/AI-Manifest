@@ -295,9 +295,6 @@ def generate_brief_script(all_statuses: list[dict], timestamp: str) -> str:
         else:
             lines.append(f"Also active: {proj['sigil']} {proj['name']}.")
         lines.append(proj["summary"])
-        if proj.get("full_todos"):
-            top_offload = proj["full_todos"][0]["text"]
-            lines.append(f"Fully offloadable: {top_offload}")
         lines.append("")
 
     # Closing
@@ -546,8 +543,11 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
     total = active + done
     pct = round(100 * done / total) if total > 0 else 0
 
-    full_count = len(proj.get("full_todos", []))
-    card_todos = proj.get("supervised_todos", []) + proj.get("human_todos", [])
+    card_todos = (
+        proj.get("full_todos", [])
+        + proj.get("supervised_todos", [])
+        + proj.get("human_todos", [])
+    )
     hierarchy = proj.get("todo_hierarchy") or build_todo_hierarchy(card_todos, {})
 
     def _todo_rows(todos: list, limit: int = 5) -> str:
@@ -571,10 +571,6 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             for t in todos[:limit]
         )
 
-    # 'full' todos are shown exclusively in the top ⚡ Fully Offloadable panel;
-    # omit them from per-project cards to avoid duplicate entries.
-    full_html = ""
-
     hierarchy_html = ""
     if hierarchy:
         hierarchy_html = f"""<div class="todo-section parent-todo-section">
@@ -597,57 +593,10 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             <div class="progress-bar" style="width: {pct}%"></div>
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
-        {full_html}
         {hierarchy_html}
         {add_todo_form_html}
     </div>
     """
-
-
-def _offload_panel_html(all_statuses: list[dict]) -> str:
-    """Generate the cross-project ⚡ Fully Offloadable panel."""
-    rows: list[dict] = []
-    for s in all_statuses:
-        project_label = f"{html.escape(s['sigil'])}{html.escape(s['name'])}"
-        for t in s.get("full_todos", []):
-            rows.append({
-                "priority": t.get("priority", 5),
-                "project": project_label,
-                "id": t["id"],
-                "text": t["text"],
-                "source": t.get("source", ""),
-                "fr_id": t.get("fr_id"),
-                "perfected_at": t.get("perfected_at"),
-                "related_projects": t.get("related_projects", []),
-            })
-    rows.sort(key=lambda r: r["priority"], reverse=True)
-
-    if not rows:
-        return """<div class="offload-panel">
-  <h2>⚡ Fully Offloadable</h2>
-  <p style="color:var(--text-muted);font-style:italic;">No fully offloadable tasks yet.</p>
-</div>"""
-
-    table_rows = "".join(
-        f"<tr>"
-        f"<td>{_priority_badge(r['priority'])}</td>"
-        f"<td>{r['project']}</td>"
-        f"<td>{_todo_signal_html(r)} <span class='todo-text'>{html.escape(r['text'])}</span>"
-        f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
-        f"<td><span class='todo-actions'>"
-        f"<button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done' aria-label='Mark TODO #{r['id']} done'>✓</button>"
-        f"<button class='cancel-btn' onclick=\"cancelTodo({r['id']}, this)\" title='Cancel todo' aria-label='Cancel TODO #{r['id']}'>×</button>"
-        f"</span></td>"
-        f"</tr>"
-        for r in rows
-    )
-    return f"""<div class="offload-panel">
-  <h2>⚡ Fully Offloadable</h2>
-  <table class="offload-table">
-    <thead><tr><th>Pri</th><th>Project</th><th>Task</th><th></th></tr></thead>
-    <tbody>{table_rows}</tbody>
-  </table>
-</div>"""
 
 
 def _regenerate_roadmap_data() -> None:
@@ -686,7 +635,6 @@ def generate_portal_html(
         _status_card_html(project) for project in all_statuses
     )
     top3_keys = {s["key"] for s in ranked_statuses[:3]}
-    offload_panel = _offload_panel_html(all_statuses)
     tab_nav_html = render_tab_nav_html()
     _regenerate_roadmap_data()
     roadmap_tab_html = render_roadmap_tab_html(load_roadmap_data())
@@ -1441,49 +1389,6 @@ footer {{
     letter-spacing: 0.03em;
 }}
 
-/* ── Offload Panel ───────────────────────────────────────────── */
-.offload-panel {{
-    background: var(--surface);
-    border: 1px solid rgba(210,153,34,0.45);
-    border-radius: var(--radius);
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    box-shadow: 0 0 20px rgba(210,153,34,0.08);
-}}
-.offload-panel h2 {{
-    font-size: 1.15rem;
-    color: #d29922;
-    margin-bottom: 0.3rem;
-}}
-.offload-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.87rem;
-}}
-.offload-table th, .offload-table td {{
-    padding: 0.45rem 0.65rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-}}
-.offload-table th {{
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    font-weight: 600;
-}}
-.offload-table tr:hover td {{
-    background: rgba(210,153,34,0.05);
-}}
-.offload-table td:nth-child(3) {{
-    min-width: 0;
-    max-width: 70ch;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-}}
-.offload-table .todo-signal {{
-    margin-right: 0.35rem;
-}}
-
 @media (max-width: 700px) {{
     .container {{ padding: 1rem 0.75rem 6rem; }}
     header {{ grid-template-columns: 92px 1fr; gap: 0.9rem; padding-top: 0.75rem; }}
@@ -1519,8 +1424,6 @@ footer {{
     }}
     .todo-primary {{ grid-template-columns: minmax(0, 1fr) auto; }}
     .todo-text {{ max-width: none; }}
-    .offload-panel {{ padding: 1rem; overflow-x: hidden; }}
-    .offload-table {{ display: block; overflow-x: auto; }}
 }}
 
 {ROADMAP_STYLES}
@@ -1563,8 +1466,6 @@ footer {{
     {tab_nav_html}
 
     <div id="tab-overview" class="tab-panel active">
-
-    {offload_panel}
 
     <h2 style="margin-bottom:1rem;">Project Priorities</h2>
     <div class="cards-grid">
