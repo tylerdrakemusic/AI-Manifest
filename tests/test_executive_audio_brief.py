@@ -639,8 +639,8 @@ def test_generate_brief_script_covers_all_5_projects() -> None:
         assert name in script, f"Project '{name}' missing from brief script"
 
 
-def test_generate_brief_script_includes_offloadable_item() -> None:
-    """Fix 3: if a project has full_todos, the top one must appear in the script."""
+def test_generate_brief_script_omits_fully_offloadable_lines() -> None:
+    """The audio brief must not repeat the portal's former offload section."""
     from tools.executive_audio_brief import generate_brief_script
 
     statuses = [
@@ -653,8 +653,7 @@ def test_generate_brief_script_includes_offloadable_item() -> None:
     ]
 
     script = generate_brief_script(statuses, "2026-05-30 12:00:00")
-    assert "Fully offloadable: Auto-generate release notes" in script, \
-        "Top full_todo text not found in script"
+    assert "Fully offloadable:" not in script
 
 
 def test_generate_brief_script_skips_offload_when_none() -> None:
@@ -669,6 +668,52 @@ def test_generate_brief_script_skips_offload_when_none() -> None:
     script = generate_brief_script(statuses, "2026-05-30 12:00:00")
     assert "Fully offloadable:" not in script, \
         "Unexpected 'Fully offloadable:' line when full_todos is empty"
+
+
+def test_status_card_keeps_full_todos_actionable() -> None:
+    """Removing the panel must not remove full TODO data or lifecycle actions."""
+    from tools.executive_audio_brief import _status_card_html
+
+    output = _status_card_html({
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
+        "active_tasks": 1, "completed_tasks": 0,
+        "full_todos": [{"id": 304, "text": "Automate the task", "priority": 8}],
+        "supervised_todos": [], "human_todos": [],
+    })
+
+    assert "Automate the task" in output
+    assert 'markDone(304, this)' in output
+    assert 'cancelTodo(304, this)' in output
+
+
+def test_portal_omits_fully_offloadable_panel_and_keeps_six_cards() -> None:
+    """The portal keeps canonical cards while removing the duplicate panel."""
+    from tools.executive_audio_brief import generate_portal_html
+
+    statuses = [
+        {"sigil": sigil, "name": name, "key": key, "summary": f"{name} summary.",
+         "active_tasks": 1, "completed_tasks": 0, "score": score,
+         "full_todos": [], "supervised_todos": [], "human_todos": []}
+        for sigil, name, key, score in (
+            ("❤", "Music", "music", 6), ("∞", "Life", "life", 5),
+            ("Σ", "Capital", "capital", 4), ("⟨ψ⟩", "Quantum", "quantum", 3),
+            ("👁", "AI-Manifest", "ai_manifest", 2), ("⊕", "Workspace", "workspace", 1),
+        )
+    ]
+
+    with patch("tools.executive_audio_brief._regenerate_roadmap_data"), patch(
+        "tools.executive_audio_brief.load_roadmap_data",
+        return_value={"generated_at": "", "nodes": [], "quarters": {}},
+    ):
+        output = generate_portal_html(statuses, "script", None, [], "2026-05-30 12:00:00")
+
+    card_names = ["Music", "Life", "Capital", "Quantum", "AI-Manifest", "Workspace"]
+    assert output.count('class="status-card"') == 6
+    assert [output.index(f"<h3>{name}</h3>") for name in card_names] == sorted(
+        output.index(f"<h3>{name}</h3>") for name in card_names
+    )
+    assert 'class="offload-panel"' not in output
+    assert "Fully Offloadable" not in output
 
 
 # ---------------------------------------------------------------------------

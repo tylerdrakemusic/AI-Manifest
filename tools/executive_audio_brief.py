@@ -295,9 +295,6 @@ def generate_brief_script(all_statuses: list[dict], timestamp: str) -> str:
         else:
             lines.append(f"Also active: {proj['sigil']} {proj['name']}.")
         lines.append(proj["summary"])
-        if proj.get("full_todos"):
-            top_offload = proj["full_todos"][0]["text"]
-            lines.append(f"Fully offloadable: {top_offload}")
         lines.append("")
 
     # Closing
@@ -546,8 +543,11 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
     total = active + done
     pct = round(100 * done / total) if total > 0 else 0
 
-    full_count = len(proj.get("full_todos", []))
-    card_todos = proj.get("supervised_todos", []) + proj.get("human_todos", [])
+    card_todos = (
+        proj.get("full_todos", [])
+        + proj.get("supervised_todos", [])
+        + proj.get("human_todos", [])
+    )
     hierarchy = proj.get("todo_hierarchy") or build_todo_hierarchy(card_todos, {})
 
     def _todo_rows(todos: list, limit: int = 5) -> str:
@@ -571,10 +571,6 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             for t in todos[:limit]
         )
 
-    # 'full' todos are shown exclusively in the top ⚡ Fully Offloadable panel;
-    # omit them from per-project cards to avoid duplicate entries.
-    full_html = ""
-
     hierarchy_html = ""
     if hierarchy:
         hierarchy_html = f"""<div class="todo-section parent-todo-section">
@@ -597,7 +593,6 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             <div class="progress-bar" style="width: {pct}%"></div>
             <span class="progress-label">{done}/{total} tasks ({pct}%)</span>
         </div>
-        {full_html}
         {hierarchy_html}
         {add_todo_form_html}
     </div>
@@ -686,7 +681,6 @@ def generate_portal_html(
         _status_card_html(project) for project in all_statuses
     )
     top3_keys = {s["key"] for s in ranked_statuses[:3]}
-    offload_panel = _offload_panel_html(all_statuses)
     tab_nav_html = render_tab_nav_html()
     _regenerate_roadmap_data()
     roadmap_tab_html = render_roadmap_tab_html(load_roadmap_data())
@@ -1563,8 +1557,6 @@ footer {{
     {tab_nav_html}
 
     <div id="tab-overview" class="tab-panel active">
-
-    {offload_panel}
 
     <h2 style="margin-bottom:1rem;">Project Priorities</h2>
     <div class="cards-grid">
