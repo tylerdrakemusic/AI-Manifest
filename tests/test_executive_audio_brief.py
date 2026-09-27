@@ -392,9 +392,8 @@ def test_parent_row_has_one_identity_and_a_dedicated_signal_rail() -> None:
     assert '<div class="todo-meta"><span class="source-tag">TYLER</span></div>' in output
 
 
-def test_related_project_signal_renders_on_standalone_nested_and_offload_rows() -> None:
+def test_related_project_signal_renders_on_standalone_and_nested_rows() -> None:
     from tools.executive_audio_brief import (
-        _offload_panel_html,
         _todo_node_html,
         _todo_row_html,
     )
@@ -422,19 +421,7 @@ def test_related_project_signal_renders_on_standalone_nested_and_offload_rows() 
         "AI-Manifest",
         "nested",
     )
-    offload = _offload_panel_html([{
-        "sigil": "👁",
-        "name": "AI-Manifest",
-        "full_todos": [{
-            "id": 3,
-            "text": "Offloadable",
-            "priority": 8,
-            "source": "AI",
-            "related_projects": related,
-        }],
-    }])
-
-    for output in (standalone, nested, offload):
+    for output in (standalone, nested):
         assert "Related projects" in output
         assert "Workspace" in output
         assert "Quantum" in output
@@ -857,8 +844,8 @@ def test_generate_portal_html_still_renders_when_regen_fails() -> None:
 
 
 def test_open_todo_surfaces_render_accessible_done_and_cancel_controls() -> None:
-    """Card and fully-offloadable rows expose both terminal actions."""
-    from tools.executive_audio_brief import _offload_panel_html, _status_card_html
+    """Project cards expose both terminal actions for every autonomy level."""
+    from tools.executive_audio_brief import _status_card_html
 
     card = _status_card_html({
         "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
@@ -866,16 +853,25 @@ def test_open_todo_surfaces_render_accessible_done_and_cancel_controls() -> None
         "supervised_todos": [{"id": 301, "text": "Card task", "priority": 7}],
         "human_todos": [], "full_todos": [],
     }, 1)
-    offload = _offload_panel_html([{
-        "sigil": "⊕", "name": "Workspace",
-        "full_todos": [{"id": 302, "text": "Offload task", "priority": 8}],
-    }])
+    full_card = _status_card_html({
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
+        "active_tasks": 1, "completed_tasks": 0,
+        "supervised_todos": [], "human_todos": [],
+        "full_todos": [{"id": 302, "text": "Full autonomy task", "priority": 8}],
+    }, 1)
 
-    for output, todo_id in ((card, 301), (offload, 302)):
-        assert f' onclick="markDone({todo_id}, this)"' in output or f" onclick=\"markDone({todo_id}, this)\"" in output
+    for output, todo_id in ((card, 301), (full_card, 302)):
+        assert f' onclick="markDone({todo_id}, this)"' in output
         assert f'cancelTodo({todo_id}, this)' in output
-        assert f'aria-label="Mark TODO #{todo_id} done"' in output or f"aria-label='Mark TODO #{todo_id} done'" in output
-        assert f'aria-label="Cancel TODO #{todo_id}"' in output or f"aria-label='Cancel TODO #{todo_id}'" in output
+        assert f'aria-label="Mark TODO #{todo_id} done"' in output
+        assert f'aria-label="Cancel TODO #{todo_id}"' in output
+
+
+def test_offload_panel_renderer_is_removed() -> None:
+    """The duplicate renderer and its generated CSS are no longer part of the portal."""
+    import tools.executive_audio_brief as executive_audio_brief
+
+    assert not hasattr(executive_audio_brief, "_offload_panel_html")
 
 
 def test_portal_script_confirms_cancellation_and_posts_to_dedicated_api() -> None:

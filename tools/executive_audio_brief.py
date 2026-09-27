@@ -599,52 +599,6 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
     """
 
 
-def _offload_panel_html(all_statuses: list[dict]) -> str:
-    """Generate the cross-project ⚡ Fully Offloadable panel."""
-    rows: list[dict] = []
-    for s in all_statuses:
-        project_label = f"{html.escape(s['sigil'])}{html.escape(s['name'])}"
-        for t in s.get("full_todos", []):
-            rows.append({
-                "priority": t.get("priority", 5),
-                "project": project_label,
-                "id": t["id"],
-                "text": t["text"],
-                "source": t.get("source", ""),
-                "fr_id": t.get("fr_id"),
-                "perfected_at": t.get("perfected_at"),
-                "related_projects": t.get("related_projects", []),
-            })
-    rows.sort(key=lambda r: r["priority"], reverse=True)
-
-    if not rows:
-        return """<div class="offload-panel">
-  <h2>⚡ Fully Offloadable</h2>
-  <p style="color:var(--text-muted);font-style:italic;">No fully offloadable tasks yet.</p>
-</div>"""
-
-    table_rows = "".join(
-        f"<tr>"
-        f"<td>{_priority_badge(r['priority'])}</td>"
-        f"<td>{r['project']}</td>"
-        f"<td>{_todo_signal_html(r)} <span class='todo-text'>{html.escape(r['text'])}</span>"
-        f" <span class='source-tag'>{html.escape(r['source'])}</span></td>"
-        f"<td><span class='todo-actions'>"
-        f"<button class='done-btn' onclick=\"markDone({r['id']}, this)\" title='Mark done' aria-label='Mark TODO #{r['id']} done'>✓</button>"
-        f"<button class='cancel-btn' onclick=\"cancelTodo({r['id']}, this)\" title='Cancel todo' aria-label='Cancel TODO #{r['id']}'>×</button>"
-        f"</span></td>"
-        f"</tr>"
-        for r in rows
-    )
-    return f"""<div class="offload-panel">
-  <h2>⚡ Fully Offloadable</h2>
-  <table class="offload-table">
-    <thead><tr><th>Pri</th><th>Project</th><th>Task</th><th></th></tr></thead>
-    <tbody>{table_rows}</tbody>
-  </table>
-</div>"""
-
-
 def _regenerate_roadmap_data() -> None:
     """Best-effort attempt to regenerate roadmap.json via the ⊕Workspace
     roadmap_generator.py before rendering the Roadmap tab. Never raises —
@@ -1435,49 +1389,6 @@ footer {{
     letter-spacing: 0.03em;
 }}
 
-/* ── Offload Panel ───────────────────────────────────────────── */
-.offload-panel {{
-    background: var(--surface);
-    border: 1px solid rgba(210,153,34,0.45);
-    border-radius: var(--radius);
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    box-shadow: 0 0 20px rgba(210,153,34,0.08);
-}}
-.offload-panel h2 {{
-    font-size: 1.15rem;
-    color: #d29922;
-    margin-bottom: 0.3rem;
-}}
-.offload-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.87rem;
-}}
-.offload-table th, .offload-table td {{
-    padding: 0.45rem 0.65rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-}}
-.offload-table th {{
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    font-weight: 600;
-}}
-.offload-table tr:hover td {{
-    background: rgba(210,153,34,0.05);
-}}
-.offload-table td:nth-child(3) {{
-    min-width: 0;
-    max-width: 70ch;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-}}
-.offload-table .todo-signal {{
-    margin-right: 0.35rem;
-}}
-
 @media (max-width: 700px) {{
     .container {{ padding: 1rem 0.75rem 6rem; }}
     header {{ grid-template-columns: 92px 1fr; gap: 0.9rem; padding-top: 0.75rem; }}
@@ -1513,8 +1424,6 @@ footer {{
     }}
     .todo-primary {{ grid-template-columns: minmax(0, 1fr) auto; }}
     .todo-text {{ max-width: none; }}
-    .offload-panel {{ padding: 1rem; overflow-x: hidden; }}
-    .offload-table {{ display: block; overflow-x: auto; }}
 }}
 
 {ROADMAP_STYLES}
