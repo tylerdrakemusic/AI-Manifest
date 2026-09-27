@@ -227,7 +227,8 @@ def gather_project_status(project: dict) -> dict[str, Any]:
             parent_id = parent.get("parent_id")
     card_rows = [
         row for row in project_rows + parent_context
-        if row in parent_context
+        if row in open_rows
+        or row in parent_context
         or row.get("autonomy_level") in {"supervised", "human", None}
         or row.get("parent_id") is not None
     ]

@@ -328,6 +328,48 @@ def test_gather_project_status_keeps_cross_domain_ancestor_context() -> None:
     assert "Cross-domain child" in rendered
 
 
+def test_gather_project_status_displays_standalone_full_todo_with_populated_hierarchy() -> None:
+    from tools.executive_audio_brief import _status_card_html, gather_project_status
+
+    open_rows = [
+        {
+            "id": 808, "text": "Standalone full-autonomy Music todo", "project": "music",
+            "done": 0, "parent_id": None, "priority": 5, "autonomy_level": "full", "source": "TYLER",
+        },
+        {
+            "id": 809, "text": "Music parent todo", "project": "music", "done": 0,
+            "parent_id": None, "priority": 8, "autonomy_level": "supervised", "source": "TYLER",
+        },
+        {
+            "id": 810, "text": "Music child todo", "project": "music", "done": 0,
+            "parent_id": 809, "priority": 6, "autonomy_level": "human", "source": "TYLER",
+        },
+    ]
+    project = {
+        "sigil": "❤", "name": "Music", "key": "music", "root": Path(__file__).resolve().parent.parent,
+        "always_include": True, "priority_weight": 10,
+    }
+
+    with (
+        patch("tools.executive_audio_brief.get_open_todos", return_value=open_rows),
+        patch("tools.executive_audio_brief.get_done_todos", return_value=[]),
+        patch("tools.executive_audio_brief.get_readiness", return_value={"ready": True}),
+        patch("tools.executive_audio_brief.get_todo_execution_state", return_value="queued"),
+    ):
+        status = gather_project_status(project)
+
+    hierarchy = status["todo_hierarchy"]
+    assert any(group["parent"] is not None and group["parent"]["id"] == 809 for group in hierarchy)
+    standalone = next(group for group in hierarchy if group["parent"] is None)
+    assert [todo["id"] for todo in standalone["inline_children"]] == [808]
+    assert status["full_todos"][0]["id"] == 808
+    rendered = _status_card_html(status)
+    assert "Standalone full-autonomy Music todo" in rendered
+    assert "Music parent todo" in rendered
+    assert 'markDone(808, this)' in rendered
+    assert 'cancelTodo(808, this)' in rendered
+
+
 def test_parent_rows_collapse_the_full_child_queue_and_copy_full_text() -> None:
     from tools.executive_audio_brief import _todo_hierarchy_html
 
