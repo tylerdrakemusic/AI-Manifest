@@ -6,6 +6,8 @@ BFX-20260530-lily-brief-priority-offload
 from __future__ import annotations
 
 import os
+import json
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -211,6 +213,66 @@ def test_todo_classification_uses_execution_state_before_readiness() -> None:
         assert classify_todo({"id": 5, "done": 1}, {5: False}) == "cancelled"
         assert classify_todo({"id": 6, "done": 1}, {6: True}) == "stale"
         assert classify_todo({"id": 7, "done": 0}, {7: False}) == "queued"
+
+
+def test_workspace_mcp_claim_projects_numeric_todo_id_to_rendered_board_state(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from tools import executive_audio_brief
+    from utils import coordination_mcp_server
+
+    workspace_root = Path(os.environ["WORKSPACE_ROOT"]).resolve()
+    assert Path(coordination_mcp_server.__file__).resolve().is_relative_to(workspace_root)
+
+    database_path = tmp_path / "todo-lifecycle.sqlite"
+    monkeypatch.setattr(
+        coordination_mcp_server,
+        "_open_todo_connection",
+        lambda: sqlite3.connect(database_path),
+    )
+    monkeypatch.setattr(
+        executive_audio_brief,
+        "get_workspace_connection",
+        lambda: sqlite3.connect(database_path),
+    )
+
+    todo_id = 835
+    lifecycle_id = str(todo_id)
+    fr_id = "FR-20260927-workspace-todo-lifecycle-mcp"
+    queued = json.loads(
+        coordination_mcp_server.todo_register_queued(
+            todo_id=lifecycle_id,
+            idempotency_key=f"dispatch-{lifecycle_id}",
+            fr_id=fr_id,
+        )
+    )
+    assert queued["state"] == "queued"
+
+    claim_idempotency_key = secrets.token_urlsafe(48)
+    assert len(claim_idempotency_key) >= 43
+    claimed = json.loads(
+        coordination_mcp_server.todo_claim(
+            todo_id=lifecycle_id,
+            worker_id="board-projection-test",
+            claim_idempotency_key=claim_idempotency_key,
+            fr_id=fr_id,
+        )
+    )
+    assert claimed["todo_id"] == lifecycle_id
+    assert claimed["state"] == "claimed"
+
+    assert executive_audio_brief.get_todo_execution_state(todo_id) == "claimed"
+
+    status = {
+        "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Summary",
+        "active_tasks": 1, "completed_tasks": 0,
+        "full_todos": [{"id": todo_id, "text": "Claimed test TODO", "priority": 5}],
+        "supervised_todos": [], "human_todos": [],
+    }
+    rendered = executive_audio_brief._status_card_html(status)
+
+    assert '<li data-state="claimed"' in rendered
+    assert '<span class="todo-state">claimed</span>' in rendered
 
 
 def test_missing_lifecycle_record_defaults_to_queued_and_ignores_readiness() -> None:
