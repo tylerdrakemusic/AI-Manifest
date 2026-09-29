@@ -34,6 +34,19 @@ def test_ci_workflow_uses_parallel_runner_and_preserves_ci_contract():
     assert "pytest -v --tb=short" not in workflow
 
 
+def test_ci_checks_out_matching_workspace_branch_for_paired_pull_requests():
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+
+    assert "Resolve paired Workspace ref" in workflow
+    assert 'workspace_ref="main"' in workflow
+    assert 'refs/heads/${GITHUB_HEAD_REF}' in workflow
+    assert "ref: ${{ steps.workspace-ref.outputs.ref }}" in workflow
+    assert 'remote_refs="$(git ls-remote --heads' in workflow
+    assert 'echo "Failed to query paired Workspace refs" >&2' in workflow
+    assert 'exit 1' in workflow
+
+
 def test_build_command_composes_policy_exclusions_with_repository_marker_defaults():
     root = Path(__file__).parents[1]
     command = load_runner().build_command(parallel=False, junitxml=None)

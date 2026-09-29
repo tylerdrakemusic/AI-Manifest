@@ -2,11 +2,10 @@
 graph LR
     Python[Python 3.11] --> Requests[requests · httpx]
     Python --> Pytest[pytest]
-    Python --> TestRunner[/tools/run_tests.py<br/>canonical parallel runner · serial deterministic debugging fallback/]
+    Python --> TestRunner[/CI: .github/workflows/test.yml<br/>PR GITHUB_HEAD_REF selects exact same-named Workspace feature branch<br/>lookup error fails CI; successful no-match uses Workspace main<br/>checkout at path workspace for shared imports + tests<br/>runner: tools/run_tests.py<br/>canonical parallel runner · serial deterministic debugging fallback/]
     TestRunner --> Pytest
     TestRunner -.-> TestPolicy[tools/parallel_test_policy.json<br/>parallel_ci=true<br/>exclude playwright + live]
     Pytest -.-> Xdist[pytest-xdist<br/>controlled workers via merged policy]
-    TestRunner -.-> ParallelEvidence[Controlled CI parallelism<br/>playwright/live excluded · serial deterministic debugging fallback]
     Python --> Flask[flask>=3.0]
     Python --> Pydantic[pydantic>=2.0]
     Python --> Sounddevice[sounddevice>=0.4]
@@ -27,7 +26,6 @@ graph LR
     class Python lang
     class OpenAI,ElevenLabs,HF api
     class Requests,Pytest,TestRunner,TestPolicy,Xdist,Flask,Pydantic,Sounddevice,Soundfile,GPT,TTS,Models lib
-    class ParallelEvidence state
 
     %% FR-20260816-ai-manifest-database-backup-restore
     BackupFacade[database_backup.py<br/>Workspace contract facade] --> BackupEngine[⊕ Workspace<br/>provider-neutral backup engine]
