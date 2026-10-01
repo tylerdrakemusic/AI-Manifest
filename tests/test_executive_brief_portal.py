@@ -250,6 +250,83 @@ class TestRefreshPreservesEditableState:
         finally:
             page.close()
 
+    def test_refresh_preserves_audio_element_playback_and_todo_draft(
+        self, browser, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Refreshing status leaves the playing audio node and unfinished TODO text untouched."""
+        from tools import executive_audio_brief
+        from tools.executive_audio_brief import generate_portal_html
+
+        audio_path = tmp_path / "brief.mp3"
+        audio_path.write_bytes(b"mock audio bytes")
+        project = {
+            "sigil": "⊕",
+            "name": "Workspace",
+            "key": "workspace",
+            "summary": "Before refresh",
+            "active_tasks": 0,
+            "completed_tasks": 0,
+            "full_todos": [],
+            "supervised_todos": [],
+            "human_todos": [],
+        }
+        refreshed_project = {
+            **project,
+            "summary": "After refresh",
+            "active_tasks": 2,
+            "completed_tasks": 1,
+        }
+        monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+        monkeypatch.setattr(
+            executive_audio_brief,
+            "load_roadmap_data",
+            lambda: {"generated_at": "", "nodes": [], "quarters": {}},
+        )
+        initial_html = generate_portal_html(
+            [project], "Brief script", audio_path, [], "2026-10-01 00:00:00"
+        )
+        refreshed_html = generate_portal_html(
+            [refreshed_project], "Brief script", audio_path, [], "2026-10-01 00:01:00"
+        )
+
+        page = browser.new_page()
+        try:
+            page.route(
+                "https://portal.test/",
+                lambda route: route.fulfill(status=200, content_type="text/html", body=initial_html),
+            )
+            page.route(
+                "https://portal.test/api/refresh",
+                lambda route: route.fulfill(
+                    status=200,
+                    json={"ok": True, "html": refreshed_html},
+                ),
+            )
+            page.goto("https://portal.test/")
+            todo_input = page.locator(".add-todo-input").first
+            todo_input.fill("unfinished TODO draft")
+            page.evaluate("""() => {
+                const audio = document.getElementById('briefAudio');
+                Object.defineProperties(audio, {
+                    currentTime: { configurable: true, value: 17.5 },
+                    paused: { configurable: true, value: false },
+                    ended: { configurable: true, value: false },
+                    readyState: { configurable: true, value: 4 },
+                });
+                window.__audioBeforeRefresh = audio;
+            }""")
+
+            page.evaluate("() => refreshStatus()")
+
+            assert page.locator(".add-todo-input").first.input_value() == "unfinished TODO draft"
+            assert page.locator(".status-card .progress-label").inner_text() == "1/3 tasks (33%)"
+            assert page.evaluate("window.__audioBeforeRefresh === document.getElementById('briefAudio')")
+            assert page.evaluate("document.getElementById('briefAudio').currentTime") == 17.5
+            assert page.evaluate("document.getElementById('briefAudio').paused") is False
+            assert page.locator("#briefAudio source").get_attribute("src").startswith("data:audio/mpeg;base64,")
+        finally:
+            page.close()
+
 
 class TestNoConsoleErrors:
     def test_no_critical_js_errors(self, page) -> None:
@@ -432,6 +509,134 @@ class TestProvenanceSignalRail:
                 assert primary.evaluate("element => element.scrollWidth <= element.clientWidth")
                 assert row.evaluate("element => element.scrollWidth <= element.clientWidth")
                 page.screenshot(path=str(proof_dir / f"FR-20260922-parent-card-{viewport_name}.png"), full_page=True)
+        finally:
+            page.close()
+
+    def test_long_parent_and_child_cards_remain_identifiable_at_341px_and_desktop(
+        self, browser, monkeypatch
+    ) -> None:
+        """Narrow layouts contain TODO identity, metadata, and controls without losing titles."""
+        from tools import executive_audio_brief
+        from tools.executive_audio_brief import generate_portal_html
+
+        parent_text = "Coordinate cross-project executive audio-brief validation and release readiness"
+        child_text = "Verify playback continuity across status refresh while preserving unfinished project inputs"
+        status = {
+            "sigil": "👁",
+            "name": "AI-Manifest",
+            "key": "ai_manifest",
+            "summary": "AI-Manifest summary.",
+            "active_tasks": 2,
+            "completed_tasks": 0,
+            "todo_hierarchy": [{
+                "parent": {
+                    "id": 3410,
+                    "text": parent_text,
+                    "state": "running",
+                    "source": "TYLER",
+                    "fr_id": "FR-20261001-executive-board-audio-brief-polish",
+                    "perfected_at": "2026-10-01T00:00:00+00:00",
+                    "related_projects": ["workspace", "quantum"],
+                },
+                "inline_children": [],
+                "collapsed_children": [{
+                    "id": 3411,
+                    "text": child_text,
+                    "state": "queued",
+                    "priority": 9,
+                    "source": "AI",
+                    "fr_id": "FR-20261001-executive-board-audio-brief-polish",
+                    "related_projects": ["workspace", "quantum"],
+                }],
+                "aggregate_state": "running",
+                "join_status": "1 child · 1 queued",
+            }],
+        }
+        monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+        other_statuses = [
+            {
+                "sigil": "❤", "name": "Music", "key": "music", "summary": "Music summary.",
+                "active_tasks": 0, "completed_tasks": 0,
+            },
+            {
+                "sigil": "∞", "name": "Life", "key": "life", "summary": "Life summary.",
+                "active_tasks": 0, "completed_tasks": 0,
+            },
+        ]
+        portal_html = generate_portal_html(
+            [status, *other_statuses], "Brief script", None, [], "2026-10-01 00:00:00"
+        )
+
+        page = browser.new_page()
+        try:
+            for width in (341, 1280):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.set_content(portal_html)
+
+                parent = page.locator(".parent-todo-row").filter(has_text="TODO #3410")
+                assert parent.count() == 1
+                primary = parent.locator(":scope > .parent-todo-primary")
+                parent_title = primary.locator(":scope > .todo-text")
+                assert parent_title.get_attribute("title") == parent_text
+                assert parent_title.evaluate("element => getComputedStyle(element).whiteSpace") == "normal"
+                assert parent_title.evaluate("element => getComputedStyle(element).overflowWrap") == "anywhere"
+                assert primary.locator(":scope > .todo-state").inner_text() == "RUNNING"
+                assert primary.locator(":scope > .todo-id").inner_text() == "TODO #3410"
+                assert primary.locator(":scope > .todo-signal-rail .todo-signal").count() == 2
+                assert primary.locator(":scope > .todo-signal-rail .todo-related-projects").get_attribute("aria-label") == (
+                    "Related projects: Workspace, Quantum"
+                )
+                assert parent.locator(":scope > .todo-meta > .source-tag").inner_text() == "TYLER"
+                assert primary.locator(":scope > .todo-actions button").count() == 3
+                for selector in (":scope > .todo-id", ":scope > .todo-actions"):
+                    box = primary.locator(selector).bounding_box()
+                    assert box is not None and box["width"] > 0, f"Collapsed parent track: {selector}"
+
+                toggle = primary.locator(":scope > .expand-todo-btn")
+                child = parent.locator(".todo-collapsed-children li").filter(has_text="TODO #3411")
+                assert child.count() == 1
+                assert child.is_hidden()
+                toggle.click()
+                assert toggle.get_attribute("aria-expanded") == "true"
+                assert child.is_visible()
+                assert child.get_attribute("title") == child_text
+                assert child.locator(".todo-state").inner_text() == "QUEUED"
+                assert child.locator(".todo-id").inner_text() == "TODO #3411"
+                assert child.locator(".todo-project").inner_text() == "👁AI-Manifest"
+                assert child.locator(".priority-badge-inline").inner_text() == "P9"
+                assert child.locator(".todo-related-projects").get_attribute("aria-label") == (
+                    "Related projects: Workspace, Quantum"
+                )
+                assert child.locator(".source-tag").inner_text() == "AI"
+                assert child.locator(".todo-actions button").count() == 3
+
+                assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+                for row in (parent, child):
+                    assert row.evaluate("element => element.scrollWidth <= element.clientWidth")
+                    row_box = row.bounding_box()
+                    assert row_box is not None and row_box["x"] >= 0
+                    assert row_box["x"] + row_box["width"] <= width
+                for lane in (primary, child.locator(":scope > .todo-primary")):
+                    boxes = lane.evaluate("""element => Array.from(element.children).map(child => {
+                        const rect = child.getBoundingClientRect();
+                        return {name: child.className, left: rect.left, right: rect.right,
+                            top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height};
+                    }).filter(box => box.width > 0 && box.height > 0)""")
+                    for index, first in enumerate(boxes):
+                        for second in boxes[index + 1:]:
+                            overlaps = (
+                                first["left"] < second["right"] - 1
+                                and second["left"] < first["right"] - 1
+                                and first["top"] < second["bottom"] - 1
+                                and second["top"] < first["bottom"] - 1
+                            )
+                            assert not overlaps, (
+                                f"TODO layout collision at {width}px: "
+                                f"{first['name']} overlaps {second['name']}"
+                            )
+                toggle.click()
+                assert toggle.get_attribute("aria-expanded") == "false"
+                assert child.is_hidden()
         finally:
             page.close()
 
