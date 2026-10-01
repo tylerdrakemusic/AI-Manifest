@@ -35,11 +35,16 @@ PROJECT_ROOTS: dict[str, Path] = {
     "workspace": WORKSPACE_ROOT / "⊕Workspace",
 }
 
-# tech-debt mode scans code only (no DB/data access), so ΣCapital is included
-# even though it's excluded from epic/story discovery above.
-TECH_DEBT_PROJECT_ROOTS: dict[str, Path] = {
+# Keep Capital explicit-only in epic/story discovery. The default project set
+# remains PROJECT_ROOTS, while this map holds every supported explicit target.
+DISCOVERY_PROJECT_ROOTS: dict[str, Path] = {
     **PROJECT_ROOTS,
     "capital": WORKSPACE_ROOT / "ΣCapital",
+}
+
+# tech-debt mode scans code only (no DB/data access), so ΣCapital is included.
+TECH_DEBT_PROJECT_ROOTS: dict[str, Path] = {
+    **DISCOVERY_PROJECT_ROOTS,
 }
 
 TECH_DEBT_SEVERITY_THRESHOLD = 7  # auto-write threshold, no approval gate
@@ -50,6 +55,10 @@ DISCOVERY_FILES: dict[str, list[str]] = {
     "quantum": ["AGENT_STARTUP.md", "README.md", "docs/**/*.md", "research/**/*.md"],
     "ai_manifest": ["AGENT_STARTUP.md", "README.md", "docs/**/*.md", "research/**/*.md"],
     "workspace": ["AGENT_STARTUP.md", "README.md", ".github/FEATURE_REQUESTS.md", "REPO_VISIBILITY.md"],
+    "capital": [
+        "docs/parallel-test-execution.md",
+        "docs/shared-structured-logging.md",
+    ],
 }
 
 # Deterministic per-category templates for tech-debt narration (no LLM call).
@@ -247,14 +256,20 @@ def _read_path_excerpt(path: Path, max_chars: int = 2400) -> str:
 
 
 def _collect_context(project: str) -> str:
-    root = PROJECT_ROOTS[project]
+    root = DISCOVERY_PROJECT_ROOTS[project]
+    resolved_root = root.resolve()
     snippets: list[str] = []
 
     for pattern in DISCOVERY_FILES.get(project, []):
         for path in sorted(root.glob(pattern))[:12]:
-            if not path.is_file():
+            try:
+                resolved_path = path.resolve(strict=True)
+                resolved_path.relative_to(resolved_root)
+            except (OSError, ValueError):
                 continue
-            excerpt = _read_path_excerpt(path)
+            if not resolved_path.is_file():
+                continue
+            excerpt = _read_path_excerpt(resolved_path)
             if not excerpt:
                 continue
             rel = path.relative_to(root).as_posix()
@@ -498,14 +513,17 @@ def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
 
+    if args.yes and not args.apply:
+        parser.error("--yes requires --apply.")
+
     if args.mode == "tech-debt":
         projects = [args.project] if args.project else list(TECH_DEBT_PROJECT_ROOTS.keys())
         return _run_tech_debt_scan(projects=projects)
 
     init_db()
 
-    if args.project and args.project not in PROJECT_ROOTS:
-        print(f"'{args.project}' is only valid with --mode tech-debt (not in epic/story discovery scope).")
+    if args.project and args.project not in DISCOVERY_PROJECT_ROOTS:
+        print(f"'{args.project}' is not in the epic/story discovery scope.")
         return 1
 
     projects = [args.project] if args.project else list(PROJECT_ROOTS.keys())
