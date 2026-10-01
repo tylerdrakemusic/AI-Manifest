@@ -988,3 +988,138 @@ def test_portal_script_confirms_cancellation_and_posts_to_dedicated_api() -> Non
 
     assert "window.confirm('Cancel this todo?')" in out
     assert "fetch('/api/todo/cancel'" in out
+
+
+def test_build_brief_embeds_mocked_audio_for_portal_playback(tmp_path: Path, monkeypatch) -> None:
+    """The generation path hands synthesized output to the playable portal without live TTS."""
+    import base64
+
+    from tools import executive_audio_brief, migrate_todos
+
+    audio_path = tmp_path / "generated-brief.mp3"
+    audio_bytes = b"mocked executive brief audio"
+    synthesized_scripts: list[str] = []
+
+    def mock_synthesize(script: str) -> Path:
+        synthesized_scripts.append(script)
+        audio_path.write_bytes(audio_bytes)
+        return audio_path
+
+    monkeypatch.setattr(executive_audio_brief, "init_db", lambda: None)
+    monkeypatch.setattr(migrate_todos, "auto_migrate_if_needed", lambda: None)
+    monkeypatch.setattr(executive_audio_brief, "gather_all_statuses", lambda: [])
+    monkeypatch.setattr(executive_audio_brief, "rank_projects", lambda statuses: [])
+    monkeypatch.setattr(executive_audio_brief, "generate_brief_script", lambda statuses, timestamp: "Mock brief script")
+    monkeypatch.setattr(executive_audio_brief, "list_available_voices", lambda: [{"voice_id": "mock-lily", "name": "Lily"}])
+    monkeypatch.setattr(executive_audio_brief, "synthesize_brief", mock_synthesize)
+    monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+    monkeypatch.setattr(
+        executive_audio_brief,
+        "load_roadmap_data",
+        lambda: {"generated_at": "", "nodes": [], "quarters": {}},
+    )
+    monkeypatch.setattr(executive_audio_brief, "REPORT_PATH", tmp_path / "portal.html")
+
+    result = executive_audio_brief.build_brief(text_only=False)
+
+    assert synthesized_scripts == ["Mock brief script"]
+    assert result["audio_path"] == audio_path
+    assert '<audio id="briefAudio" controls preload="auto">' in result["html"]
+    assert f'data:audio/mpeg;base64,{base64.b64encode(audio_bytes).decode("ascii")}' in result["html"]
+    assert (tmp_path / "portal.html").read_text(encoding="utf-8") == result["html"]
+
+
+def test_generate_endpoint_stores_mocked_brief_result(tmp_path: Path, monkeypatch) -> None:
+    """The generation API records the new audio path in portal state."""
+    from io import BytesIO
+
+    from tools import executive_audio_brief
+    from tools.executive_audio_brief import BriefRequestHandler
+
+    audio_path = tmp_path / "generated-brief.mp3"
+    audio_path.write_bytes(b"mock generated audio")
+    build_calls: list[bool] = []
+
+    def mock_build_brief(text_only: bool) -> dict:
+        build_calls.append(text_only)
+        return {"audio_path": audio_path, "script": "Mock brief script"}
+
+    monkeypatch.setattr(executive_audio_brief, "build_brief", mock_build_brief)
+
+    class ResponseHandler:
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": "2"}
+            self.rfile = BytesIO(b"{}")
+            self.wfile = BytesIO()
+            self.portal_state: dict = {}
+
+        def send_response(self, status: int) -> None:
+            self.status = status
+
+        def send_header(self, name: str, value: str) -> None:
+            pass
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = ResponseHandler()
+    BriefRequestHandler._handle_generate(handler)
+
+    assert handler.status == 200
+    assert build_calls == [False]
+    assert handler.portal_state["audio_path"] == audio_path
+    assert json.loads(handler.wfile.getvalue()) == {"ok": True}
+
+
+def test_refresh_endpoint_reuses_available_audio_without_synthesis(tmp_path: Path, monkeypatch) -> None:
+    """Status refresh retains the existing audio artifact and renders it into refreshed HTML."""
+    import base64
+    from io import BytesIO
+
+    from tools import executive_audio_brief
+    from tools.executive_audio_brief import BriefRequestHandler
+
+    audio_path = tmp_path / "existing-brief.mp3"
+    audio_bytes = b"existing brief audio"
+    audio_path.write_bytes(audio_bytes)
+    build_calls: list[bool] = []
+
+    def mock_build_brief(text_only: bool) -> dict:
+        build_calls.append(text_only)
+        return {
+            "all_statuses": [],
+            "script": "Refreshed status script",
+            "timestamp": "2026-10-01 00:00:00",
+            "audio_path": None,
+        }
+
+    monkeypatch.setattr(executive_audio_brief, "build_brief", mock_build_brief)
+    monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+    monkeypatch.setattr(
+        executive_audio_brief,
+        "load_roadmap_data",
+        lambda: {"generated_at": "", "nodes": [], "quarters": {}},
+    )
+
+    class ResponseHandler:
+        portal_state = {"audio_path": audio_path, "voices": []}
+        wfile = BytesIO()
+
+        def send_response(self, status: int) -> None:
+            self.status = status
+
+        def send_header(self, name: str, value: str) -> None:
+            pass
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = ResponseHandler()
+    BriefRequestHandler._handle_refresh(handler)
+    response = json.loads(handler.wfile.getvalue())
+
+    assert handler.status == 200
+    assert build_calls == [True]
+    assert handler.portal_state["audio_path"] == audio_path
+    assert '<audio id="briefAudio" controls preload="auto">' in response["html"]
+    assert f'data:audio/mpeg;base64,{base64.b64encode(audio_bytes).decode("ascii")}' in response["html"]

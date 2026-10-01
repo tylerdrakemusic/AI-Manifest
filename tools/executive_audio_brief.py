@@ -916,7 +916,7 @@ header h1 {{
 }}
 .parent-todo-primary {{
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
         "toggle text text"
         "toggle state state"
@@ -1009,6 +1009,11 @@ header h1 {{
     text-overflow: ellipsis;
     white-space: nowrap;
     user-select: text;
+}}
+.parent-todo-primary > .todo-text,
+.nested-todo-group > .todo-primary > .todo-text {{
+    white-space: normal;
+    overflow-wrap: anywhere;
 }}
 .todo-project {{
     color: var(--text-muted);
