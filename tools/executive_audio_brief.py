@@ -931,7 +931,10 @@ header h1 {{
 .parent-todo-primary > .expand-todo-btn {{ grid-area: toggle; }}
 .parent-todo-primary > .todo-text {{ grid-area: text; }}
 .parent-todo-primary > .todo-state {{ grid-area: state; }}
-.parent-todo-primary > .todo-id {{ grid-area: identity; }}
+.parent-todo-primary > .todo-id {{
+    grid-area: identity;
+    align-self: start;
+}}
 .parent-todo-primary > .todo-signal-rail {{ grid-area: signals; }}
 .parent-todo-primary > .todo-actions {{ grid-area: actions; }}
 .parent-todo-primary > .todo-join-status {{ grid-area: join; }}

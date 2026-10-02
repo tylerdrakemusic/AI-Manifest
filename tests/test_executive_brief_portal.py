@@ -521,6 +521,7 @@ class TestProvenanceSignalRail:
 
         parent_text = "Coordinate cross-project executive audio-brief validation and release readiness"
         child_text = "Verify playback continuity across status refresh while preserving unfinished project inputs"
+        related_projects = ["ai_manifest", "life", "music", "quantum"]
         status = {
             "sigil": "👁",
             "name": "AI-Manifest",
@@ -534,9 +535,9 @@ class TestProvenanceSignalRail:
                     "text": parent_text,
                     "state": "running",
                     "source": "TYLER",
-                    "fr_id": "FR-20261001-executive-board-audio-brief-polish",
+                    "fr_id": None,
                     "perfected_at": "2026-10-01T00:00:00+00:00",
-                    "related_projects": ["workspace", "quantum"],
+                    "related_projects": related_projects,
                 },
                 "inline_children": [],
                 "collapsed_children": [{
@@ -545,8 +546,8 @@ class TestProvenanceSignalRail:
                     "state": "queued",
                     "priority": 9,
                     "source": "AI",
-                    "fr_id": "FR-20261001-executive-board-audio-brief-polish",
-                    "related_projects": ["workspace", "quantum"],
+                    "fr_id": None,
+                    "related_projects": related_projects,
                 }],
                 "aggregate_state": "running",
                 "join_status": "1 child · 1 queued",
@@ -562,14 +563,33 @@ class TestProvenanceSignalRail:
                 "sigil": "∞", "name": "Life", "key": "life", "summary": "Life summary.",
                 "active_tasks": 0, "completed_tasks": 0,
             },
+            {
+                "sigil": "Σ", "name": "Capital", "key": "capital", "summary": "Capital summary.",
+                "active_tasks": 0, "completed_tasks": 0,
+            },
+            {
+                "sigil": "⟨ψ⟩", "name": "Quantum", "key": "quantum", "summary": "Quantum summary.",
+                "active_tasks": 0, "completed_tasks": 0,
+            },
+            {
+                "sigil": "⊕", "name": "Workspace", "key": "workspace", "summary": "Workspace summary.",
+                "active_tasks": 0, "completed_tasks": 0,
+            },
         ]
         portal_html = generate_portal_html(
             [status, *other_statuses], "Brief script", None, [], "2026-10-01 00:00:00"
         )
 
         page = browser.new_page()
+        proof_dir = Path(__file__).resolve().parent.parent / "proof/screenshots"
+        proof_dir.mkdir(parents=True, exist_ok=True)
         try:
-            for width in (341, 1280):
+            viewports = (
+                ("narrow", 341),
+                ("desktop-1280", 1280),
+                ("baseline-desktop-1905", 1905),
+            )
+            for viewport_name, width in viewports:
                 page.set_viewport_size({"width": width, "height": 900})
                 page.set_content(portal_html)
 
@@ -584,7 +604,7 @@ class TestProvenanceSignalRail:
                 assert primary.locator(":scope > .todo-id").inner_text() == "TODO #3410"
                 assert primary.locator(":scope > .todo-signal-rail .todo-signal").count() == 2
                 assert primary.locator(":scope > .todo-signal-rail .todo-related-projects").get_attribute("aria-label") == (
-                    "Related projects: Workspace, Quantum"
+                    "Related projects: AI-Manifest, Life, Music, Quantum"
                 )
                 assert parent.locator(":scope > .todo-meta > .source-tag").inner_text() == "TYLER"
                 assert primary.locator(":scope > .todo-actions button").count() == 3
@@ -605,10 +625,113 @@ class TestProvenanceSignalRail:
                 assert child.locator(".todo-project").inner_text() == "👁AI-Manifest"
                 assert child.locator(".priority-badge-inline").inner_text() == "P9"
                 assert child.locator(".todo-related-projects").get_attribute("aria-label") == (
-                    "Related projects: Workspace, Quantum"
+                    "Related projects: AI-Manifest, Life, Music, Quantum"
                 )
                 assert child.locator(".source-tag").inner_text() == "AI"
                 assert child.locator(".todo-actions button").count() == 3
+
+                screenshot_path = (
+                    proof_dir
+                    / f"FR-20261001-executive-board-parent-todo-alignment-current-{viewport_name}.png"
+                )
+                page.screenshot(path=str(screenshot_path), full_page=True)
+
+                layout = parent.evaluate("""row => {
+                    const rect = element => {
+                        const box = element.getBoundingClientRect();
+                        return {left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+                            width: box.width, height: box.height};
+                    };
+                    const parentPrimary = row.querySelector(':scope > .parent-todo-primary');
+                    const childRow = row.querySelector('.todo-collapsed-children li');
+                    const measureParent = primary => ({
+                        primary: rect(primary),
+                        card: rect(row.closest('.status-card')),
+                        rail: primary.querySelector(':scope > .todo-signal-rail')
+                            ? rect(primary.querySelector(':scope > .todo-signal-rail')) : null,
+                        chipContainer: rect(primary.querySelector(':scope > .todo-signal-rail')),
+                        chips: [...primary.querySelectorAll('.todo-signal, .todo-related-projects')].map(rect),
+                        identity: rect(primary.querySelector('.todo-id')),
+                        actions: rect(primary.querySelector('.todo-actions')),
+                    });
+                    const childMeta = childRow.querySelector(':scope > .todo-meta');
+                    return {
+                        parent: {...measureParent(parentPrimary), join: rect(parentPrimary.querySelector('.todo-join-status'))},
+                        child: {
+                            primary: rect(childRow),
+                            card: rect(row.closest('.status-card')),
+                            rail: null,
+                            chipContainer: rect(childMeta),
+                            chips: [...childMeta.querySelectorAll('.todo-signal, .todo-related-projects')].map(rect),
+                            identity: rect(childMeta.querySelector('.todo-id')),
+                            actions: rect(childRow.querySelector('.todo-actions')),
+                            join: null,
+                        },
+                    };
+                }""")
+
+                screenshot_parent = layout["parent"]
+                if viewport_name == "baseline-desktop-1905":
+                    card_width = screenshot_parent["card"]["width"]
+                    assert 340 <= card_width <= 342, (
+                        f"Baseline viewport should reproduce the 341px dashboard card, got {card_width}px"
+                    )
+
+                for label, lane in (("parent", screenshot_parent), ("child", layout["child"])):
+                    for chip_index, chip in enumerate(lane["chips"]):
+                        for boundary_name, boundary in (
+                            ("row", lane["primary"]),
+                            ("card", lane["card"]),
+                            ("chip container", lane["chipContainer"]),
+                        ):
+                            assert (
+                                boundary["left"] - 1 <= chip["left"]
+                                and chip["right"] <= boundary["right"] + 1
+                                and boundary["top"] - 1 <= chip["top"]
+                                and chip["bottom"] <= boundary["bottom"] + 1
+                            ), f"{label} chip {chip_index} escapes its {boundary_name} at {width}px"
+                        if lane["rail"] is not None:
+                            rail = lane["rail"]
+                            assert (
+                                rail["left"] - 1 <= chip["left"]
+                                and chip["right"] <= rail["right"] + 1
+                                and rail["top"] - 1 <= chip["top"]
+                                and chip["bottom"] <= rail["bottom"] + 1
+                            ), f"Parent chip {chip_index} escapes its signal rail at {width}px"
+                        for sibling in lane["chips"][chip_index + 1:] + [lane["identity"], lane["actions"]]:
+                            overlaps = (
+                                chip["left"] < sibling["right"] - 1
+                                and sibling["left"] < chip["right"] - 1
+                                and chip["top"] < sibling["bottom"] - 1
+                                and sibling["top"] < chip["bottom"] - 1
+                            )
+                            assert not overlaps, f"{label} chip overlaps TODO ID/actions or another chip at {width}px"
+
+                parent_actions = screenshot_parent["actions"]
+                parent_join = screenshot_parent["join"]
+                parent_row_bottom = max(
+                    screenshot_parent["identity"]["bottom"],
+                    screenshot_parent["rail"]["bottom"],
+                )
+                assert parent_actions["top"] >= parent_row_bottom - 1, (
+                    f"Parent actions overlap the identity/signal row at {width}px"
+                )
+                assert parent_join["top"] >= parent_row_bottom - 1, (
+                    f"Parent child count overlaps the identity/signal row at {width}px"
+                )
+                if width > 700:
+                    assert abs(screenshot_parent["identity"]["top"] - screenshot_parent["rail"]["top"]) <= 2, (
+                        f"Parent TODO ID is not top-aligned with the signal rail at {width}px"
+                    )
+                    actions_center = (parent_actions["top"] + parent_actions["bottom"]) / 2
+                    join_center = (parent_join["top"] + parent_join["bottom"]) / 2
+                    assert abs(actions_center - join_center) <= 2, (
+                        f"Parent actions and child count are misaligned at {width}px"
+                    )
+                else:
+                    assert parent_join["top"] >= parent_actions["bottom"] - 1, (
+                        f"Narrow parent child count is not in its stable row after actions at {width}px"
+                    )
 
                 assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
                 for row in (parent, child):

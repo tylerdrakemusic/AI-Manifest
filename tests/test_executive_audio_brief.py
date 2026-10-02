@@ -695,7 +695,7 @@ def test_status_card_parent_lane_has_responsive_signal_and_control_rails() -> No
     out = generate_portal_html([], "Brief script", None, [], "2026-08-10T00:00:00+00:00")
 
     assert ".parent-todo-primary > .todo-text { grid-area: text; }" in out
-    assert ".parent-todo-primary > .todo-id { grid-area: identity; }" in out
+    assert ".parent-todo-primary > .todo-id {\n    grid-area: identity;\n    align-self: start;\n}" in out
     assert ".parent-todo-primary > .todo-signal-rail { grid-area: signals; }" in out
     assert ".parent-todo-primary > .todo-actions { grid-area: actions; }" in out
     assert ".parent-todo-primary > .todo-join-status { grid-area: join; }" in out
