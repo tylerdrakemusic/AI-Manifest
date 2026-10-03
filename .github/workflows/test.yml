@@ -9,39 +9,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # CI runtime budget — bump as test suite grows (FR-20260425)
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve paired Workspace ref
-        id: workspace-ref
-        shell: bash
-        run: |
-          workspace_ref="main"
-          if [[ -n "${GITHUB_HEAD_REF}" ]]; then
-            if ! remote_refs="$(git ls-remote --heads https://github.com/tylerdrakemusic/-Workspace.git)"; then
-              echo "Failed to query paired Workspace refs" >&2
-              exit 1
-            fi
-            if printf '%s\n' "${remote_refs}" \
-              | awk -v target="refs/heads/${GITHUB_HEAD_REF}" '$2 == target { found = 1 } END { exit !found }'; then
-              workspace_ref="${GITHUB_HEAD_REF}"
-            fi
-          fi
-          echo "ref=${workspace_ref}" >> "${GITHUB_OUTPUT}"
-
-      - name: Check out Workspace repository
-        uses: actions/checkout@v4
         with:
-          repository: tylerdrakemusic/-Workspace
-          ref: ${{ steps.workspace-ref.outputs.ref }}
-          path: workspace
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Set up paired Workspace revision
+        run: python tools/resolve_workspace_revision.py
 
       - name: Export Workspace root for shared imports
         run: |
