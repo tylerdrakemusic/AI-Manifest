@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,11 +19,15 @@ import src.utils.lily_portrait as _lp
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _fake_generate(prompt: str, output_dir: Path, **kwargs) -> Path:
-    """Simulate a successful image client by writing a stub PNG."""
-    p = output_dir / "generated_stub.png"
-    p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
-    return p
+class _FailingCascade:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        output_dir: Path,
+        negative_prompt: str | None = None,
+    ) -> SimpleNamespace:
+        raise RuntimeError("all image providers unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -60,97 +64,59 @@ def test_returns_cached_portrait_if_exists(tmp_path: Path, monkeypatch: pytest.M
 
 
 # ---------------------------------------------------------------------------
-# get_daily_portrait — DALL-E 3 success
+# get_daily_portrait — shared cascade
 # ---------------------------------------------------------------------------
 
-def test_dalle3_success_renames_to_canonical(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_daily_portrait_uses_shared_cascade_with_lily_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
+    prompt = "Lily portrait with Tuesday's navy blazer"
+    negative_prompt = "blurry, low quality"
+    monkeypatch.setattr(_lp, "_build_prompt", lambda: (prompt, negative_prompt))
+    generated = tmp_path / "cascade-result.png"
+    generated.write_bytes(b"shared cascade image")
+    factory_paths: list[Path] = []
+    calls: list[tuple[str, Path, str | None]] = []
 
-    generated = tmp_path / "abcdef123456.png"
-    generated.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
+    class FakeCascade:
+        def generate(
+            self,
+            actual_prompt: str,
+            *,
+            output_dir: Path,
+            negative_prompt: str | None,
+        ) -> SimpleNamespace:
+            calls.append((actual_prompt, output_dir, negative_prompt))
+            return SimpleNamespace(path=generated)
 
-    monkeypatch.setattr(_lp, "_try_dalle3", lambda prompt, save_dir: generated)
-    monkeypatch.setattr(_lp, "_try_huggingface", lambda prompt, save_dir, **kw: None)
+    def fake_import_module(module_name: str, *args: object, **kwargs: object) -> object:
+        if module_name == "integrations.image_cascade":
+            def fake_portrait_cascade(path: Path) -> FakeCascade:
+                factory_paths.append(path)
+                return FakeCascade()
+
+            return SimpleNamespace(
+                portrait_image_cascade=fake_portrait_cascade
+            )
+        return real_import_module(module_name, *args, **kwargs)
+
+    real_import_module = _lp.importlib.import_module
+    persona_svg = tmp_path / f"lily_portrait_{date.today().isoformat()}.svg"
+    monkeypatch.setattr(_lp.importlib, "import_module", fake_import_module)
 
     result = _lp.get_daily_portrait()
-    today = date.today().isoformat()
-    assert result.name == f"lily_portrait_{today}.png"
-    assert result.exists()
+    cached_path = tmp_path / f"lily_portrait_{date.today().isoformat()}.png"
 
-
-def test_daily_portrait_accepts_injected_provider_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-    generated = tmp_path / "adapter_stub.png"
-    generated.write_bytes(b"adapter image")
-
-    class FakeProviderAdapter:
-        def generate_dalle3(self, prompt: str, save_dir: Path) -> Path:
-            return generated
-
-    result = _lp.get_daily_portrait(provider_adapter=FakeProviderAdapter())
-
-    assert result.name == f"lily_portrait_{date.today().isoformat()}.png"
-    assert result.exists()
+    assert factory_paths == [persona_svg]
+    assert calls == [(prompt, tmp_path, negative_prompt)]
+    assert result == cached_path
+    assert result.read_bytes() == b"shared cascade image"
+    assert _lp.get_daily_portrait() == cached_path
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
-# get_daily_portrait — DALL-E 3 fails, HuggingFace succeeds
-# ---------------------------------------------------------------------------
-
-def test_huggingface_fallback_when_dalle3_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-
-    generated = tmp_path / "hf_stub.png"
-    generated.write_bytes(b"\x89PNG\r\n\x1a\n" + b"y" * 64)
-
-    monkeypatch.setattr(_lp, "_try_dalle3", lambda prompt, save_dir: None)
-    monkeypatch.setattr(_lp, "_try_huggingface", lambda prompt, save_dir, **kw: generated)
-
-    result = _lp.get_daily_portrait()
-    today = date.today().isoformat()
-    assert result.name == f"lily_portrait_{today}.png"
-    assert result.exists()
-
-
-def test_injected_adapter_preserves_provider_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-    calls: list[str] = []
-    generated = tmp_path / "pollinations_stub.png"
-    generated.write_bytes(b"pollinations image")
-
-    class OrderedAdapter:
-        def generate_dalle3(self, prompt: str, save_dir: Path) -> None:
-            calls.append("dalle3")
-            return None
-
-        def generate_huggingface(self, prompt: str, save_dir: Path, negative_prompt: str | None = None) -> None:
-            calls.append("huggingface")
-            return None
-
-        def generate_hf_spaces(self, prompt: str, save_dir: Path) -> None:
-            calls.append("hf_spaces")
-            return None
-
-        def generate_pollinations(self, prompt: str, save_dir: Path) -> Path:
-            calls.append("pollinations")
-            return generated
-
-    result = _lp.get_daily_portrait(provider_adapter=OrderedAdapter())
-
-    assert calls == ["dalle3", "huggingface", "hf_spaces", "pollinations"]
-    assert result.name == f"lily_portrait_{date.today().isoformat()}.png"
-
-
-def test_adapter_provider_errors_are_skipped(tmp_path: Path) -> None:
-    adapter = _lp.WorkspaceImageProviderAdapter(
-        dalle3_factory=lambda: (_ for _ in ()).throw(EnvironmentError("missing OPENAPI_TOKEN")),
-        huggingface_factory=lambda: (_ for _ in ()).throw(RuntimeError("HF unavailable")),
-    )
-
-    assert _lp._try_dalle3("prompt", tmp_path, adapter) is None
-    assert _lp._try_huggingface("prompt", tmp_path, provider_adapter=adapter) is None
-
-
 def test_workspace_src_uses_configured_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
 
@@ -163,10 +129,7 @@ def test_workspace_src_uses_configured_root(tmp_path: Path, monkeypatch: pytest.
 
 def test_svg_fallback_when_all_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(_lp, "_try_dalle3", lambda prompt, save_dir: None)
-    monkeypatch.setattr(_lp, "_try_huggingface", lambda prompt, save_dir, **kw: None)
-    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda prompt, save_dir: None)
-    monkeypatch.setattr(_lp, "_try_pollinations", lambda prompt, save_dir: None)
+    monkeypatch.setattr(_lp, "_workspace_portrait_cascade", lambda _svg: _FailingCascade())
 
     result = _lp.get_daily_portrait()
     assert result.exists()
@@ -215,10 +178,7 @@ def test_img_tag_contains_data_uri_png(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_img_tag_svg_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(_lp, "_try_dalle3", lambda p, d: None)
-    monkeypatch.setattr(_lp, "_try_huggingface", lambda p, d, **kw: None)
-    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda p, d: None)
-    monkeypatch.setattr(_lp, "_try_pollinations", lambda p, d: None)
+    monkeypatch.setattr(_lp, "_workspace_portrait_cascade", lambda _svg: _FailingCascade())
 
     tag = _lp.get_portrait_img_tag()
     assert "data:image/svg+xml;base64," in tag
@@ -227,10 +187,7 @@ def test_img_tag_svg_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_img_tag_respects_max_width(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_lp, "_IMAGE_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(_lp, "_try_dalle3", lambda p, d: None)
-    monkeypatch.setattr(_lp, "_try_huggingface", lambda p, d, **kw: None)
-    monkeypatch.setattr(_lp, "_try_hf_spaces", lambda p, d: None)
-    monkeypatch.setattr(_lp, "_try_pollinations", lambda p, d: None)
+    monkeypatch.setattr(_lp, "_workspace_portrait_cascade", lambda _svg: _FailingCascade())
 
     tag = _lp.get_portrait_img_tag(max_width=80)
     assert "max-width:80px" in tag

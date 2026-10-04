@@ -14,8 +14,35 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 _PORTAL_OUTPUT = Path(__file__).resolve().parent.parent / "output" / "executive_brief_portal.html"
+
+
+@pytest.fixture(autouse=True)
+def keep_lily_portrait_tests_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep portal tests on temporary assets and never invoke image providers."""
+    from src.utils import lily_portrait
+
+    class FailingCascade:
+        def generate(
+            self,
+            prompt: str,
+            *,
+            output_dir: Path,
+            negative_prompt: str | None = None,
+        ) -> None:
+            raise RuntimeError("image providers are disabled in tests")
+
+    monkeypatch.setattr(lily_portrait, "_IMAGE_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(
+        lily_portrait,
+        "_workspace_portrait_cascade",
+        lambda _persona_svg: FailingCascade(),
+    )
 
 
 def test_portal_import_uses_configured_workspace_root_for_shared_imports() -> None:
@@ -77,6 +104,31 @@ def test_executive_brief_portal_output_has_no_static_banner() -> None:
     html = _PORTAL_OUTPUT.read_text(encoding="utf-8")
     assert "static-banner" not in html, "executive_brief_portal.html still contains static-banner"
     assert "Static snapshot" not in html, "executive_brief_portal.html still contains 'Static snapshot' text"
+
+
+def test_executive_brief_html_embeds_cached_lily_portrait(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Portal rendering embeds Lily's cached image without invoking a provider."""
+    import base64
+    from datetime import date
+
+    from src.utils import lily_portrait
+    from tools import executive_audio_brief
+    from tools.executive_audio_brief import generate_portal_html
+
+    image_bytes = b"offline Lily portrait fixture"
+    cached_portrait = tmp_path / f"lily_portrait_{date.today().isoformat()}.png"
+    cached_portrait.write_bytes(image_bytes)
+    monkeypatch.setattr(lily_portrait, "_IMAGE_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+    monkeypatch.setattr(executive_audio_brief, "render_roadmap_tab_html", lambda *_args: "")
+
+    rendered = generate_portal_html([], "Brief script", None, [], "2026-10-03T00:00:00+00:00")
+
+    image_uri = f"data:image/png;base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    assert image_uri in rendered
+    assert 'alt="Lily — Executive Brief Host"' in rendered
 
 
 # ---------------------------------------------------------------------------
