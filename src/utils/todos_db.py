@@ -444,17 +444,17 @@ def get_done_todos(project: str | None = None) -> list[dict[str, Any]]:
 
 def mark_done(todo_id: int, *, force: bool = False) -> bool:
     """Complete one open todo, optionally bypassing prerequisite readiness."""
-    closed_at = datetime.now(timezone.utc).isoformat()
-    if not force and not can_complete_todo(todo_id)["ready"]:
-        return False
-    with get_connection() as conn:
-        cur = conn.execute(
-            "UPDATE todos SET done=1, closed_at=?, closure_reason='completed'"
-            " WHERE id=? AND done=0",
-            (closed_at, todo_id),
-        )
-        conn.commit()
-    return cur.rowcount == 1
+    try:
+        _close_todo_tree_transaction(todo_id, reason="completed", force=force)
+    except ValueError as error:
+        if str(error) in {
+            "todo not found",
+            "todo already closed",
+            "readiness check failed",
+        }:
+            return False
+        raise
+    return True
 
 
 _TRUSTED_BACKEND = object()
@@ -468,18 +468,44 @@ def close_todo_tree(
     trusted_backend: object | None = None,
 ) -> dict[str, Any]:
     """Atomically close an open todo and its open ``parent_id`` descendants."""
-    if reason not in {"completed", "cancelled"}:
-        raise ValueError("reason must be completed or cancelled")
     if force and trusted_backend is not _TRUSTED_BACKEND:
         raise PermissionError("force requires a trusted backend")
+
+    result, _ = _close_todo_tree_transaction(todo_id, reason=reason, force=force)
+    return result
+
+
+def _close_todo_tree_transaction(
+    todo_id: int,
+    *,
+    reason: str,
+    force: bool = False,
+    check_readiness: bool = True,
+    expected_version: str | None = None,
+    require_version: bool = False,
+    completion_evidence: str | None = None,
+    artifact_reference: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if reason not in {"completed", "cancelled"}:
+        raise ValueError("reason must be completed or cancelled")
 
     closed_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            root = conn.execute("SELECT done FROM todos WHERE id=?", (todo_id,)).fetchone()
+            root = conn.execute(
+                "SELECT done, updated_at, parent_id FROM todos WHERE id=?", (todo_id,)
+            ).fetchone()
             if root is None:
                 raise ValueError("todo not found")
+            if require_version and (
+                expected_version is None
+                or root["updated_at"] != expected_version
+                or root["done"]
+            ):
+                raise ValueError(
+                    "precondition failed: todo version is stale or todo is already closed"
+                )
             if root["done"]:
                 raise ValueError("todo already closed")
 
@@ -499,7 +525,7 @@ def close_todo_tree(
                 (todo_id,),
             ).fetchall()
             affected_ids = [int(row["id"]) for row in rows]
-            if not force:
+            if check_readiness and not force:
                 for affected_id in affected_ids:
                     blocking = conn.execute(
                         """
@@ -518,17 +544,82 @@ def close_todo_tree(
                         raise ValueError("readiness check failed")
 
             for affected_id in affected_ids:
+                if affected_id == todo_id and completion_evidence is not None:
+                    conn.execute(
+                        """UPDATE todos
+                           SET done=1, closed_at=?, closure_reason=?,
+                               completion_evidence=?, artifact_reference=?, updated_at=?
+                           WHERE id=? AND done=0""",
+                        (
+                            closed_at,
+                            reason,
+                            completion_evidence,
+                            artifact_reference,
+                            closed_at,
+                            affected_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE todos SET done=1, closed_at=?, closure_reason=? WHERE id=? AND done=0",
+                        (closed_at, reason, affected_id),
+                    )
+
+            ancestor_id = root["parent_id"]
+            while ancestor_id is not None:
+                ancestor = conn.execute(
+                    "SELECT done, closure_reason, parent_id FROM todos WHERE id=?",
+                    (ancestor_id,),
+                ).fetchone()
+                if ancestor is None:
+                    break
+                if ancestor["done"]:
+                    if ancestor["closure_reason"] not in {"completed", "cancelled"}:
+                        break
+                    ancestor_id = ancestor["parent_id"]
+                    continue
+
+                unfinished_child = conn.execute(
+                    """SELECT 1 FROM todos
+                       WHERE parent_id=? AND (
+                           done=0 OR COALESCE(closure_reason, '') NOT IN ('completed', 'cancelled')
+                       ) LIMIT 1""",
+                    (ancestor_id,),
+                ).fetchone()
+                if unfinished_child is not None:
+                    break
+
+                if check_readiness and not force:
+                    blocking = conn.execute(
+                        """SELECT prerequisite.id
+                           FROM todo_prerequisites edge
+                           JOIN todos prerequisite ON prerequisite.id=edge.prerequisite_id
+                           WHERE edge.todo_id=?
+                             AND COALESCE(prerequisite.closure_reason, '') NOT IN (
+                                 SELECT value FROM json_each(edge.allowed_terminal_states)
+                             )
+                           LIMIT 1""",
+                        (ancestor_id,),
+                    ).fetchone()
+                    if blocking is not None:
+                        raise ValueError("readiness check failed")
+
                 conn.execute(
-                    "UPDATE todos SET done=1, closed_at=?, closure_reason=? WHERE id=? AND done=0",
-                    (closed_at, reason, affected_id),
+                    "UPDATE todos SET done=1, closed_at=?, closure_reason='completed' WHERE id=? AND done=0",
+                    (closed_at, ancestor_id),
                 )
+                affected_ids.append(int(ancestor_id))
+                ancestor_id = ancestor["parent_id"]
+
             conn.commit()
-            return {
+            result = {
                 "root_id": todo_id,
                 "reason": reason,
                 "affected_ids": affected_ids,
                 "affected_count": len(affected_ids),
             }
+            root_row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+            return result, dict(root_row)
         except Exception:
             conn.rollback()
             raise
@@ -536,15 +627,15 @@ def close_todo_tree(
 
 def cancel_todo(todo_id: int) -> bool:
     """Close one open todo as cancelled and return whether it was updated."""
-    closed_at = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
-        cur = conn.execute(
-            "UPDATE todos SET done=1, closed_at=?, closure_reason='cancelled'"
-            " WHERE id=? AND done=0",
-            (closed_at, todo_id),
+    try:
+        _close_todo_tree_transaction(
+            todo_id, reason="cancelled", check_readiness=False
         )
-        conn.commit()
-    return cur.rowcount == 1
+    except ValueError as error:
+        if str(error) in {"todo not found", "todo already closed"}:
+            return False
+        raise
+    return True
 
 
 def add_todo(
@@ -676,29 +767,15 @@ def complete_todo(
         raise ValueError("completion_evidence is required")
     if not isinstance(artifact_reference, str) or not artifact_reference.strip():
         raise ValueError("artifact_reference is required")
-    closed_at = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
-        cur = conn.execute(
-            """UPDATE todos
-               SET done=1, closed_at=?, closure_reason='completed',
-                   completion_evidence=?, artifact_reference=?, updated_at=?
-               WHERE id=? AND updated_at=? AND done=0""",
-            (
-                closed_at,
-                completion_evidence,
-                artifact_reference,
-                closed_at,
-                todo_id,
-                expected_version,
-            ),
-        )
-        if cur.rowcount != 1:
-            if conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone() is None:
-                raise ValueError("todo not found")
-            raise ValueError("precondition failed: todo version is stale or todo is already closed")
-        conn.commit()
-        row = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
-    return dict(row)
+    _, root_row = _close_todo_tree_transaction(
+        todo_id,
+        reason="completed",
+        expected_version=expected_version,
+        require_version=True,
+        completion_evidence=completion_evidence,
+        artifact_reference=artifact_reference,
+    )
+    return root_row
 
 
 def set_decision_metadata(todo_id: int, metadata: dict[str, Any], *, assessed_by: str) -> None:

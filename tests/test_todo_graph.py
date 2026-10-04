@@ -100,12 +100,12 @@ def test_link_prerequisite_rejects_cycles(graph_db) -> None:
         graph_db.link_prerequisite(first, second)
 
 
-def test_parent_completion_is_independent_of_child_completion(graph_db) -> None:
+def test_parent_completion_closes_open_children(graph_db) -> None:
     parent = graph_db.insert_todo("workspace", "TYLER", "Parent")
     child = graph_db.insert_todo("workspace", "AI", "Child", parent_id=parent)
 
     assert graph_db.mark_done(parent) is True
-    assert graph_db.get_todo_by_id(child)["done"] == 0
+    assert graph_db.get_todo_by_id(child)["done"] == 1
 
 
 def test_decompose_preserves_parent_and_inherits_confirmed_fr_link(graph_db) -> None:
