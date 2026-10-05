@@ -158,6 +158,19 @@ def test_close_todo_tree_propagates_completion_to_ancestors(graph_db):
         assert row["closure_reason"] == "completed"
 
 
+def test_open_direct_child_prevents_ancestor_completion(graph_db):
+    parent = graph_db.insert_todo("workspace", "TYLER", "Parent")
+    completed_child = graph_db.insert_todo("workspace", "AI", "Completed child", parent_id=parent)
+    open_child = graph_db.insert_todo("workspace", "AI", "Open child", parent_id=parent)
+
+    assert graph_db.mark_done(completed_child) is True
+
+    parent_row = graph_db.get_todo_by_id(parent)
+    assert parent_row["done"] == 0
+    assert parent_row["closure_reason"] is None
+    assert graph_db.get_todo_by_id(open_child)["done"] == 0
+
+
 def test_final_cancelled_child_completes_and_propagates_ancestors(graph_db):
     root = graph_db.insert_todo("workspace", "TYLER", "Root")
     parent = graph_db.insert_todo("workspace", "AI", "Parent", parent_id=root)
