@@ -578,14 +578,15 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             <ul class="todo-list">{_todo_hierarchy_html(hierarchy, sigil, name)}</ul>
         </div>"""
 
+    project_key = html.escape(proj["key"], quote=True)
     add_todo_form_html = f"""<div class="add-todo-form">
-  <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
+  <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{project_key}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
 </div>"""
 
     return f"""
-    <div class="status-card">
+    <div class="status-card" data-project="{project_key}">
         <div class="card-header">
             <span class="project-sigil">{sigil}</span>
             <h3>{name}</h3>
@@ -690,7 +691,7 @@ def generate_portal_html(
         pct = round(100 * done / total) if total > 0 else 0
         in_brief = "✅" if s["key"] in top3_keys else ""
         all_rows += f"""
-        <tr>
+        <tr data-project="{html.escape(s['key'], quote=True)}" data-open="{active}" data-total="{total}">
             <td>{sigil} {name}</td>
             <td>{active}</td>
             <td>{done}</td>
@@ -1635,6 +1636,7 @@ function _removeAffectedTodoRows(affectedIds) {{
     }}
     for (const [card, cardAffectedIds] of idsByCard) {{
         _updateProgressBar(card, cardAffectedIds.size);
+        _updateProjectSummary(card.dataset.project, cardAffectedIds.size);
     }}
     for (const row of rowsToRemove) row.remove();
 }}
@@ -1644,6 +1646,24 @@ function _showTodoActionStatus(message) {{
     if (!status) return;
     status.textContent = message;
     status.hidden = !message;
+}}
+
+function _updateProjectSummary(projectKey, decrement) {{
+    if (!projectKey) return;
+    const summaryRow = Array.from(document.querySelectorAll('.all-projects tbody tr'))
+        .find(row => row.dataset.project === projectKey);
+    if (!summaryRow) return;
+    const open = Math.max(0, parseInt(summaryRow.dataset.open || '0', 10) - decrement);
+    const total = parseInt(summaryRow.dataset.total || '0', 10);
+    const done = total - open;
+    const pct = total > 0 ? Math.round(100 * done / total) : 0;
+    const cells = summaryRow.querySelectorAll('td');
+    summaryRow.dataset.open = String(open);
+    if (cells.length >= 4) {{
+        cells[1].textContent = String(open);
+        cells[2].textContent = String(done);
+        cells[3].textContent = pct + '%';
+    }}
 }}
 
 async function markDone(todoId, btnEl) {{

@@ -1078,6 +1078,17 @@ class TestCheckmarkLiveServer:
             progress = workspace_card.locator(".progress-bar-container")
             open_before = int(progress.get_attribute("data-open"))
             total_before = int(progress.get_attribute("data-total"))
+            overview_row = live_page.locator(".all-projects tbody tr").filter(
+                has_text="Workspace"
+            )
+            assert overview_row.count() == 1
+            overview_cells = overview_row.locator("td")
+            overview_before = [
+                overview_cells.nth(index).inner_text().strip() for index in range(1, 4)
+            ]
+            overview_open_before = int(overview_before[0])
+            overview_done_before = int(overview_before[1])
+            overview_total_before = overview_open_before + overview_done_before
 
             with live_page.expect_response(
                 lambda response: response.url.endswith("/api/todo/done")
@@ -1092,6 +1103,19 @@ class TestCheckmarkLiveServer:
                 timeout=1000,
             )
             assert time.perf_counter() - response_at < 1.0
+            overview_after = [
+                overview_cells.nth(index).inner_text().strip() for index in range(1, 4)
+            ]
+            expected_overview = [
+                str(overview_open_before - 2),
+                str(overview_done_before + 2),
+                f"{round(100 * (overview_done_before + 2) / overview_total_before)}%",
+            ]
+            assert overview_after == expected_overview, (
+                "All Projects Overview did not update before delayed refresh: "
+                f"before={overview_before}, expected={expected_overview}, actual={overview_after}"
+            )
+            assert int(overview_after[0]) + int(overview_after[1]) == overview_total_before
             assert "execution states were not changed" in live_page.get_by_role("status").inner_text().lower()
             assert int(progress.get_attribute("data-open")) == open_before - 2
             assert int(progress.get_attribute("data-total")) == total_before
@@ -1103,6 +1127,14 @@ class TestCheckmarkLiveServer:
                 parent: "claimed",
                 child: "queued",
             }
+            proof_path = (
+                Path(__file__).resolve().parent.parent
+                / "proof"
+                / "screenshots"
+                / "FR-20261005-ai-manifest-readiness-summary-immediate.png"
+            )
+            proof_path.parent.mkdir(parents=True, exist_ok=True)
+            live_page.screenshot(path=str(proof_path), full_page=True)
         finally:
             refresh_release.set()
 
