@@ -171,6 +171,33 @@ def test_open_direct_child_prevents_ancestor_completion(graph_db):
     assert graph_db.get_todo_by_id(open_child)["done"] == 0
 
 
+def test_terminal_ancestor_with_open_child_prevents_root_completion(graph_db):
+    root = graph_db.insert_todo("workspace", "TYLER", "Root")
+    terminal_parent = graph_db.insert_todo(
+        "workspace", "AI", "Legacy terminal parent", parent_id=root
+    )
+    open_grandchild = graph_db.insert_todo(
+        "workspace", "AI", "Open grandchild", parent_id=terminal_parent
+    )
+    completed_sibling = graph_db.insert_todo(
+        "workspace", "AI", "Completed sibling", parent_id=terminal_parent
+    )
+    with graph_db.get_connection() as conn:
+        conn.execute(
+            """UPDATE todos
+               SET done=1, closed_at='legacy-close', closure_reason='completed'
+               WHERE id=?""",
+            (terminal_parent,),
+        )
+
+    assert graph_db.mark_done(completed_sibling) is True
+
+    root_row = graph_db.get_todo_by_id(root)
+    assert root_row["done"] == 0
+    assert root_row["closure_reason"] is None
+    assert graph_db.get_todo_by_id(open_grandchild)["done"] == 0
+
+
 def test_final_cancelled_child_completes_and_propagates_ancestors(graph_db):
     root = graph_db.insert_todo("workspace", "TYLER", "Root")
     parent = graph_db.insert_todo("workspace", "AI", "Parent", parent_id=root)

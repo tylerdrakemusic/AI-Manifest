@@ -573,11 +573,6 @@ def _close_todo_tree_transaction(
                 ).fetchone()
                 if ancestor is None:
                     break
-                if ancestor["done"]:
-                    if ancestor["closure_reason"] not in {"completed", "cancelled"}:
-                        break
-                    ancestor_id = ancestor["parent_id"]
-                    continue
 
                 unfinished_child = conn.execute(
                     """SELECT 1 FROM todos
@@ -588,6 +583,12 @@ def _close_todo_tree_transaction(
                 ).fetchone()
                 if unfinished_child is not None:
                     break
+
+                if ancestor["done"]:
+                    if ancestor["closure_reason"] not in {"completed", "cancelled"}:
+                        break
+                    ancestor_id = ancestor["parent_id"]
+                    continue
 
                 if check_readiness and not force:
                     blocking = conn.execute(
