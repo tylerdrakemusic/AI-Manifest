@@ -627,7 +627,7 @@ def test_status_card_accepts_legacy_rank_without_rendering_rank_markup() -> None
 
     out = _status_card_html(status, 1)
 
-    assert '<div class="status-card">' in out
+    assert '<div class="status-card" data-project="workspace">' in out
     assert "priority-badge" not in out
     assert "rank-secondary" not in out
 

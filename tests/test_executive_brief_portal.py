@@ -13,6 +13,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 from http.server import HTTPServer
 from pathlib import Path
 from urllib.request import urlopen
@@ -902,6 +903,72 @@ class TestCheckmarkLiveServer:
         finally:
             _m.DB_PATH = orig
 
+    def _seed_execution_states(self, database_path: Path, claimed_id: int, queued_id: int) -> None:
+        from tools.executive_audio_brief import ExecutionLifecycle
+
+        connection = sqlite3.connect(database_path)
+        lifecycle = ExecutionLifecycle(connection)
+        lifecycle.register_queued(
+            todo_id=str(claimed_id),
+            fr_id=None,
+            now=1.0,
+            idempotency_key=f"register-{claimed_id}",
+        )
+        lifecycle.claim(
+            todo_id=str(claimed_id),
+            fr_id=None,
+            worker_id="dashboard-test",
+            claim_id=f"claim-{claimed_id}",
+            lease_token=f"lease-{claimed_id}",
+            now=2.0,
+            lease_seconds=3600,
+            idempotency_key=f"claim-key-{claimed_id}",
+        )
+        lifecycle.register_queued(
+            todo_id=str(queued_id),
+            fr_id=None,
+            now=1.0,
+            idempotency_key=f"register-{queued_id}",
+        )
+        connection.close()
+
+    def _serve_temp_todos(self, monkeypatch, todos_db) -> None:
+        import tools.executive_audio_brief as executive_audio_brief
+        from tools.executive_audio_brief import BriefRequestHandler, generate_portal_html
+
+        monkeypatch.setattr(executive_audio_brief, "_regenerate_roadmap_data", lambda: None)
+        open_todos = todos_db.get_open_todos("workspace")
+        done_todos = todos_db.get_done_todos("workspace")
+        status = {
+            "sigil": "⊕",
+            "name": "Workspace",
+            "key": "workspace",
+            "summary": "Temporary dashboard fixture",
+            "active_tasks": len(open_todos),
+            "completed_tasks": len(done_todos),
+            "score": 1,
+            "full_todos": open_todos,
+            "supervised_todos": [],
+            "human_todos": [],
+            "todo_hierarchy": executive_audio_brief.build_todo_hierarchy(open_todos, {}),
+        }
+        portal_html = generate_portal_html(
+            [status], "Test brief", None, [], "2026-10-05 00:00:00"
+        )
+        monkeypatch.setattr(
+            BriefRequestHandler,
+            "_build_fresh_portal_html",
+            lambda handler: portal_html,
+        )
+
+    def _execution_states(self, database_path: Path, *todo_ids: int) -> dict[int, str]:
+        with sqlite3.connect(database_path) as connection:
+            rows = connection.execute(
+                "SELECT todo_id, state FROM todo_execution_lifecycle WHERE todo_id IN (?, ?)",
+                tuple(str(todo_id) for todo_id in todo_ids),
+            ).fetchall()
+        return {int(todo_id): state for todo_id, state in rows}
+
     def test_checkmark_card_list_item_removed_from_dom(self, live_server, live_page) -> None:
         """Clicking ✓ on a card-list <li> todo removes it from the DOM (no JS error)."""
         base_url, db_file = live_server
@@ -962,6 +1029,218 @@ class TestCheckmarkLiveServer:
         assert live_page.locator(f"button.done-btn[onclick*='markDone({child},']").count() == 0
         assert self._is_done(db_file, parent)
         assert self._is_done(db_file, child)
+
+    def test_readiness_blocked_parent_closes_promptly_without_waiting_for_refresh(
+        self, live_server, live_page, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Manifest override clears a blocked subtree while refresh is still pending."""
+        import tools.executive_audio_brief as executive_audio_brief
+        import src.utils.todos_db as todos_db
+        from tools.executive_audio_brief import BriefRequestHandler
+
+        base_url, db_file = live_server
+        monkeypatch.setattr(todos_db, "DB_PATH", db_file)
+        parent = todos_db.add_todo("workspace", "Parent manifest override", source="AI")
+        child = todos_db.add_todo(
+            "workspace", "Child manifest override", source="AI", parent_id=parent
+        )
+        prerequisite = todos_db.add_todo("workspace", "Still-open prerequisite", source="AI")
+        todos_db.link_prerequisite(parent, prerequisite)
+
+        lifecycle_db = tmp_path / "execution-lifecycle.db"
+        self._seed_execution_states(lifecycle_db, parent, child)
+        monkeypatch.setattr(
+            executive_audio_brief,
+            "get_workspace_connection",
+            lambda: sqlite3.connect(lifecycle_db),
+        )
+        self._serve_temp_todos(monkeypatch, todos_db)
+
+        refresh_started = threading.Event()
+        refresh_release = threading.Event()
+        refresh_html = '<div id="refreshable-status"></div>'
+
+        def delayed_refresh(handler) -> None:
+            refresh_started.set()
+            if not refresh_release.wait(timeout=5):
+                raise TimeoutError("test did not release delayed refresh")
+            handler._serve_json({"ok": True, "html": refresh_html})
+
+        monkeypatch.setattr(BriefRequestHandler, "_handle_refresh", delayed_refresh)
+        try:
+            live_page.goto(base_url)
+            live_page.wait_for_load_state("domcontentloaded")
+            parent_button = live_page.locator(f"button.done-btn[onclick*='markDone({parent},']")
+            assert parent_button.count() == 1
+            workspace_card = live_page.locator(".status-card").filter(
+                has=live_page.locator("h3", has_text="Workspace")
+            )
+            progress = workspace_card.locator(".progress-bar-container")
+            open_before = int(progress.get_attribute("data-open"))
+            total_before = int(progress.get_attribute("data-total"))
+            overview_row = live_page.locator(".all-projects tbody tr").filter(
+                has_text="Workspace"
+            )
+            assert overview_row.count() == 1
+            overview_cells = overview_row.locator("td")
+            overview_before = [
+                overview_cells.nth(index).inner_text().strip() for index in range(1, 4)
+            ]
+            overview_open_before = int(overview_before[0])
+            overview_done_before = int(overview_before[1])
+            overview_total_before = overview_open_before + overview_done_before
+
+            with live_page.expect_response(
+                lambda response: response.url.endswith("/api/todo/done")
+            ) as done_response:
+                parent_button.click()
+            response_at = time.perf_counter()
+            assert done_response.value.status == 200
+            live_page.wait_for_function(
+                "todoIds => todoIds.every(id => !Array.from(document.querySelectorAll('.todo-id'))"
+                ".some(node => node.textContent.trim() === `TODO #${id}`))",
+                arg=[parent, child],
+                timeout=1000,
+            )
+            assert time.perf_counter() - response_at < 1.0
+            overview_after = [
+                overview_cells.nth(index).inner_text().strip() for index in range(1, 4)
+            ]
+            expected_overview = [
+                str(overview_open_before - 2),
+                str(overview_done_before + 2),
+                f"{round(100 * (overview_done_before + 2) / overview_total_before)}%",
+            ]
+            assert overview_after == expected_overview, (
+                "All Projects Overview did not update before delayed refresh: "
+                f"before={overview_before}, expected={expected_overview}, actual={overview_after}"
+            )
+            assert int(overview_after[0]) + int(overview_after[1]) == overview_total_before
+            assert "execution states were not changed" in live_page.get_by_role("status").inner_text().lower()
+            assert int(progress.get_attribute("data-open")) == open_before - 2
+            assert int(progress.get_attribute("data-total")) == total_before
+            assert refresh_started.wait(timeout=2), "background portal refresh did not start"
+            assert self._is_done(db_file, parent)
+            assert self._is_done(db_file, child)
+            assert not self._is_done(db_file, prerequisite)
+            assert self._execution_states(lifecycle_db, parent, child) == {
+                parent: "claimed",
+                child: "queued",
+            }
+            proof_path = (
+                Path(__file__).resolve().parent.parent
+                / "proof"
+                / "screenshots"
+                / "FR-20261005-ai-manifest-readiness-summary-immediate.png"
+            )
+            proof_path.parent.mkdir(parents=True, exist_ok=True)
+            live_page.screenshot(path=str(proof_path), full_page=True)
+        finally:
+            refresh_release.set()
+
+    def test_already_done_response_does_not_wait_for_refresh_or_hide_open_child(
+        self, live_server, live_page, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A 409 releases the action promptly; delayed reconciliation keeps an open child."""
+        import tools.executive_audio_brief as executive_audio_brief
+        import src.utils.todos_db as todos_db
+        from tools.executive_audio_brief import BriefRequestHandler, _status_card_html
+
+        base_url, db_file = live_server
+        monkeypatch.setattr(todos_db, "DB_PATH", db_file)
+        parent = todos_db.add_todo("workspace", "Already closed parent", source="AI")
+        child = todos_db.add_todo(
+            "workspace", "Open child survives", source="AI", parent_id=parent
+        )
+        lifecycle_db = tmp_path / "execution-lifecycle.db"
+        self._seed_execution_states(lifecycle_db, parent, child)
+        monkeypatch.setattr(
+            executive_audio_brief,
+            "get_workspace_connection",
+            lambda: sqlite3.connect(lifecycle_db),
+        )
+        self._serve_temp_todos(monkeypatch, todos_db)
+
+        child_todo = {
+            "id": child,
+            "text": "Open child survives",
+            "priority": 5,
+            "source": "AI",
+            "state": "queued",
+            "children": [],
+        }
+        refreshed_card = _status_card_html({
+            "sigil": "⊕",
+            "name": "Workspace",
+            "key": "workspace",
+            "summary": "",
+            "active_tasks": 1,
+            "completed_tasks": 1,
+            "full_todos": [child_todo],
+            "supervised_todos": [],
+            "human_todos": [],
+            "todo_hierarchy": executive_audio_brief.build_todo_hierarchy([child_todo], {}),
+        })
+        refresh_html = f'<div id="refreshable-status">{refreshed_card}</div>'
+        refresh_started = threading.Event()
+        refresh_release = threading.Event()
+
+        def delayed_refresh(handler) -> None:
+            refresh_started.set()
+            if not refresh_release.wait(timeout=5):
+                raise TimeoutError("test did not release delayed refresh")
+            handler._serve_json({"ok": True, "html": refresh_html})
+
+        monkeypatch.setattr(BriefRequestHandler, "_handle_refresh", delayed_refresh)
+        try:
+            live_page.goto(base_url)
+            live_page.wait_for_load_state("domcontentloaded")
+            parent_button = live_page.locator(f"button.done-btn[onclick*='markDone({parent},']")
+            child_button = live_page.locator(f"button.done-btn[onclick*='markDone({child},']")
+            assert parent_button.count() == 1
+            assert child_button.count() == 1
+
+            with sqlite3.connect(db_file) as connection:
+                connection.execute(
+                    "UPDATE todos SET done = 1, closure_reason = 'completed' WHERE id = ?",
+                    (parent,),
+                )
+
+            with live_page.expect_response(
+                lambda response: response.url.endswith("/api/todo/done")
+            ) as done_response:
+                parent_button.click()
+            response_at = time.perf_counter()
+            assert done_response.value.status == 409
+            assert live_page.wait_for_function(
+                "button => button.isConnected && !button.disabled",
+                arg=parent_button.element_handle(),
+                timeout=1000,
+            )
+            assert time.perf_counter() - response_at < 1.0
+            assert child_button.count() == 1
+            assert refresh_started.wait(timeout=2), "background portal refresh did not start"
+            assert self._execution_states(lifecycle_db, parent, child) == {
+                parent: "claimed",
+                child: "queued",
+            }
+
+            refresh_release.set()
+            live_page.wait_for_function(
+                "todoId => Array.from(document.querySelectorAll('.todo-id')).some("
+                "node => node.textContent.trim() === `TODO #${todoId}`)",
+                arg=child,
+                timeout=3000,
+            )
+            assert live_page.locator(f"button.done-btn[onclick*='markDone({parent},']").count() == 0
+            assert live_page.locator(f"button.done-btn[onclick*='markDone({child},']").count() == 1
+            assert not self._is_done(db_file, child)
+            assert self._execution_states(lifecycle_db, parent, child) == {
+                parent: "claimed",
+                child: "queued",
+            }
+        finally:
+            refresh_release.set()
 
     def test_stale_done_action_refreshes_terminal_parent_and_keeps_open_child(
         self, live_server, live_page

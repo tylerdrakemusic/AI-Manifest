@@ -26,7 +26,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -578,14 +578,15 @@ def _status_card_html(proj: dict, rank: int | None = None) -> str:
             <ul class="todo-list">{_todo_hierarchy_html(hierarchy, sigil, name)}</ul>
         </div>"""
 
+    project_key = html.escape(proj["key"], quote=True)
     add_todo_form_html = f"""<div class="add-todo-form">
-  <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{html.escape(proj['key'])}" />
+  <input type="text" class="add-todo-input" placeholder="Add a todo\u2026" data-project="{project_key}" />
   <input type="number" class="add-todo-priority" min="1" max="10" placeholder="Priority (1-10)" />
   <button class="add-todo-btn" onclick="addTodo(this)">\uff0b</button>
 </div>"""
 
     return f"""
-    <div class="status-card">
+    <div class="status-card" data-project="{project_key}">
         <div class="card-header">
             <span class="project-sigil">{sigil}</span>
             <h3>{name}</h3>
@@ -690,7 +691,7 @@ def generate_portal_html(
         pct = round(100 * done / total) if total > 0 else 0
         in_brief = "✅" if s["key"] in top3_keys else ""
         all_rows += f"""
-        <tr>
+        <tr data-project="{html.escape(s['key'], quote=True)}" data-open="{active}" data-total="{total}">
             <td>{sigil} {name}</td>
             <td>{active}</td>
             <td>{done}</td>
@@ -850,6 +851,14 @@ header h1 {{
     height: 22px;
     margin-bottom: 0.75rem;
     overflow: hidden;
+}}
+.todo-action-status {{
+    margin: 0 auto 0.75rem;
+    max-width: 1100px;
+    padding: 0.4rem 0.65rem;
+    border-left: 3px solid var(--accent-green);
+    color: var(--text);
+    font-size: 0.8rem;
 }}
 .progress-bar {{
     height: 100%;
@@ -1469,6 +1478,8 @@ footer {{
         </div>
     </header>
 
+    <p id="todo-action-status" class="todo-action-status" role="status" aria-live="polite" hidden></p>
+
     {audio_section}
 
     <div id="refreshable-status">
@@ -1591,13 +1602,13 @@ async function copyTodoText(button) {{
     }}
 }}
 
-function _updateProgressBar(card) {{
+function _updateProgressBar(card, decrement = 1) {{
     if (!card) return;
     const pbc = card.querySelector('.progress-bar-container');
     if (!pbc) return;
     let open = parseInt(pbc.dataset.open || '0', 10);
     const total = parseInt(pbc.dataset.total || '0', 10);
-    if (open > 0) open -= 1;
+    open = Math.max(0, open - decrement);
     pbc.dataset.open = String(open);
     const done = total - open;
     const pct = total > 0 ? Math.round(100 * done / total) : 0;
@@ -1608,13 +1619,50 @@ function _updateProgressBar(card) {{
 }}
 
 function _removeAffectedTodoRows(affectedIds) {{
+    const rowsToRemove = new Set();
+    const idsByCard = new Map();
     for (const affectedId of affectedIds) {{
-        const buttons = Array.from(document.querySelectorAll('button.done-btn, button.cancel-btn'))
-            .filter(button => (button.getAttribute('onclick') || '').includes('(' + affectedId + ', '));
+        const buttons = Array.from(document.querySelectorAll('button.done-btn'))
+            .filter(button => (button.getAttribute('onclick') || '').includes('markDone(' + affectedId + ','));
         for (const button of buttons) {{
             const row = button.closest('li') || button.closest('tr');
-            if (row) row.remove();
+            if (!row) continue;
+            rowsToRemove.add(row);
+            const card = row.closest('.status-card');
+            if (!card) continue;
+            if (!idsByCard.has(card)) idsByCard.set(card, new Set());
+            idsByCard.get(card).add(affectedId);
         }}
+    }}
+    for (const [card, cardAffectedIds] of idsByCard) {{
+        _updateProgressBar(card, cardAffectedIds.size);
+        _updateProjectSummary(card.dataset.project, cardAffectedIds.size);
+    }}
+    for (const row of rowsToRemove) row.remove();
+}}
+
+function _showTodoActionStatus(message) {{
+    const status = document.getElementById('todo-action-status');
+    if (!status) return;
+    status.textContent = message;
+    status.hidden = !message;
+}}
+
+function _updateProjectSummary(projectKey, decrement) {{
+    if (!projectKey) return;
+    const summaryRow = Array.from(document.querySelectorAll('.all-projects tbody tr'))
+        .find(row => row.dataset.project === projectKey);
+    if (!summaryRow) return;
+    const open = Math.max(0, parseInt(summaryRow.dataset.open || '0', 10) - decrement);
+    const total = parseInt(summaryRow.dataset.total || '0', 10);
+    const done = total - open;
+    const pct = total > 0 ? Math.round(100 * done / total) : 0;
+    const cells = summaryRow.querySelectorAll('td');
+    summaryRow.dataset.open = String(open);
+    if (cells.length >= 4) {{
+        cells[1].textContent = String(open);
+        cells[2].textContent = String(done);
+        cells[3].textContent = pct + '%';
     }}
 }}
 
@@ -1629,13 +1677,14 @@ async function markDone(todoId, btnEl) {{
         }});
         const data = resp.ok ? await resp.json() : null;
         const row = btnEl.closest('li') || btnEl.closest('tr');
-        const card = row ? row.closest('.status-card') : null;
         if (resp.ok) {{
             _removeAffectedTodoRows(data.affected_ids || [todoId]);
-            _updateProgressBar(card);
-            setTimeout(() => refreshStatus(), 350);
+            _showTodoActionStatus('Closed in the manifest; canonical execution states were not changed.');
+            setTimeout(() => {{ refreshStatus(); }}, 350);
         }} else if (resp.status === 409) {{
-            await _refreshStatusInPlace();
+            btnEl.disabled = false;
+            _showTodoActionStatus('Already closed in the manifest; syncing the dashboard.');
+            setTimeout(() => {{ _refreshStatusInPlace().catch(() => {{}}); }}, 0);
         }} else {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Not found', 'var(--text-muted)');
@@ -2009,6 +2058,34 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_todo_done_error(self, status: int, error: str) -> None:
+        body = json.dumps({"ok": False, "error": error}).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _is_same_origin_localhost_request(self) -> bool:
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host")
+        if not origin or not host or len(origin) > 512:
+            return False
+        try:
+            parsed = urlsplit(origin)
+            origin_port = parsed.port
+        except ValueError:
+            return False
+        return (
+            parsed.scheme == "http"
+            and parsed.netloc.lower() == host.lower()
+            and parsed.hostname in {"127.0.0.1", "localhost"}
+            and origin_port == self.server.server_address[1]
+            and not parsed.path
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     def _handle_generate(self) -> None:
         """Generate a new audio brief (always uses Lily voice)."""
         try:
@@ -2063,40 +2140,67 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(msg)
 
     def _handle_todo_done(self) -> None:
-        """Mark a single todo as done."""
+        """Close a dashboard TODO subtree without mutating execution state."""
+        if not self._is_same_origin_localhost_request():
+            self._send_todo_done_error(403, "same-origin localhost request required")
+            return
+
         try:
-            content_len = int(self.headers.get("Content-Length", 0))
+            if self.headers.get_content_type() != "application/json":
+                self._send_todo_done_error(400, "invalid request")
+                return
+            content_length = self.headers.get("Content-Length", "")
+            if not content_length.isdecimal() or not 2 <= int(content_length) <= 4096:
+                self._send_todo_done_error(400, "invalid request")
+                return
+            content_len = int(content_length)
             body = json.loads(self.rfile.read(content_len))
-            todo_id = int(body["id"])
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"id"}
+                or isinstance(body["id"], bool)
+                or not isinstance(body["id"], int)
+                or body["id"] <= 0
+            ):
+                self._send_todo_done_error(400, "invalid request")
+                return
+            todo_id = body["id"]
+        except (UnicodeDecodeError, ValueError):
+            self._send_todo_done_error(400, "invalid request")
+            return
+
+        try:
 
             todo = get_todo_by_id(todo_id)
             if todo is None:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "todo not found"}')
+                self._send_todo_done_error(404, "todo not found")
                 return
 
             if todo["done"] == 1:
-                self.send_response(409)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"ok": false, "error": "already done"}')
+                self._send_todo_done_error(409, "already done")
                 return
 
-            result = close_todo_tree(todo_id, reason="completed")
-            self._serve_json({"ok": True, **result})
-        except ValueError as e:
-            status = 409 if "readiness" in str(e) else 400
-            self.send_response(status)
+            result = close_todo_tree(
+                todo_id,
+                reason="completed",
+                force=True,
+                trusted_backend=todos_db._TRUSTED_BACKEND,
+            )
+            response_body = json.dumps({"ok": True, **result}).encode("utf-8")
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
             self.end_headers()
-            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
-        except Exception as e:
-            self.send_response(400)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(str(e).encode("utf-8"))
+            self.wfile.write(response_body)
+        except ValueError as e:
+            if str(e) == "todo already closed":
+                self._send_todo_done_error(409, "already done")
+            elif str(e) == "todo not found":
+                self._send_todo_done_error(404, "todo not found")
+            else:
+                self._send_todo_done_error(400, "todo could not be closed")
+        except Exception:
+            self._send_todo_done_error(500, "todo could not be closed")
 
     def _handle_todo_cancel(self) -> None:
         """POST /api/todo/cancel — close a single todo as cancelled."""
