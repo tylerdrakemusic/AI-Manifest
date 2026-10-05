@@ -963,6 +963,64 @@ class TestCheckmarkLiveServer:
         assert self._is_done(db_file, parent)
         assert self._is_done(db_file, child)
 
+    def test_stale_done_action_refreshes_terminal_parent_and_keeps_open_child(
+        self, live_server, live_page
+    ) -> None:
+        """A terminal conflict refreshes persisted rows and progress without hiding open children."""
+        base_url, db_file = live_server
+        import src.utils.todos_db as todos_db
+
+        original_path = todos_db.DB_PATH
+        todos_db.DB_PATH = db_file
+        try:
+            parent = todos_db.add_todo("workspace", "Stale parent action", source="AI")
+            child = todos_db.add_todo(
+                "workspace", "Open descendant after stale action", source="AI", parent_id=parent
+            )
+        finally:
+            todos_db.DB_PATH = original_path
+
+        live_page.goto(base_url)
+        live_page.wait_for_load_state("domcontentloaded")
+        parent_button = live_page.locator(f"button.done-btn[onclick*='markDone({parent},']")
+        assert parent_button.count() == 1
+        assert live_page.locator(f"button.done-btn[onclick*='markDone({child},']").count() == 1
+        workspace_card = live_page.locator(".status-card").filter(
+            has=live_page.locator("h3", has_text="Workspace")
+        )
+        progress = workspace_card.locator(".progress-bar-container")
+        before_open = int(progress.get_attribute("data-open"))
+        before_total = int(progress.get_attribute("data-total"))
+        before_label = progress.locator(".progress-label").inner_text()
+
+        with sqlite3.connect(db_file) as conn:
+            conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (parent,))
+
+        with live_page.expect_response(
+            lambda response: response.url.endswith("/api/todo/done") and response.status == 409
+        ) as done_response:
+            with live_page.expect_response(
+                lambda response: response.url.endswith("/api/refresh") and response.status == 200
+            ):
+                parent_button.click()
+
+        assert done_response.value.json()["error"] == "already done"
+        live_page.wait_for_function(
+            "todoId => !Array.from(document.querySelectorAll('.todo-id')).some("
+            "node => node.textContent.trim() === `TODO #${todoId}`)",
+            arg=parent,
+        )
+
+        assert live_page.locator(f"button.done-btn[onclick*='markDone({child},']").count() == 1
+        assert not self._is_done(db_file, child)
+        after_open = int(progress.get_attribute("data-open"))
+        after_total = int(progress.get_attribute("data-total"))
+        after_label = progress.locator(".progress-label").inner_text()
+        assert after_open == before_open - 1
+        assert after_total == before_total
+        assert after_label != before_label
+        assert live_page.get_by_text("Already done", exact=True).count() == 0
+
     def test_full_autonomy_todo_is_actionable_on_status_card(self, live_server, live_page) -> None:
         """A full-autonomy TODO renders in its project card and persists completion."""
         base_url, db_file = live_server

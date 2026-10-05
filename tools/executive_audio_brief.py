@@ -1635,8 +1635,7 @@ async function markDone(todoId, btnEl) {{
             _updateProgressBar(card);
             setTimeout(() => refreshStatus(), 350);
         }} else if (resp.status === 409) {{
-            btnEl.style.display = 'none';
-            _inlineMsg(row, 'Already done', 'var(--accent-green)');
+            await _refreshStatusInPlace();
         }} else {{
             btnEl.style.display = 'none';
             _inlineMsg(row, 'Not found', 'var(--text-muted)');
