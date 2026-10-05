@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 from http.server import HTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -59,13 +60,23 @@ def todo_server(tmp_db: Path, monkeypatch: pytest.MonkeyPatch):
     server.shutdown()
 
 
-def _post_json(url: str, payload: dict) -> tuple[int, dict]:
+def _post_json(
+    url: str,
+    payload: dict,
+    *,
+    origin: str | None = None,
+    include_origin: bool = True,
+) -> tuple[int, dict]:
     """POST JSON and return (status_code, response_body_dict)."""
     data = json.dumps(payload).encode("utf-8")
+    parsed_url = urlsplit(url)
+    headers = {"Content-Type": "application/json"}
+    if include_origin:
+        headers["Origin"] = origin or f"{parsed_url.scheme}://{parsed_url.netloc}"
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -105,18 +116,80 @@ class TestTodoDoneEndpoint:
         assert body["affected_ids"] == [parent, child]
         assert todos_db.get_todo_by_id(child)["done"] == 1
 
-    def test_done_rejects_blocked_parent_without_force_escape(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_done_closes_readiness_blocked_parent_and_descendants(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import src.utils.todos_db as todos_db
         monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
         parent = todos_db.insert_todo("music", "AI", "Blocked parent")
-        blocker = todos_db.insert_todo("music", "AI", "Blocking prerequisite")
-        todos_db.link_prerequisite(parent, blocker)
+        child = todos_db.insert_todo("music", "AI", "Blocked child", parent_id=parent)
+        grandchild = todos_db.insert_todo("music", "AI", "Blocked grandchild", parent_id=child)
+        prerequisite = todos_db.insert_todo("music", "AI", "Blocking prerequisite")
+        todos_db.link_prerequisite(parent, prerequisite)
 
-        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": parent, "force": True})
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": parent})
 
-        assert status == 409
+        assert status == 200
+        assert body["ok"] is True
+        assert body["affected_ids"] == [parent, child, grandchild]
+        assert body["affected_count"] == 3
+        assert all(todos_db.get_todo_by_id(todo_id)["done"] == 1 for todo_id in (parent, child, grandchild))
+        assert todos_db.get_todo_by_id(prerequisite)["done"] == 0
+
+    def test_cross_origin_force_request_is_rejected_without_mutation(
+        self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        parent = todos_db.insert_todo("music", "AI", "Blocked parent")
+        prerequisite = todos_db.insert_todo("music", "AI", "Blocking prerequisite")
+        todos_db.link_prerequisite(parent, prerequisite)
+
+        status, body = _post_json(
+            f"{todo_server}/api/todo/done",
+            {"id": parent, "force": True},
+            origin="https://attacker.example",
+        )
+
+        assert status == 403
         assert body["ok"] is False
         assert todos_db.get_todo_by_id(parent)["done"] == 0
+        assert todos_db.get_todo_by_id(prerequisite)["done"] == 0
+
+    def test_done_rejects_client_force_field_as_invalid_shape(
+        self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        row_id = todos_db.insert_todo("music", "AI", "Client force field")
+
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": row_id, "force": True})
+
+        assert status == 400
+        assert body["ok"] is False
+        assert todos_db.get_todo_by_id(row_id)["done"] == 0
+
+    def test_done_rolls_back_tree_when_descendant_update_fails(
+        self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import src.utils.todos_db as todos_db
+        monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
+        parent = todos_db.insert_todo("music", "AI", "Parent")
+        child = todos_db.insert_todo("music", "AI", "Failing child", parent_id=parent)
+        prerequisite = todos_db.insert_todo("music", "AI", "Blocking prerequisite")
+        todos_db.link_prerequisite(parent, prerequisite)
+        with todos_db.get_connection() as conn:
+            conn.execute(
+                f"""CREATE TRIGGER fail_dashboard_close
+                    BEFORE UPDATE OF done ON todos WHEN OLD.id = {child}
+                    BEGIN SELECT RAISE(ABORT, 'injected close failure'); END"""
+            )
+
+        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": parent})
+
+        assert status == 500
+        assert body["error"] == "todo could not be closed"
+        assert todos_db.get_todo_by_id(parent)["done"] == 0
+        assert todos_db.get_todo_by_id(child)["done"] == 0
+        assert todos_db.get_todo_by_id(prerequisite)["done"] == 0
 
     def test_db_write_confirmed_after_200(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """After a successful mark-done HTTP call the todo is no longer in open list."""
@@ -151,24 +224,20 @@ class TestTodoDoneEndpoint:
         assert status == 404
         assert body.get("ok") is False
 
-    def test_dashboard_completion_enforces_readiness_without_changing_prerequisite_edge(self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A blocked dashboard completion is rejected without changing its prerequisite edge."""
+    def test_done_rejects_missing_origin_without_mutation(
+        self, todo_server: str, tmp_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import src.utils.todos_db as todos_db
         monkeypatch.setattr(todos_db, "DB_PATH", tmp_db)
-        prerequisite = todos_db.insert_todo("music", "AI", "Still pending")
-        dependent = todos_db.insert_todo("music", "AI", "Complete from dashboard")
-        todos_db.link_prerequisite(dependent, prerequisite)
+        row_id = todos_db.insert_todo("music", "AI", "Missing origin")
 
-        status, body = _post_json(f"{todo_server}/api/todo/done", {"id": dependent})
+        status, body = _post_json(
+            f"{todo_server}/api/todo/done", {"id": row_id}, include_origin=False
+        )
 
-        assert status == 409
-        assert body.get("ok") is False
-        completed = todos_db.get_todo_by_id(dependent)
-        assert completed is not None
-        assert completed["done"] == 0
-        assert completed["closed_at"] is None
-        assert completed["closure_reason"] is None
-        assert [row["id"] for row in todos_db.get_required_todos(dependent)] == [prerequisite]
+        assert status == 403
+        assert body["ok"] is False
+        assert todos_db.get_todo_by_id(row_id)["done"] == 0
 
 
 class TestTodoCancelEndpoint:
