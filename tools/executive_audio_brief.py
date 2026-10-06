@@ -2247,9 +2247,7 @@ class BriefRequestHandler(SimpleHTTPRequestHandler):
             text: str = body["text"]
             priority_raw = body.get("priority")
             if priority_raw is None:
-                from src.utils.todos_db import get_open_todos
-                existing = get_open_todos(project)
-                priority = score_priority(text, project, existing_todos=existing)
+                priority = score_priority(text, project)
             else:
                 priority = int(priority_raw)
             new_id = add_todo(project, text, priority, source="TYLER")

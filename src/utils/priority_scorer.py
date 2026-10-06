@@ -1,22 +1,17 @@
 """Deterministic priority scorer for todo items.
 
-Rule-based heuristic only. Returns an int 1-10; never raises.
-
-The scorer accepts the existing open todos for the same project for API
-compatibility with callers, but the current heuristic does not yet use them
-for calibration (reserved for future use).
+Rule-based heuristic only. Scores use the TODO text and project key and return
+an int 1-10.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
 
 
 def _heuristic_priority(
     text: str,
     project: str,
-    existing_todos: list[dict[str, Any]] | None = None,
 ) -> int:
     """Score a todo with a deterministic rule-based fallback.
 
@@ -25,8 +20,6 @@ def _heuristic_priority(
     only wording. This keeps discovery output spread out when LLM scoring is
     unavailable.
     """
-    _ = existing_todos  # Reserved for future calibration against current backlog.
-
     normalized = text.strip().lower()
     score = 5
 
@@ -81,18 +74,12 @@ def _heuristic_priority(
 def score_priority(
     text: str,
     project: str,
-    existing_todos: list[dict[str, Any]] | None = None,
 ) -> int:
     """Score a todo item's priority 1-10 using the deterministic heuristic.
 
     Args:
         text: The new todo text to score.
         project: Project key (e.g. 'music', 'life', 'workspace').
-        existing_todos: Open todos for this project (from get_open_todos).
-                        Accepted for API compatibility; not yet used by the
-                        heuristic (reserved for future calibration).
-
     Returns int 1-10. Never raises.
     """
-    todos = existing_todos or []
-    return _heuristic_priority(text, project, todos)
+    return _heuristic_priority(text, project)

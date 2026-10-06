@@ -151,12 +151,6 @@ def main() -> int:
         "skipped": 0,
     }
 
-    context_by_project: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        project = str(row.get("project", "")).strip()
-        if project and project not in context_by_project:
-            context_by_project[project] = get_open_todos(project)
-
     preview_rows: list[dict[str, Any]] = []
     failures: list[str] = []
 
@@ -166,8 +160,7 @@ def main() -> int:
             project = str(row["project"])
             text = str(row["text"])
             old_priority = int(row.get("priority", 5))
-            existing = context_by_project.get(project, [])
-            new_priority = score_priority(text, project, existing_todos=existing)
+            new_priority = score_priority(text, project)
             if new_priority not in range(1, 11):
                 raise ValueError(f"score out of range: {new_priority}")
         except Exception as exc:
