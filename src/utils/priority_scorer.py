@@ -1,10 +1,7 @@
 """Deterministic priority scorer for todo items.
 
-Rule-based heuristic only. Returns an int 1-10; never raises.
-
-The scorer accepts the existing open todos for the same project for API
-compatibility with callers, but the current heuristic does not yet use them
-for calibration (reserved for future use).
+Rule-based heuristic only. Scores use the TODO text and project key and return
+an int 1-10.
 """
 
 from __future__ import annotations
