@@ -424,9 +424,9 @@ def _prepare_candidates(projects: list[str], limit: int, candidates_file: str | 
                     # heuristic call entirely.
                     priority = max(1, min(10, int(supplied_priority)))
                 except (TypeError, ValueError):
-                    priority = score_priority(text=text, project=project, existing_todos=existing_rows)
+                    priority = score_priority(text=text, project=project)
             else:
-                priority = score_priority(text=text, project=project, existing_todos=existing_rows)
+                priority = score_priority(text=text, project=project)
             source = _classify_autonomy(text)
             autonomy_level = _classify_autonomy_level(text, source)
             results.append(

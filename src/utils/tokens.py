@@ -1,16 +1,8 @@
-"""Token loader — env-first (.env), file fallback (tokens/)."""
+"""Environment-only token loader."""
 
 import os
-from pathlib import Path
 
-from dotenv import load_dotenv
-
-# Load .env from the executedcode root on first import
-load_dotenv(Path(r"f:\executedcode\.env"))
-
-TOKENS_DIR = Path(r"f:\executedcode\tokens")
-
-# Map token file names → env var names
+# Map token names to environment variable names.
 _ENV_MAP: dict[str, str] = {
     "elevenlabs": "ELEVENLABS_API_KEY",
     "IBM": "IBM_QUANTUM_TOKEN",
@@ -23,19 +15,13 @@ _ENV_MAP: dict[str, str] = {
 
 
 def load_token(name: str) -> str:
-    """Load an API key: check env vars first, fall back to tokens/ file."""
+    """Load an API key from its mapped environment variable."""
     env_key = _ENV_MAP.get(name)
-    if env_key:
-        val = os.environ.get(env_key)
-        if val:
-            return val.strip()
+    if env_key is None:
+        raise FileNotFoundError(f"Token '{name}' has no environment variable mapping.")
 
-    # File fallback
-    token_path = TOKENS_DIR / name
-    if token_path.exists():
-        return token_path.read_text(encoding="utf-8").strip()
+    value = os.environ.get(env_key)
+    if value:
+        return value.strip()
 
-    raise FileNotFoundError(
-        f"Token '{name}' not found in env var "
-        f"{env_key or '(unmapped)'} or file {token_path}."
-    )
+    raise FileNotFoundError(f"Token '{name}' not found in environment variable {env_key}.")

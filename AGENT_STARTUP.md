@@ -42,7 +42,7 @@ All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `.github/
 - **AI service integrations** — centralized hub for external AI API connections
 
 ### ElevenLabs Access
-- **API Key:** Set `ELEVENLABS_API_KEY` in Windows System Environment Variables; never store credentials in repository files. The token loader retains a legacy file fallback for compatibility, but new setup and agent workflows must use the environment variable.
+- **API Key:** Set `ELEVENLABS_API_KEY` in Windows System Environment Variables; never store credentials in repository or token files. AI-Manifest loads credentials from the process environment only.
 - **Primary use:** Voice synthesis, voice cloning, streaming audio
 
 ## 4. Key Data
@@ -58,7 +58,7 @@ All 👁AI-Manifest agents are prefixed `👁ai-manifest-` and live at `.github/
 
 ## 5. Rules
 
-- Use system environment variables for all new credential setup — NEVER hardcode or store secrets in files. `src/utils/tokens.py` still contains a legacy file fallback for compatibility; do not rely on or extend that fallback.
+- Use system environment variables for credential setup — NEVER hardcode or store secrets in files. `src/utils/tokens.py` reads mapped process environment variables only; it does not load `.env` files or token files.
 - Python 3.11+ with type hints on all function signatures
 - Docstrings on public functions only
 - Tests in `tests/` using pytest
