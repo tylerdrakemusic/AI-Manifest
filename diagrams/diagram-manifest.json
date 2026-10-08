@@ -63,7 +63,7 @@
     },
     {
       "path": "diagrams/manifest-tech-stack.mmd",
-      "kind": "tech-stack",
+      "kind": "technology-stack",
       "renderer_risk": "low",
       "fallback_risk": "medium",
       "split_required": false,
