@@ -24,3 +24,5 @@ sqlcipher3>=0.6.2
 # Model Context Protocol servers
 mcp>=1.28.1,<2
 pytest-xdist>=3.6,<4.0
+# BDD test tooling
+pytest-bdd>=7.3,<8.0

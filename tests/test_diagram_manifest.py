@@ -26,7 +26,7 @@ KIND_TO_CATEGORY = {
     "architecture": DiagramCategory.OVERVIEW,
     "db-schema": DiagramCategory.DATABASE_SCHEMA,
     "derived-view": DiagramCategory.DETAIL,
-    "tech-stack": DiagramCategory.TECHNOLOGY_STACK,
+    "technology-stack": DiagramCategory.TECHNOLOGY_STACK,
 }
 
 
@@ -37,6 +37,7 @@ def test_manifest_declares_all_local_sources_and_derived_lineage() -> None:
     assert payload["repository"] == "manifest"
     records = {record["path"]: record for record in payload["diagrams"]}
     assert set(records) == EXPECTED_SOURCES
+    assert records["diagrams/manifest-tech-stack.mmd"]["kind"] == "technology-stack"
     assert records["diagrams/manifest-architecture.mmd"]["lineage"] == {
         "parent": None,
         "derived_views": [

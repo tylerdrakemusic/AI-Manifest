@@ -26,7 +26,7 @@ KIND_TO_CATEGORY = {
     "architecture": DiagramCategory.OVERVIEW,
     "db-schema": DiagramCategory.DATABASE_SCHEMA,
     "derived-view": DiagramCategory.DETAIL,
-    "tech-stack": DiagramCategory.TECHNOLOGY_STACK,
+    "technology-stack": DiagramCategory.TECHNOLOGY_STACK,
 }
 
 
@@ -80,6 +80,6 @@ def test_manifest_diagrams_satisfy_shared_budget_contract() -> None:
         assert metrics.nodes > 0
         assert metrics.nodes <= budget.max_nodes
         assert metrics.edges <= budget.max_edges
-        assert record["kind"] in {"architecture", "db-schema", "derived-view", "tech-stack"}
+        assert record["kind"] in {"architecture", "db-schema", "derived-view", "technology-stack"}
         assert record["split_required"] is result.split_required
         assert result.findings == (), f"{record['path']} findings={result.findings}"

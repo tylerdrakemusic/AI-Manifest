@@ -1,7 +1,7 @@
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
 graph LR
     Python[Python 3.11] --> Requests[requests · httpx]
-    Python --> Pytest[pytest]
+    Python --> Pytest[pytest<br/>pytest-bdd>=7.3,&lt;8.0<br/>plugin · BDD test tool]
     Python --> TestRunner[/CI: .github/workflows/test.yml<br/>PR GITHUB_HEAD_REF selects exact same-named Workspace feature branch<br/>lookup error fails CI; successful no-match uses Workspace main<br/>checkout at path workspace for shared imports + tests<br/>runner: tools/run_tests.py<br/>canonical parallel runner · serial deterministic debugging fallback/]
     TestRunner --> Pytest
     TestRunner -.-> TestPolicy[tools/parallel_test_policy.json<br/>parallel_ci=true<br/>exclude playwright + live]
