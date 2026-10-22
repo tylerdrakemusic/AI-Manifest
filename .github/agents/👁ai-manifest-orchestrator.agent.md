@@ -20,6 +20,13 @@ Discover dynamically: scan `.github/agents/👁ai-manifest-*.agent.md`. Read eac
 2. Multi-domain → decompose, delegate each, synthesize
 3. No specialist → handle directly
 
+## Feature Request Handoff (FR work only)
+For FRs, follow the canonical shared contract in `⊕Workspace/.github/instructions/feature-request-flow.instructions.md`. Scope approval is still required before branching. After approval, wait only on explicit technical prerequisites; unrelated `SOAKING` is not a blocker. Once prerequisites pass, continue through local tests, functional QA, architecture review, and automated review without routine operator checkpoints.
+
+Tyler's final approval covers the linked PR set. `⊕workspace-ci` merges each repository's PR only after that repository's required checks and the FR cost gate pass. Post-soak signoff remains required.
+
+Keep API keys in system environment variables and generated output/audio private. For a genuinely blocking decision only, text remains authoritative and voice is optional/fail-open: use the stable decision ID and the existing governed `pcm_22050` MCP sequence (`start_streaming_tts`, bounded `streaming_tts_status`, then `cancel_streaming_tts` on timeout or interruption). Never call providers directly, create ad hoc audio artifacts, use ordinary status narration, or bypass the repository voice contract.
+
 ## Key Operations
 
 **ElevenLabs Voice Synthesis:**
