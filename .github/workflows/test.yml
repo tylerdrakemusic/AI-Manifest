@@ -37,6 +37,22 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
+      - name: Install pinned Ruff for advisory checks
+        run: |
+          if python -m pip install ruff==0.17.2 >/dev/null 2>&1; then
+            echo "Pinned Ruff installed."
+          else
+            echo "Ruff installation failed; advisory checks may be unavailable." >&2
+          fi
+
+      - name: Run advisory Ruff checks
+        if: always()
+        run: |
+          python tools/ruff_advisory.py --ci || {
+            echo "Advisory Ruff runner failed; CI remains advisory." >&2
+            exit 0
+          }
+
       - name: Run tests in parallel
         env:
           PLAYWRIGHT_ENABLED: "0"  # Set to "1" locally to run Playwright tests (FR-20260513-playwright-ui-gate)
@@ -64,3 +80,12 @@ jobs:
         with:
           name: pytest-junit
           path: tmp/pytest-junit.xml
+
+      - name: Upload sanitized advisory Ruff summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-advisory-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tmp/ruff-advisory-ci/summary.json
+          if-no-files-found: warn
+          retention-days: 30
