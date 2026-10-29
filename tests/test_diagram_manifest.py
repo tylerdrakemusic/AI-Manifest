@@ -21,6 +21,7 @@ EXPECTED_SOURCES = {
     "diagrams/manifest-derived-portal-and-image.mmd",
     "diagrams/manifest-derived-todo-and-backup.mmd",
     "diagrams/manifest-tech-stack.mmd",
+    "diagrams/manifest-tech-stack-tooling.mmd",
 }
 KIND_TO_CATEGORY = {
     "architecture": DiagramCategory.OVERVIEW,
@@ -56,6 +57,14 @@ def test_manifest_declares_all_local_sources_and_derived_lineage() -> None:
     }
     assert records["diagrams/manifest-derived-todo-and-backup.mmd"]["lineage"] == {
         "parent": "diagrams/manifest-architecture.mmd",
+        "derived_views": [],
+    }
+    assert records["diagrams/manifest-tech-stack.mmd"]["lineage"] == {
+        "parent": None,
+        "derived_views": ["diagrams/manifest-tech-stack-tooling.mmd"],
+    }
+    assert records["diagrams/manifest-tech-stack-tooling.mmd"]["lineage"] == {
+        "parent": "diagrams/manifest-tech-stack.mmd",
         "derived_views": [],
     }
 

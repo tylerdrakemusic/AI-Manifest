@@ -1,4 +1,6 @@
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1a2e3a', 'primaryTextColor': '#d0ecf8', 'edgeLabelBackground': '#0f1318', 'lineColor': '#4a7a9a'}}}%%
+%% Traceability.derived_views: diagrams/manifest-tech-stack-tooling.mmd
+%% Tooling layer: CI-only advisory mypy and required pytest gate; see diagrams/manifest-tech-stack-tooling.mmd
 graph LR
     Python[Python 3.11] --> Requests[requests · httpx]
     Python --> Pytest[pytest<br/>pytest-bdd>=7.3,&lt;8.0<br/>plugin · BDD test tool]
