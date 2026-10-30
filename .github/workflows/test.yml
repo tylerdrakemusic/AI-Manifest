@@ -37,6 +37,22 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
+      - name: Install pinned mypy for advisory checks
+        run: |
+          if python -m pip install mypy==1.18.2 >/dev/null 2>&1; then
+            echo "Pinned mypy installed."
+          else
+            echo "mypy installation failed; advisory diagnostics will record the tool error." >&2
+          fi
+
+      - name: Run advisory mypy checks
+        if: always()
+        run: |
+          python tools/mypy_advisory.py --ci || {
+            echo "Advisory mypy runner failed; CI remains advisory." >&2
+            exit 0
+          }
+
       - name: Install pinned Ruff for advisory checks
         run: |
           if python -m pip install ruff==0.17.2 >/dev/null 2>&1; then
@@ -87,5 +103,14 @@ jobs:
         with:
           name: ruff-advisory-manifest-${{ github.run_id }}-${{ github.run_attempt }}
           path: tmp/ruff-advisory-ci/summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload sanitized advisory mypy summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypy-advisory-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tmp/mypy-advisory-ci/**/summary.json
           if-no-files-found: warn
           retention-days: 30
