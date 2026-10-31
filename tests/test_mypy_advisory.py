@@ -79,6 +79,27 @@ def test_ci_workflow_installs_exact_advisory_mypy_pin() -> None:
     assert installs == ["mypy==1.18.2"]
 
 
+def test_only_mypy_summary_upload_is_non_blocking() -> None:
+    workflow_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "test.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    upload_steps = {
+        name: body
+        for name, body in re.findall(
+            r"(?ms)^      - name: ([^\n]+)\n(.*?)(?=^      - name: |\Z)",
+            workflow_text,
+        )
+        if name.startswith("Upload ")
+    }
+    mypy_upload = "Upload sanitized advisory mypy summary"
+
+    assert re.search(r"(?m)^        continue-on-error: true\s*$", upload_steps[mypy_upload])
+    assert all(
+        not re.search(r"(?m)^        continue-on-error:", body)
+        for name, body in upload_steps.items()
+        if name != mypy_upload
+    )
+
+
 def test_initial_mypy_configuration_limits_scan_to_selected_src_modules() -> None:
     project_root = Path(__file__).resolve().parent.parent
     config = configparser.ConfigParser()
@@ -151,6 +172,7 @@ def test_runner_reports_findings_and_metadata_without_gating_or_editing_sources(
     )
     commands, fake_run_command = _fake_mypy_results(diagnostics)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "tylerdrakemusic/AI-Manifest")
     monkeypatch.setattr(_load_runner(), "run_command", fake_run_command)
 
     result = _load_runner().main(["--config", "mypy.ini", "--output-dir", str(output_dir)])
