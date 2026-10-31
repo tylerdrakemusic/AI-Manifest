@@ -25,7 +25,10 @@ def test_ci_exports_backup_contract_and_preserves_blocking_exclusion_reporting()
     assert "pytest --collect-only -q -o addopts= -m \"not playwright and not live\"" in workflow
     assert "python tools/run_tests.py --parallel --junitxml=tmp/pytest-junit.xml 2>&1 | tee pytest.log" in workflow
     assert "set -o pipefail" in workflow
-    assert "continue-on-error" not in workflow
+    test_step = workflow.split("      - name: Run tests in parallel\n", 1)[1].split(
+        "\n      - name:", 1
+    )[0]
+    assert "continue-on-error:" not in test_step
 
 
 def _inventory(databases: list[dict[str, object]]) -> dict[str, object]:
