@@ -19,6 +19,7 @@ EXPECTED_DIAGRAMS = {
     "manifest-derived-portal-and-image.mmd": ("graph ", "diagrams/manifest-architecture.mmd"),
     "manifest-derived-todo-and-backup.mmd": ("graph ", "diagrams/manifest-architecture.mmd"),
     "manifest-tech-stack.mmd": ("graph ", None),
+    "manifest-tech-stack-tooling.mmd": ("graph ", "diagrams/manifest-tech-stack.mmd"),
 }
 MAX_RENDERING_BYTES = 12_000
 MANIFEST_PATH = DIAGRAM_DIR / "diagram-manifest.json"

@@ -69,6 +69,19 @@
       "split_required": false,
       "lineage": {
         "parent": null,
+        "derived_views": [
+          "diagrams/manifest-tech-stack-tooling.mmd"
+        ]
+      }
+    },
+    {
+      "path": "diagrams/manifest-tech-stack-tooling.mmd",
+      "kind": "derived-view",
+      "renderer_risk": "low",
+      "fallback_risk": "medium",
+      "split_required": false,
+      "lineage": {
+        "parent": "diagrams/manifest-tech-stack.mmd",
         "derived_views": []
       }
     }
